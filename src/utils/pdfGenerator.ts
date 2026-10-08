@@ -1,6 +1,6 @@
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { formatDate, formatFC, formatPercent, formatMonthName, toISODate } from './formatters';
+import { formatDate, formatFC, formatPercent, formatMonthName, toISODate, formatNumber } from './formatters';
 import type { DailyEntry, Employee, Payment, AppSettings } from '../types';
 
 export interface MonthlyEmployeeSheetData {
@@ -61,7 +61,7 @@ export async function generateEmployeeMonthlyPDF(
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
   const phoneText = employee.phone ? `Tél : ${employee.phone}` : 'Tél : Non renseigné';
-  doc.text(`${phoneText}  |  Taux commission : ${employee.commissionRate} %`, 18, 42);
+  doc.text(`${phoneText}  |  Taux commission : ${formatNumber(employee.commissionRate)} %`, 18, 42);
   doc.text(`Date d'émission : ${formatDate(toISODate(new Date()))}`, 18, 48);
 
   // Prepare table data
@@ -101,10 +101,10 @@ export async function generateEmployeeMonthlyPDF(
 
     tableRows.push([
       formatDate(entry.date),
-      dayDelivered.toString(),
-      daySold.toString(),
-      dayRest.toString(),
-      dayDamaged.toString(),
+      formatNumber(dayDelivered),
+      formatNumber(daySold),
+      formatNumber(dayRest),
+      formatNumber(dayDamaged),
       formatFC(entry.totalSalesFC, currency),
       formatFC(entry.employeeCommissionFC, currency),
     ]);
@@ -141,10 +141,10 @@ export async function generateEmployeeMonthlyPDF(
     foot: [
       [
         'TOTAUX',
-        sumDelivered.toString(),
-        sumSold.toString(),
+        formatNumber(sumDelivered),
+        formatNumber(sumSold),
         '-',
-        sumDamaged.toString(),
+        formatNumber(sumDamaged),
         formatFC(sumSalesFC, currency),
         formatFC(sumCommissionFC, currency),
       ],

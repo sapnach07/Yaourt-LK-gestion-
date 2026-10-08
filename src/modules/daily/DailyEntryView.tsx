@@ -11,7 +11,7 @@ import {
   Users,
 } from 'lucide-react';
 import { db } from '../../db/db';
-import { formatDate, formatFC, toISODate } from '../../utils/formatters';
+import { formatDate, formatFC, toISODate, formatNumber } from '../../utils/formatters';
 import { DailyEntryModal } from './DailyEntryModal';
 import { ProductionStockModal } from './ProductionStockModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
@@ -294,14 +294,14 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           </span>
                         </div>
                         <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
-                          <span>Commission : {entry.employeeCommissionRate} %</span>
+                          <span>Commission : {formatNumber(entry.employeeCommissionRate)} %</span>
                           <span>·</span>
-                          <span>{totalSoldQty} vendus</span>
+                          <span>{formatNumber(totalSoldQty)} vendus</span>
                           {totalDamagedQty > 0 && (
                             <>
                               <span>·</span>
                               <span className="text-rose-600 font-bold">
-                                {totalDamagedQty} abîmés
+                                {formatNumber(totalDamagedQty)} abîmés
                               </span>
                             </>
                           )}
@@ -344,17 +344,17 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           </span>
                           <div className="flex items-center gap-3 font-mono text-[11px]">
                             <span className="text-slate-500">
-                              Livr : <strong className="text-slate-700">{item.delivered}</strong>
+                              Cmd jour : <strong className="text-slate-700">{formatNumber(item.delivered)}</strong>
                             </span>
                             <span className="text-emerald-700 font-bold">
-                              Vendu : {item.sold}
+                              Vendu : {formatNumber(item.sold)}
                             </span>
                             <span className="text-slate-600">
-                              Reste : <strong className="text-teal-800">{item.rest}</strong>
+                              Reste : <strong className="text-teal-800">{formatNumber(item.rest)}</strong>
                             </span>
                             {item.damaged > 0 && (
                               <span className="text-rose-600 font-bold">
-                                Perte : {item.damaged}
+                                Perte : {formatNumber(item.damaged)}
                               </span>
                             )}
                           </div>
@@ -453,7 +453,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           }`}
                         >
                           {isHouseNegative && <AlertTriangle className="w-4 h-4" />}
-                          {item.houseStock}
+                          {formatNumber(item.houseStock)}
                         </span>
                       </div>
                     </div>
@@ -463,19 +463,19 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                       <div>
                         <span className="text-[10px] text-slate-500 block">Total Produit</span>
                         <span className="font-bold text-slate-800 font-mono">
-                          {item.totalProduced}
+                          {formatNumber(item.totalProduced)}
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 block">Total Livré</span>
                         <span className="font-bold text-slate-800 font-mono">
-                          {item.totalDelivered}
+                          {formatNumber(item.totalDelivered)}
                         </span>
                       </div>
                       <div>
                         <span className="text-[10px] text-slate-500 block">Chez employées</span>
                         <span className="font-bold text-teal-800 font-mono">
-                          {item.totalEmployeesRest}
+                          {formatNumber(item.totalEmployeesRest)}
                         </span>
                       </div>
                     </div>
@@ -484,7 +484,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                       <div className="mt-2.5 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-1.5">
                         <AlertTriangle className="w-4 h-4 shrink-0" />
                         <span>
-                          Alerte : Stock maison négatif ({item.houseStock}) ! Enregistrez la production réalisée.
+                          Alerte : Stock maison négatif ({formatNumber(item.houseStock)}) ! Enregistrez la production réalisée.
                         </span>
                       </div>
                     )}
@@ -530,14 +530,14 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                             {formatDate(prod.date)}
                           </span>
                           <span className="text-xs font-extrabold text-teal-700 font-mono bg-teal-50 px-2 py-0.5 rounded-md">
-                            {totalProduced} unités
+                            {formatNumber(totalProduced)} unités
                           </span>
                         </div>
 
                         <div className="flex flex-wrap gap-2 mt-1.5 text-xs text-slate-600 font-mono">
                           {prod.items.map((i) => (
                             <span key={i.productId}>
-                              {i.productName} : <strong>{i.producedQty}</strong>
+                              {i.productName} : <strong>{formatNumber(i.producedQty)}</strong>
                             </span>
                           ))}
                         </div>

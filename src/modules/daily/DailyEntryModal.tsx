@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, AlertTriangle, Calculator, Sparkles } from 'lucide-react';
-import { db, getPreviousRestForEmployee } from '../../db/db';
-import { toISODate, formatFC } from '../../utils/formatters';
+import { db } from '../../db/db';
+import { toISODate, formatFC, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import type { Employee, Product, DailyEntry, DailyEntryItem, AppSettings } from '../../types';
 
 interface DailyEntryModalProps {
@@ -19,10 +19,10 @@ interface FormProductState {
   productId: string;
   productName: string;
   unitPrice: number;
-  previousRest: number;
-  delivered: number;
-  sold: number;
-  damaged: number;
+  previousRest: string;
+  delivered: string; // Commande du jour
+  sold: string;
+  damaged: string;
 }
 
 export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
@@ -37,7 +37,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
 }) => {
   const [date, setDate] = useState(toISODate(new Date()));
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
-  const [customCommissionRate, setCustomCommissionRate] = useState<number>(20);
+  const [customCommissionRate, setCustomCommissionRate] = useState<string>('20');
   const [productRows, setProductRows] = useState<FormProductState[]>([]);
   const [notes, setNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -53,7 +53,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       // Load from editing entry
       setDate(entryToEdit.date);
       setSelectedEmployeeId(entryToEdit.employeeId);
-      setCustomCommissionRate(entryToEdit.employeeCommissionRate);
+      setCustomCommissionRate(formatNumber(entryToEdit.employeeCommissionRate));
       setNotes(entryToEdit.notes || '');
 
       const rows: FormProductState[] = activeProducts.map((p) => {
@@ -62,89 +62,57 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
           productId: p.id,
           productName: p.name,
           unitPrice: existingItem ? existingItem.unitPrice : p.defaultPrice,
-          previousRest: existingItem ? existingItem.previousRest : 0,
-          delivered: existingItem ? existingItem.delivered : 0,
-          sold: existingItem ? existingItem.sold : 0,
-          damaged: existingItem ? existingItem.damaged : 0,
+          previousRest: existingItem && existingItem.previousRest > 0 ? formatNumber(existingItem.previousRest) : '',
+          delivered: existingItem && existingItem.delivered > 0 ? formatNumber(existingItem.delivered) : '',
+          sold: existingItem && existingItem.sold > 0 ? formatNumber(existingItem.sold) : '',
+          damaged: existingItem && existingItem.damaged > 0 ? formatNumber(existingItem.damaged) : '',
         };
       });
       setProductRows(rows);
     } else {
-      // New entry setup
+      // New entry setup: Reste calculé avec la commande du jour, sans hériter des anciennes saisies
       const defaultEmp = activeEmployees[0];
       const initialEmpId = defaultEmp ? defaultEmp.id : '';
       setSelectedEmployeeId(initialEmpId);
-      setCustomCommissionRate(defaultEmp ? defaultEmp.commissionRate : 20);
+      setCustomCommissionRate(defaultEmp ? formatNumber(defaultEmp.commissionRate) : '20');
       setDate(toISODate(new Date()));
       setNotes('');
 
-      // Build product rows
-      initNewRows(initialEmpId, toISODate(new Date()));
+      // Build pristine product rows without auto-importing old entries' rests
+      const rows: FormProductState[] = activeProducts.map((p) => ({
+        productId: p.id,
+        productName: p.name,
+        unitPrice: p.defaultPrice,
+        previousRest: '',
+        delivered: '',
+        sold: '',
+        damaged: '',
+      }));
+      setProductRows(rows);
     }
   }, [isOpen, entryToEdit]);
 
-  const initNewRows = async (empId: string, targetDate: string) => {
-    let autoRests: Record<string, number> = {};
-    if (empId && targetDate) {
-      autoRests = await getPreviousRestForEmployee(empId, targetDate);
-    }
-
-    const rows: FormProductState[] = activeProducts.map((p) => ({
-      productId: p.id,
-      productName: p.name,
-      unitPrice: p.defaultPrice,
-      previousRest: autoRests[p.id] || 0,
-      delivered: 0,
-      sold: 0,
-      damaged: 0,
-    }));
-    setProductRows(rows);
-  };
-
-  const handleEmployeeChange = async (newEmpId: string) => {
+  const handleEmployeeChange = (newEmpId: string) => {
     setSelectedEmployeeId(newEmpId);
     const emp = employees.find((e) => e.id === newEmpId);
     if (emp) {
-      setCustomCommissionRate(emp.commissionRate);
-      if (!entryToEdit) {
-        // Auto fetch previous rests for this new employee
-        const autoRests = await getPreviousRestForEmployee(newEmpId, date);
-        setProductRows((prev) =>
-          prev.map((row) => ({
-            ...row,
-            previousRest: autoRests[row.productId] !== undefined ? autoRests[row.productId] : row.previousRest,
-          }))
-        );
-      }
-    }
-  };
-
-  const handleDateChange = async (newDate: string) => {
-    setDate(newDate);
-    if (!entryToEdit && selectedEmployeeId) {
-      const autoRests = await getPreviousRestForEmployee(selectedEmployeeId, newDate);
-      setProductRows((prev) =>
-        prev.map((row) => ({
-          ...row,
-          previousRest: autoRests[row.productId] !== undefined ? autoRests[row.productId] : row.previousRest,
-        }))
-      );
+      setCustomCommissionRate(formatNumber(emp.commissionRate));
     }
   };
 
   const handleRowChange = (
     index: number,
-    field: 'previousRest' | 'delivered' | 'sold' | 'damaged' | 'unitPrice',
+    field: 'previousRest' | 'delivered' | 'sold' | 'damaged',
     val: string
   ) => {
-    const numeric = parseFloat(val);
-    const safeVal = isNaN(numeric) ? 0 : Math.max(0, numeric);
+    // Allow digits, dots and commas (e.g. 11,5)
+    const sanitized = val.replace(/[^0-9.,]/g, '');
 
     setProductRows((prev) => {
       const copy = [...prev];
       copy[index] = {
         ...copy[index],
-        [field]: safeVal,
+        [field]: sanitized,
       };
       return copy;
     });
@@ -153,23 +121,33 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
   if (!isOpen) return null;
 
   const currentEmployee = employees.find((e) => e.id === selectedEmployeeId);
+  const commissionRateNum = parseLocaleNumber(customCommissionRate);
   const expenseReserveRate = settings.expenseReservePct || 50;
-  const ownerShareRate = Math.max(0, 100 - expenseReserveRate - customCommissionRate);
+  const ownerShareRate = Math.max(0, 100 - expenseReserveRate - commissionRateNum);
   const currency = settings.currency || 'FC';
 
-  // Live calculations
+  // Live calculations:
+  // Le reste est calculé directement avec la commande du jour : Commande du jour − Ventes − Abîmé (pas celle des anciennes)
   let totalSalesFC = 0;
   let totalDamagedFC = 0;
   let hasOverSoldWarning = false;
 
   const calculatedItems: DailyEntryItem[] = productRows.map((r) => {
-    const totalToSell = r.previousRest + r.delivered;
-    const rest = Math.max(0, totalToSell - r.sold - r.damaged);
-    if (r.sold + r.damaged > totalToSell) {
+    const deliveredNum = parseLocaleNumber(r.delivered);
+    const soldNum = parseLocaleNumber(r.sold);
+    const damagedNum = parseLocaleNumber(r.damaged);
+
+    // Total à vendre du jour = Commande du jour
+    const totalToSell = deliveredNum;
+    // Reste calculé = Commande du jour - Vendu - Abîmé (sur la commande du jour uniquement)
+    const rest = Math.max(0, Math.round((deliveredNum - soldNum - damagedNum) * 100) / 100);
+
+    if (soldNum + damagedNum > deliveredNum && deliveredNum > 0) {
       hasOverSoldWarning = true;
     }
-    const soldFC = r.sold * r.unitPrice;
-    const damagedFC = r.damaged * r.unitPrice;
+
+    const soldFC = soldNum * r.unitPrice;
+    const damagedFC = damagedNum * r.unitPrice;
     totalSalesFC += soldFC;
     totalDamagedFC += damagedFC;
 
@@ -177,16 +155,16 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       productId: r.productId,
       productName: r.productName,
       unitPrice: r.unitPrice,
-      previousRest: r.previousRest,
-      delivered: r.delivered,
+      previousRest: 0,
+      delivered: deliveredNum,
       totalToSell,
-      sold: r.sold,
-      damaged: r.damaged,
+      sold: soldNum,
+      damaged: damagedNum,
       rest,
     };
   });
 
-  const employeeCommissionFC = Math.round((totalSalesFC * customCommissionRate) / 100);
+  const employeeCommissionFC = Math.round((totalSalesFC * commissionRateNum) / 100);
   const expenseReserveFC = Math.round((totalSalesFC * expenseReserveRate) / 100);
   const ownerShareFC = Math.round((totalSalesFC * ownerShareRate) / 100);
 
@@ -209,7 +187,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       date,
       employeeId: selectedEmployeeId,
       employeeName: currentEmployee.name,
-      employeeCommissionRate: customCommissionRate,
+      employeeCommissionRate: commissionRateNum,
       items: calculatedItems,
       totalSalesFC,
       totalDamagedFC,
@@ -245,7 +223,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
               {entryToEdit ? 'Modifier la Saisie' : 'Nouvelle Saisie Journalière'}
             </h2>
             <p className="text-xs text-slate-500 font-medium">
-              Ventes, stock et commissions par employée
+              Reste calculé avec la commande du jour (virgules acceptées, ex : 11,5)
             </p>
           </div>
           <div className="flex items-center gap-1">
@@ -281,7 +259,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
             <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
               <span>
-                Attention : Vendu + Abîmé dépasse le Total à vendre pour un ou plusieurs produits !
+                Attention : Vendu + Abîmé dépasse la Commande du jour pour un ou plusieurs produits !
               </span>
             </div>
           )}
@@ -295,7 +273,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
               <input
                 type="date"
                 value={date}
-                onChange={(e) => handleDateChange(e.target.value)}
+                onChange={(e) => setDate(e.target.value)}
                 required
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
               />
@@ -316,7 +294,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
                 ) : (
                   activeEmployees.map((emp) => (
                     <option key={emp.id} value={emp.id}>
-                      {emp.name} ({emp.commissionRate} %)
+                      {emp.name} ({formatNumber(emp.commissionRate)} %)
                     </option>
                   ))
                 )}
@@ -329,28 +307,47 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
             <div className="p-3 rounded-2xl bg-teal-50/70 border border-teal-200/60 text-xs text-slate-700 flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-center gap-1.5 font-medium">
                 <Sparkles className="w-3.5 h-3.5 text-teal-700" />
-                <span>Règle de partage des ventes :</span>
+                <span>Règle de partage :</span>
               </div>
               <div className="flex items-center gap-2 font-mono text-[11px] font-bold">
-                <span className="text-teal-800">Employée : {customCommissionRate} %</span>
+                <div className="flex items-center gap-1 text-teal-800">
+                  <span>Employée :</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={customCommissionRate}
+                    onChange={(e) => setCustomCommissionRate(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-12 px-1 py-0.5 rounded-lg border border-teal-300 bg-white text-center font-bold text-xs"
+                    title="Taux de commission (virgules acceptées, ex : 22,5)"
+                  />
+                  <span>%</span>
+                </div>
                 <span>·</span>
                 <span className="text-amber-700">Réserve : {expenseReserveRate} %</span>
                 <span>·</span>
-                <span className="text-emerald-700">Gérant : {ownerShareRate} %</span>
+                <span className="text-emerald-700">Gérant : {formatNumber(ownerShareRate)} %</span>
               </div>
             </div>
           )}
 
           {/* Products Input Cards */}
           <div className="space-y-3">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
-              Quantités par produit
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
+                Quantités par produit (ex : 11,5)
+              </h3>
+              <span className="text-[11px] text-teal-700 font-semibold">
+                Reste = Commande du jour − Ventes − Abîmé
+              </span>
+            </div>
 
             {productRows.map((row, idx) => {
-              const totalToSell = row.previousRest + row.delivered;
-              const rest = Math.max(0, totalToSell - row.sold - row.damaged);
-              const isOver = row.sold + row.damaged > totalToSell;
+              const deliveredNum = parseLocaleNumber(row.delivered);
+              const soldNum = parseLocaleNumber(row.sold);
+              const damagedNum = parseLocaleNumber(row.damaged);
+
+              const rest = Math.max(0, Math.round((deliveredNum - soldNum - damagedNum) * 100) / 100);
+              const isOver = soldNum + damagedNum > deliveredNum && deliveredNum > 0;
 
               return (
                 <div
@@ -370,69 +367,54 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
                       </span>
                     </div>
                     <div className="text-xs font-bold font-mono">
-                      <span className="text-slate-500">Total à vendre : </span>
+                      <span className="text-slate-500">Commande du jour : </span>
                       <span className="text-slate-900 bg-white px-2 py-0.5 rounded-md border border-slate-200">
-                        {totalToSell}
+                        {formatNumber(deliveredNum)}
                       </span>
                     </div>
                   </div>
 
-                  {/* Inputs Grid */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {/* Inputs Grid: 3 Clean Columns */}
+                  <div className="grid grid-cols-3 gap-2">
+                    {/* Commande du jour (Livraison) */}
                     <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
-                        Reste veille
+                      <label className="block text-[11px] font-bold text-teal-800 mb-0.5">
+                        Commande du jour *
                       </label>
                       <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        value={row.previousRest === 0 ? '' : row.previousRest}
-                        placeholder="0"
-                        onChange={(e) => handleRowChange(idx, 'previousRest', e.target.value)}
-                        className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-bold font-mono text-slate-800 bg-white text-center focus:ring-2 focus:ring-teal-500"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
-                        + Livraison
-                      </label>
-                      <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        value={row.delivered === 0 ? '' : row.delivered}
+                        type="text"
+                        inputMode="decimal"
+                        value={row.delivered}
                         placeholder="0"
                         onChange={(e) => handleRowChange(idx, 'delivered', e.target.value)}
-                        className="w-full px-2.5 py-2 rounded-xl border border-slate-200 text-xs font-bold font-mono text-slate-800 bg-white text-center focus:ring-2 focus:ring-teal-500"
+                        className="w-full px-2.5 py-2 rounded-xl border border-teal-300 text-xs font-bold font-mono text-slate-900 bg-white text-center focus:ring-2 focus:ring-teal-500"
                       />
                     </div>
 
+                    {/* Vendu */}
                     <div>
                       <label className="block text-[11px] font-bold text-emerald-700 mb-0.5">
                         - Vendu
                       </label>
                       <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        value={row.sold === 0 ? '' : row.sold}
+                        type="text"
+                        inputMode="decimal"
+                        value={row.sold}
                         placeholder="0"
                         onChange={(e) => handleRowChange(idx, 'sold', e.target.value)}
                         className="w-full px-2.5 py-2 rounded-xl border border-emerald-300 text-xs font-bold font-mono text-emerald-900 bg-emerald-50/50 text-center focus:ring-2 focus:ring-emerald-500"
                       />
                     </div>
 
+                    {/* Abîmé */}
                     <div>
                       <label className="block text-[11px] font-bold text-rose-700 mb-0.5">
                         - Abîmé (perte)
                       </label>
                       <input
-                        type="number"
-                        inputMode="numeric"
-                        min="0"
-                        value={row.damaged === 0 ? '' : row.damaged}
+                        type="text"
+                        inputMode="decimal"
+                        value={row.damaged}
                         placeholder="0"
                         onChange={(e) => handleRowChange(idx, 'damaged', e.target.value)}
                         className="w-full px-2.5 py-2 rounded-xl border border-rose-300 text-xs font-bold font-mono text-rose-900 bg-rose-50/50 text-center focus:ring-2 focus:ring-rose-500"
@@ -445,13 +427,13 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
                     <span className="text-slate-600 font-medium">
                       Ventes :{' '}
                       <span className="font-bold font-mono text-emerald-700">
-                        {formatFC(row.sold * row.unitPrice, currency)}
+                        {formatFC(soldNum * row.unitPrice, currency)}
                       </span>
                     </span>
                     <span className="font-medium">
                       Reste calculé :{' '}
                       <span className="font-extrabold font-mono text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200/50">
-                        {rest}
+                        {formatNumber(rest)}
                       </span>
                     </span>
                   </div>
@@ -469,7 +451,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
               type="text"
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
-              placeholder="Ex : Pluie l'après-midi, livraison tardive..."
+              placeholder="Ex : Commande spéciale, temps chaud..."
               className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-xs font-medium text-slate-800 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
             />
           </div>
@@ -488,7 +470,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
               </div>
               <div>
                 <span className="text-teal-300 block text-[11px]">
-                  Commission ({customCommissionRate} %)
+                  Commission ({formatNumber(commissionRateNum)} %)
                 </span>
                 <span className="text-base font-extrabold text-teal-400 font-mono">
                   {formatFC(employeeCommissionFC, currency)}
@@ -504,7 +486,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
               </div>
               <div>
                 <span className="text-emerald-300 block text-[11px]">
-                  Ma part théorique ({ownerShareRate} %)
+                  Ma part théorique ({formatNumber(ownerShareRate)} %)
                 </span>
                 <span className="text-sm font-bold text-emerald-400 font-mono">
                   {formatFC(ownerShareFC, currency)}

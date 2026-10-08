@@ -12,6 +12,57 @@ export function formatFC(amount: number | null | undefined, currency = 'FC'): st
 }
 
 /**
+ * Parses a number string that may contain comma ',' as decimal separator.
+ * e.g. "11,5" -> 11.5, "11.5" -> 11.5, " 1 200,50 " -> 1200.5, "11,,5" -> 11.5
+ */
+export function parseLocaleNumber(val: string | number | null | undefined): number {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  const trimmed = val.toString().trim().replace(/\s/g, '');
+  if (!trimmed) return 0;
+
+  let normalized = trimmed;
+  // If both dot and comma are present, determine which is decimal
+  if (normalized.includes(',') && normalized.includes('.')) {
+    const lastComma = normalized.lastIndexOf(',');
+    const lastDot = normalized.lastIndexOf('.');
+    if (lastComma > lastDot) {
+      // 10.000,50 -> remove dots, comma is decimal
+      normalized = normalized.replace(/\./g, '').replace(',', '.');
+    } else {
+      // 10,000.50 -> remove commas, dot is decimal
+      normalized = normalized.replace(/,/g, '');
+    }
+  } else if (normalized.includes(',')) {
+    // 11,5 -> 11.5
+    normalized = normalized.replace(/,/g, '.');
+  }
+
+  // If multiple dots remaining e.g. "11..5", keep only first dot
+  const dotParts = normalized.split('.');
+  if (dotParts.length > 2) {
+    normalized = dotParts[0] + '.' + dotParts.slice(1).join('');
+  }
+
+  const parsed = parseFloat(normalized);
+  return isNaN(parsed) ? 0 : parsed;
+}
+
+/**
+ * Formats a quantity/number using comma as decimal separator.
+ * e.g. 11.5 -> "11,5", 11 -> "11", 11.25 -> "11,25"
+ */
+export function formatNumber(val: number | string | null | undefined, maxDecimals = 2): string {
+  const num = typeof val === 'number' ? val : parseLocaleNumber(val);
+  if (isNaN(num)) return '0';
+  if (Math.round(num) === num) {
+    return num.toString();
+  }
+  const formatted = num.toFixed(maxDecimals).replace(/\.?0+$/, '');
+  return formatted.replace('.', ',');
+}
+
+/**
  * Formats a standard date YYYY-MM-DD to jj/mm/aaaa
  */
 export function formatDate(dateStr: string | null | undefined): string {

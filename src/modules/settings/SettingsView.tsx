@@ -23,7 +23,7 @@ import {
   exportSalesToCSV,
   exportExpensesToCSV,
 } from '../../utils/exportImport';
-import { formatFC, formatDate, formatPercent } from '../../utils/formatters';
+import { formatFC, formatDate, formatPercent, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
 import type { AppSettings, Product } from '../../types';
@@ -42,12 +42,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Local settings form state
   const [businessName, setBusinessName] = useState(settings.businessName || 'Yaourt Gestion');
   const [currency, setCurrency] = useState(settings.currency || 'FC');
-  const [expenseReservePct, setExpenseReservePct] = useState(settings.expenseReservePct.toString());
+  const [expenseReservePct, setExpenseReservePct] = useState(formatNumber(settings.expenseReservePct));
   const [monthlySalesTargetFC, setMonthlySalesTargetFC] = useState(
-    settings.monthlySalesTargetFC.toString()
+    formatNumber(settings.monthlySalesTargetFC)
   );
   const [lossAlertThresholdPct, setLossAlertThresholdPct] = useState(
-    settings.lossAlertThresholdPct.toString()
+    formatNumber(settings.lossAlertThresholdPct)
   );
 
   // Products state
@@ -93,9 +93,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   const handleSaveGeneralSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    const reserveNum = parseFloat(expenseReservePct);
-    const targetNum = parseFloat(monthlySalesTargetFC);
-    const lossThresholdNum = parseFloat(lossAlertThresholdPct);
+    const reserveNum = parseLocaleNumber(expenseReservePct);
+    const targetNum = parseLocaleNumber(monthlySalesTargetFC);
+    const lossThresholdNum = parseLocaleNumber(lossAlertThresholdPct);
 
     if (isNaN(reserveNum) || reserveNum < 0 || reserveNum > 100) {
       onShowToast('error', 'Le % de réserve dépenses doit être compris entre 0 et 100.');
@@ -121,7 +121,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const handleAddProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProductName.trim()) return;
-    const priceNum = parseFloat(newProductPrice);
+    const priceNum = parseLocaleNumber(newProductPrice);
     if (isNaN(priceNum) || priceNum <= 0) {
       onShowToast('error', 'Prix invalide');
       return;
@@ -144,7 +144,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   const handleUpdateProductPrice = async (prod: Product, newPriceStr: string) => {
-    const priceNum = parseFloat(newPriceStr);
+    const priceNum = parseLocaleNumber(newPriceStr);
     if (isNaN(priceNum) || priceNum <= 0) return;
     await db.products.update(prod.id, { defaultPrice: priceNum });
     setEditingProduct(null);
@@ -338,11 +338,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </label>
               <div className="relative">
                 <input
-                  type="number"
-                  min="0"
-                  max="100"
+                  type="text"
+                  inputMode="decimal"
                   value={expenseReservePct}
-                  onChange={(e) => setExpenseReservePct(e.target.value)}
+                  onChange={(e) => setExpenseReservePct(e.target.value.replace(/[^0-9.,]/g, ''))}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
                 />
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -358,10 +357,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 Objectif mensuel ({currency})
               </label>
               <input
-                type="number"
-                step="50000"
+                type="text"
+                inputMode="decimal"
                 value={monthlySalesTargetFC}
-                onChange={(e) => setMonthlySalesTargetFC(e.target.value)}
+                onChange={(e) => setMonthlySalesTargetFC(e.target.value.replace(/[^0-9.,]/g, ''))}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
               />
             </div>
@@ -372,12 +371,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </label>
               <div className="relative">
                 <input
-                  type="number"
-                  step="0.5"
-                  min="0"
-                  max="50"
+                  type="text"
+                  inputMode="decimal"
                   value={lossAlertThresholdPct}
-                  onChange={(e) => setLossAlertThresholdPct(e.target.value)}
+                  onChange={(e) => setLossAlertThresholdPct(e.target.value.replace(/[^0-9.,]/g, ''))}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
                 />
                 <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
@@ -425,8 +422,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 {editingProduct?.id === prod.id ? (
                   <div className="flex items-center gap-1">
                     <input
-                      type="number"
-                      defaultValue={prod.defaultPrice}
+                      type="text"
+                      inputMode="decimal"
+                      defaultValue={formatNumber(prod.defaultPrice)}
                       id={`price_input_${prod.id}`}
                       className="w-20 px-2 py-1 rounded-lg border border-teal-500 text-xs font-bold font-mono"
                     />
@@ -480,10 +478,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
           />
           <input
-            type="number"
+            type="text"
+            inputMode="decimal"
             placeholder="Prix FC"
             value={newProductPrice}
-            onChange={(e) => setNewProductPrice(e.target.value)}
+            onChange={(e) => setNewProductPrice(e.target.value.replace(/[^0-9.,]/g, ''))}
             className="w-24 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 text-center"
           />
           <button

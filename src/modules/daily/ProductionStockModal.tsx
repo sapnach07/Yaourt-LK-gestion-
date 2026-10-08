@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check } from 'lucide-react';
 import { db } from '../../db/db';
-import { toISODate } from '../../utils/formatters';
+import { toISODate, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import type { Product, ProductionEntry, ProductionItem } from '../../types';
 
 interface ProductionStockModalProps {
@@ -20,7 +20,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
   onSaved,
 }) => {
   const [date, setDate] = useState(toISODate(new Date()));
-  const [items, setItems] = useState<Record<string, number>>({});
+  const [items, setItems] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
@@ -32,17 +32,17 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
     if (entryToEdit) {
       setDate(entryToEdit.date);
       setNotes(entryToEdit.notes || '');
-      const stateObj: Record<string, number> = {};
+      const stateObj: Record<string, string> = {};
       entryToEdit.items.forEach((item) => {
-        stateObj[item.productId] = item.producedQty;
+        stateObj[item.productId] = item.producedQty > 0 ? formatNumber(item.producedQty) : '';
       });
       setItems(stateObj);
     } else {
       setDate(toISODate(new Date()));
       setNotes('');
-      const stateObj: Record<string, number> = {};
+      const stateObj: Record<string, string> = {};
       activeProducts.forEach((p) => {
-        stateObj[p.id] = 0;
+        stateObj[p.id] = '';
       });
       setItems(stateObj);
     }
@@ -51,11 +51,10 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
   if (!isOpen) return null;
 
   const handleQtyChange = (productId: string, val: string) => {
-    const num = parseFloat(val);
-    const safe = isNaN(num) ? 0 : Math.max(0, num);
+    const sanitized = val.replace(/[^0-9.,]/g, '');
     setItems((prev) => ({
       ...prev,
-      [productId]: safe,
+      [productId]: sanitized,
     }));
   };
 
@@ -66,7 +65,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
     const productionItems: ProductionItem[] = activeProducts.map((p) => ({
       productId: p.id,
       productName: p.name,
-      producedQty: items[p.id] || 0,
+      producedQty: parseLocaleNumber(items[p.id]),
     }));
 
     const totalProduced = productionItems.reduce((acc, i) => acc + i.producedQty, 0);
@@ -105,7 +104,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
               {entryToEdit ? 'Modifier la Production' : 'Enregistrer la Production'}
             </h2>
             <p className="text-xs text-slate-500 font-medium">
-              Yaourts fabriqués à la maison
+              Yaourts fabriqués à la maison (virgules acceptées, ex : 11,5)
             </p>
           </div>
           <button
@@ -139,7 +138,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
 
           <div className="space-y-2.5">
             <label className="block text-xs font-bold text-slate-700">
-              Quantités produites par produit
+              Quantités produites par produit (ex : 11,5)
             </label>
             {activeProducts.map((prod) => (
               <div
@@ -152,11 +151,10 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
                 </div>
                 <div className="w-32">
                   <input
-                    type="number"
-                    inputMode="numeric"
-                    min="0"
+                    type="text"
+                    inputMode="decimal"
                     placeholder="0"
-                    value={items[prod.id] === 0 ? '' : items[prod.id] || ''}
+                    value={items[prod.id] || ''}
                     onChange={(e) => handleQtyChange(prod.id, e.target.value)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-base font-bold font-mono text-center text-slate-900 bg-white focus:ring-2 focus:ring-teal-500"
                   />

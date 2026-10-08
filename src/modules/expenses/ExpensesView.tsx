@@ -20,6 +20,8 @@ import {
   toISOMonth,
   formatMonthName,
   safePercentage,
+  parseLocaleNumber,
+  formatNumber,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
@@ -80,7 +82,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleOpenEdit = (exp: Expense) => {
     setEditingExpense(exp);
     setDate(exp.date);
-    setAmount(exp.amountFC.toString());
+    setAmount(formatNumber(exp.amountFC));
     setCategory(exp.category);
     setDetail(exp.detail);
     setFormError('');
@@ -91,7 +93,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     e.preventDefault();
     setFormError('');
 
-    const numAmount = parseFloat(amount);
+    const numAmount = parseLocaleNumber(amount);
     if (isNaN(numAmount) || numAmount <= 0) {
       setFormError('Veuillez entrer un montant valide supérieur à 0 FC.');
       return;
@@ -457,13 +459,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    inputMode="numeric"
-                    min="1"
-                    step="50"
-                    placeholder="Ex : 15000"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Ex : 15000 ou 11,5"
                     value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+                    onChange={(e) => setAmount(e.target.value.replace(/[^0-9.,]/g, ''))}
                     required
                     className="w-full px-3.5 py-3 rounded-xl border border-slate-200 text-base font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 pr-12"
                   />
@@ -471,9 +471,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                     {currency}
                   </span>
                 </div>
-                {amount && !isNaN(parseFloat(amount)) && (
+                {amount && parseLocaleNumber(amount) > 0 && (
                   <p className="text-[11px] font-semibold text-teal-700 mt-1">
-                    = {formatFC(parseFloat(amount), currency)}
+                    = {formatFC(parseLocaleNumber(amount), currency)}
                   </p>
                 )}
               </div>

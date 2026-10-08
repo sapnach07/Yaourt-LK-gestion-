@@ -14,6 +14,7 @@ import {
   formatFC,
   formatMonthName,
   toISOMonth,
+  formatNumber,
 } from '../../utils/formatters';
 import { generateEmployeeMonthlyPDF } from '../../utils/pdfGenerator';
 import type { DailyEntry, Employee, Payment, AppSettings } from '../../types';
@@ -232,16 +233,16 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
                             {formatDate(entry.date)}
                           </td>
                           <td className="py-2 px-2 text-center font-mono text-slate-600">
-                            {dayDelivered}
+                            {formatNumber(dayDelivered)}
                           </td>
                           <td className="py-2 px-2 text-center font-mono font-bold text-emerald-700">
-                            {daySold}
+                            {formatNumber(daySold)}
                           </td>
                           <td className="py-2 px-2 text-center font-mono text-slate-600">
-                            {dayRest}
+                            {formatNumber(dayRest)}
                           </td>
                           <td className="py-2 px-2 text-center font-mono text-rose-600">
-                            {dayDamaged}
+                            {formatNumber(dayDamaged)}
                           </td>
                           <td className="py-2 px-2.5 text-right font-mono text-slate-800 whitespace-nowrap">
                             {formatFC(entry.totalSalesFC, currency)}

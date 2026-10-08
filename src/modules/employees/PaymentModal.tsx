@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { X, Check } from 'lucide-react';
 import { db } from '../../db/db';
-import { toISODate, toISOMonth, formatFC } from '../../utils/formatters';
+import { toISODate, toISOMonth, formatFC, parseLocaleNumber } from '../../utils/formatters';
 import type { Employee, Payment } from '../../types';
 
 interface PaymentModalProps {
@@ -30,8 +30,8 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
     e.preventDefault();
     setError('');
 
-    const numericAmount = parseFloat(amount);
-    if (isNaN(numericAmount) || numericAmount <= 0) {
+    const numericAmount = parseLocaleNumber(amount);
+    if (numericAmount <= 0) {
       setError('Veuillez saisir un montant valide supérieur à 0 FC.');
       return;
     }
@@ -160,13 +160,11 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
             </label>
             <div className="relative">
               <input
-                type="number"
-                inputMode="numeric"
-                min="1"
-                step="50"
+                type="text"
+                inputMode="decimal"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="Ex : 25000"
+                onChange={(e) => setAmount(e.target.value.replace(/[^0-9.,]/g, ''))}
+                placeholder="Ex : 25000 ou 11,5"
                 required
                 className="w-full px-3.5 py-3 rounded-xl border border-slate-200 text-base font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 pr-12"
               />
@@ -174,9 +172,9 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
                 FC
               </span>
             </div>
-            {amount && !isNaN(parseFloat(amount)) && (
+            {amount && parseLocaleNumber(amount) > 0 && (
               <p className="text-[11px] font-semibold text-teal-700 mt-1">
-                = {formatFC(parseFloat(amount))}
+                = {formatFC(parseLocaleNumber(amount))}
               </p>
             )}
           </div>

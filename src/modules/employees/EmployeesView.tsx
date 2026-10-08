@@ -13,7 +13,7 @@ import {
   Check,
 } from 'lucide-react';
 import { db } from '../../db/db';
-import { formatDate, toISODate, formatFC } from '../../utils/formatters';
+import { formatDate, toISODate, formatFC, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import { MonthlySheetModal } from './MonthlySheetModal';
 import { PaymentModal } from './PaymentModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
@@ -71,7 +71,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
     setEditingEmployee(emp);
     setName(emp.name);
     setPhone(emp.phone || '');
-    setCommissionRate(emp.commissionRate.toString());
+    setCommissionRate(formatNumber(emp.commissionRate));
     setStartDate(emp.startDate || toISODate(new Date()));
     setNote(emp.note || '');
     setFormError('');
@@ -87,7 +87,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       return;
     }
 
-    const rateNum = parseFloat(commissionRate);
+    const rateNum = parseLocaleNumber(commissionRate);
     if (isNaN(rateNum) || rateNum < 0 || rateNum > 100) {
       setFormError('Le taux de commission doit être compris entre 0 et 100 %.');
       return;
@@ -225,7 +225,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                   <div className="flex items-center gap-2">
                     <h3 className="text-base font-bold text-slate-900">{emp.name}</h3>
                     <span className="text-xs font-extrabold text-teal-700 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200/60">
-                      {emp.commissionRate} %
+                      {formatNumber(emp.commissionRate)} %
                     </span>
                   </div>
 
@@ -346,13 +346,11 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    step="0.5"
-                    min="0"
-                    max="100"
+                    type="text"
+                    inputMode="decimal"
                     value={commissionRate}
-                    onChange={(e) => setCommissionRate(e.target.value)}
-                    placeholder="20"
+                    onChange={(e) => setCommissionRate(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    placeholder="20 ou 11,5"
                     required
                     className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500 pr-10"
                   />
