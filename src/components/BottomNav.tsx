@@ -18,7 +18,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange }) 
   const tabs = [
     { id: 'dashboard' as const, label: 'Tableau', icon: LayoutDashboard },
     { id: 'daily' as const, label: 'Saisies', icon: ClipboardEdit },
-    { id: 'employees' as const, label: 'Employées', icon: Users },
+    { id: 'employees' as const, label: 'Vendeurs(ses)', icon: Users },
     { id: 'expenses' as const, label: 'Dépenses', icon: WalletCards },
     { id: 'settings' as const, label: 'Plus', icon: Settings2 },
   ];

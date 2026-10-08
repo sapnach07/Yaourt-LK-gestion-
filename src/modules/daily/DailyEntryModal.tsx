@@ -173,7 +173,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
     setErrorMsg('');
 
     if (!selectedEmployeeId || !currentEmployee) {
-      setErrorMsg('Veuillez sélectionner une employée.');
+      setErrorMsg('Veuillez sélectionner un(e) vendeur(se).');
       return;
     }
 
@@ -281,7 +281,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
 
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
-                Employée *
+                Vendeur(se) *
               </label>
               <select
                 value={selectedEmployeeId}
@@ -290,7 +290,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
                 className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-bold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
               >
                 {activeEmployees.length === 0 ? (
-                  <option value="">Aucune employée active (créez-en une)</option>
+                  <option value="">Aucun(e) vendeur(se) actif(ve) (créez-en un(e))</option>
                 ) : (
                   activeEmployees.map((emp) => (
                     <option key={emp.id} value={emp.id}>
@@ -311,7 +311,7 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
               </div>
               <div className="flex items-center gap-2 font-mono text-[11px] font-bold">
                 <div className="flex items-center gap-1 text-teal-800">
-                  <span>Employée :</span>
+                  <span>Vendeur(se) :</span>
                   <input
                     type="text"
                     inputMode="decimal"

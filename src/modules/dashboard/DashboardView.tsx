@@ -661,7 +661,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 onChange={(e) => setSelectedEmployeeId(e.target.value)}
                 className="w-full text-xs font-semibold text-slate-800 bg-transparent focus:outline-none"
               >
-                <option value="all">Toutes employées</option>
+                <option value="all">Tous/Toutes vendeurs(ses)</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
                     {emp.name}
@@ -1008,15 +1008,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
 
-        {/* 2. Bar Chart: Ventes comparées par employée */}
+        {/* 2. Bar Chart: Ventes comparées par vendeur(se) */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs space-y-2">
           <h4 className="text-xs font-bold text-slate-800">
-            Ventes comparées par employée ({currency})
+            Ventes comparées par vendeur(se) ({currency})
           </h4>
 
           {employeeSalesData.length === 0 ? (
             <div className="py-12 text-center text-xs text-slate-400">
-              Aucune donnée d'employée
+              Aucune donnée de vendeur(se)
             </div>
           ) : (
             <div className="h-44 w-full pt-2">
@@ -1145,7 +1145,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {employeePerformanceStacked.length === 0 ? (
-            <div className="py-8 text-center text-xs text-slate-400">Aucune employée</div>
+            <div className="py-8 text-center text-xs text-slate-400">Aucun(e) vendeur(se)</div>
           ) : (
             <div className="h-44 w-full pt-1">
               <ResponsiveContainer width="100%" height="100%">
@@ -1300,14 +1300,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <div className="flex items-center gap-1.5">
               <Award className="w-4 h-4 text-teal-700" />
               <h4 className="text-xs font-bold text-slate-800">
-                Classement des Employées
+                Classement des Vendeurs(ses)
               </h4>
             </div>
           </div>
 
           {employeeSalesData.length === 0 ? (
             <div className="p-4 text-center text-xs text-slate-400">
-              Aucune employée active sur cette période
+              Aucun(e) vendeur(se) actif(ve) sur cette période
             </div>
           ) : (
             <div className="divide-y divide-slate-100 text-xs">

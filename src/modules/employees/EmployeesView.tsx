@@ -83,7 +83,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
     setFormError('');
 
     if (!name.trim()) {
-      setFormError('Le nom de l’employée est obligatoire.');
+      setFormError('Le nom du/de la vendeur(se) est obligatoire.');
       return;
     }
 
@@ -105,7 +105,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           note: note.trim() || undefined,
         };
         await db.employees.put(updated);
-        onShowToast('success', `Employée ${updated.name} mise à jour.`);
+        onShowToast('success', `Vendeur(se) ${updated.name} mis(e) à jour.`);
       } else {
         // Add new
         const newEmp: Employee = {
@@ -119,7 +119,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           createdAt: Date.now(),
         };
         await db.employees.put(newEmp);
-        onShowToast('success', `Nouvelle employée ${newEmp.name} ajoutée.`);
+        onShowToast('success', `Nouveau/nouvelle vendeur(se) ${newEmp.name} ajouté(e).`);
       }
 
       setIsFormOpen(false);
@@ -156,10 +156,10 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
-            Employées
+            Vendeurs(ses)
           </h2>
           <p className="text-xs text-slate-500">
-            Gestion des vendeuses, commissions et fiches
+            Gestion de l'équipe de vente, commissions et fiches
           </p>
         </div>
 
@@ -173,7 +173,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
         </button>
       </div>
 
-      {/* Filter Tabs: Actives vs Archivées */}
+      {/* Filter Tabs: Actifs(ves) vs Archivés(es) */}
       <div className="flex items-center p-1 bg-slate-200/70 rounded-2xl">
         <button
           type="button"
@@ -184,7 +184,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Actives ({employees.filter((e) => !e.isArchived).length})
+          Actifs(ves) ({employees.filter((e) => !e.isArchived).length})
         </button>
         <button
           type="button"
@@ -195,7 +195,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Archivées ({employees.filter((e) => e.isArchived).length})
+          Archivés(es) ({employees.filter((e) => e.isArchived).length})
         </button>
       </div>
 
@@ -203,13 +203,13 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
       {filteredEmployees.length === 0 ? (
         <EmptyState
           icon={<Users className="w-7 h-7 text-teal-700" />}
-          title={viewArchived ? 'Aucune employée archivée' : 'Aucune employée active'}
+          title={viewArchived ? 'Aucun(e) vendeur(se) archivé(e)' : 'Aucun(e) vendeur(se) actif(ve)'}
           description={
             viewArchived
-              ? 'Les employées archivées apparaîtront ici sans perte d’historique.'
-              : 'Ajoutez votre première employée pour commencer les saisies journalières et le suivi des commissions.'
+              ? 'Les vendeurs(ses) archivé(e)s apparaîtront ici sans perte d’historique.'
+              : 'Ajoutez votre premier(ère) vendeur(se) pour commencer les saisies journalières et le suivi des commissions.'
           }
-          actionLabel={viewArchived ? undefined : 'Ajouter une employée'}
+          actionLabel={viewArchived ? undefined : 'Ajouter un(e) vendeur(se)'}
           onAction={viewArchived ? undefined : handleOpenAddForm}
         />
       ) : (
@@ -308,7 +308,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           <div className="w-full sm:max-w-md bg-white rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-100 flex flex-col overflow-hidden max-h-[90vh]">
             <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50/70">
               <h3 className="text-base font-bold text-slate-900">
-                {editingEmployee ? 'Modifier l’employée' : 'Nouvelle employée'}
+                {editingEmployee ? 'Modifier le/la vendeur(se)' : 'Nouveau/Nouvelle vendeur(se)'}
               </h3>
               <button
                 type="button"
@@ -328,7 +328,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
 
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Nom complet de l’employée *
+                  Nom complet du/de la vendeur(se) *
                 </label>
                 <input
                   type="text"
@@ -453,8 +453,8 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
         }
         message={
           confirmArchiveEmp?.isArchived
-            ? 'L’employée réapparaîtra dans la liste des employées actives et dans la sélection des saisies.'
-            : 'L’employée n’apparaîtra plus dans la liste active pour les nouvelles saisies, mais tout son historique de ventes et commissions est conservé.'
+            ? 'Le/la vendeur(se) réapparaîtra dans la liste des vendeurs(ses) actif(ve)s et dans la sélection des saisies.'
+            : 'Le/la vendeur(se) n’apparaîtra plus dans la liste active pour les nouvelles saisies, mais tout son historique de ventes et commissions est conservé.'
         }
         confirmLabel={confirmArchiveEmp?.isArchived ? 'Réactiver' : 'Archiver'}
         cancelLabel="Annuler"

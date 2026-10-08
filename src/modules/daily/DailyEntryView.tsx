@@ -220,14 +220,14 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-wrap items-center gap-2">
             <div className="flex-1 min-w-[130px]">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                Employée
+                Vendeur(se)
               </label>
               <select
                 value={filterEmployeeId}
                 onChange={(e) => setFilterEmployeeId(e.target.value)}
                 className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800 bg-white"
               >
-                <option value="all">Toutes les employées</option>
+                <option value="all">Tous/Toutes les vendeurs(ses)</option>
                 {employees.map((emp) => (
                   <option key={emp.id} value={emp.id}>
                     {emp.name}
@@ -264,7 +264,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             <EmptyState
               icon={<ClipboardEdit className="w-7 h-7 text-teal-700" />}
               title="Aucune saisie de vente enregistrée"
-              description="Créez votre première saisie journalière pour calculer automatiquement les ventes, les restes et la commission de l’employée."
+              description="Créez votre première saisie journalière pour calculer automatiquement les ventes, les restes et la commission du/de la vendeur(se)."
               actionLabel="Nouvelle saisie"
               onAction={() => {
                 setEntryToEdit(null);
@@ -473,7 +473,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">Chez employées</span>
+                        <span className="text-[10px] text-slate-500 block">Chez vendeurs(ses)</span>
                         <span className="font-bold text-teal-800 font-mono">
                           {formatNumber(item.totalEmployeesRest)}
                         </span>
