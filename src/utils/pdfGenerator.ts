@@ -68,11 +68,14 @@ export async function generateEmployeeMonthlyPDF(
   // Group or list by day
   const tableRows: any[] = [];
   let sumDelivered = 0;
+  let sumDeliveredFC = 0;
   let sumSold = 0;
+  let sumSoldFC = 0;
   let sumDamaged = 0;
-  let sumRest = 0;
-  let sumSalesFC = 0;
   let sumDamagedFC = 0;
+  let sumRest = 0;
+  let sumRestFC = 0;
+  let sumSalesFC = 0;
   let sumCommissionFC = 0;
 
   // Sort entries by date ascending
@@ -80,32 +83,40 @@ export async function generateEmployeeMonthlyPDF(
 
   for (const entry of sortedEntries) {
     let dayDelivered = 0;
+    let dayDeliveredFC = 0;
     let daySold = 0;
     let dayDamaged = 0;
+    let dayDamagedFC = 0;
     let dayRest = 0;
+    let dayRestFC = 0;
 
     for (const item of entry.items) {
       dayDelivered += item.delivered;
+      dayDeliveredFC += item.delivered * (item.unitPrice || 0);
       daySold += item.sold;
       dayDamaged += item.damaged;
+      dayDamagedFC += item.damaged * (item.unitPrice || 0);
       dayRest += item.rest;
+      dayRestFC += item.rest * (item.unitPrice || 0);
     }
 
     sumDelivered += dayDelivered;
+    sumDeliveredFC += dayDeliveredFC;
     sumSold += daySold;
+    sumSoldFC += entry.totalSalesFC;
     sumDamaged += dayDamaged;
+    sumDamagedFC += dayDamagedFC;
     sumRest += dayRest;
+    sumRestFC += dayRestFC;
     sumSalesFC += entry.totalSalesFC;
-    sumDamagedFC += entry.totalDamagedFC;
     sumCommissionFC += entry.employeeCommissionFC;
 
     tableRows.push([
       formatDate(entry.date),
-      formatNumber(dayDelivered),
-      formatNumber(daySold),
-      formatNumber(dayRest),
-      formatNumber(dayDamaged),
+      formatFC(dayDeliveredFC, currency),
       formatFC(entry.totalSalesFC, currency),
+      formatFC(dayRestFC, currency),
+      dayDamagedFC > 0 ? formatFC(dayDamagedFC, currency) : '0 FC',
       formatFC(entry.employeeCommissionFC, currency),
     ]);
   }
@@ -117,35 +128,37 @@ export async function generateEmployeeMonthlyPDF(
   // Add Table using autoTable
   autoTable(doc, {
     startY: 56,
-    head: [['Date', 'Livraison', 'Vente', 'Reste', 'Abîmé', 'Ventes (FC)', 'Commission']],
-    body: tableRows.length > 0 ? tableRows : [['-', '-', '-', '-', '-', '-', '-']],
+    head: [['Date', 'Livraison (FC)', 'Ventes (FC)', 'Reste (FC)', 'Abîmé (FC)', 'Commission (FC)']],
+    body: tableRows.length > 0 ? tableRows : [['-', '-', '-', '-', '-', '-']],
     theme: 'grid',
     headStyles: {
       fillColor: primaryColor,
       textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 9,
+      fontSize: 8.5,
       halign: 'center',
     },
     styles: {
-      fontSize: 8.5,
+      fontSize: 8,
       textColor: darkTextColor,
-      cellPadding: 2.2,
+      cellPadding: 2,
       halign: 'center',
     },
     columnStyles: {
       0: { halign: 'left' },
-      5: { halign: 'right' },
-      6: { halign: 'right', fontStyle: 'bold' },
+      1: { halign: 'right', fontStyle: 'bold' },
+      2: { halign: 'right', fontStyle: 'bold' },
+      3: { halign: 'right' },
+      4: { halign: 'right' },
+      5: { halign: 'right', fontStyle: 'bold' },
     },
     foot: [
       [
         'TOTAUX',
-        formatNumber(sumDelivered),
-        formatNumber(sumSold),
-        '-',
-        formatNumber(sumDamaged),
+        formatFC(sumDeliveredFC, currency),
         formatFC(sumSalesFC, currency),
+        formatFC(sumRestFC, currency),
+        formatFC(sumDamagedFC, currency),
         formatFC(sumCommissionFC, currency),
       ],
     ],
@@ -153,7 +166,7 @@ export async function generateEmployeeMonthlyPDF(
       fillColor: [241, 245, 249],
       textColor: darkTextColor,
       fontStyle: 'bold',
-      fontSize: 9,
+      fontSize: 8.5,
       halign: 'center',
     },
   });
@@ -161,7 +174,7 @@ export async function generateEmployeeMonthlyPDF(
   // Summary and Payment Box
   // @ts-ignore
   let finalY = (doc as any).lastAutoTable?.finalY || 180;
-  if (finalY > 220) {
+  if (finalY > 215) {
     doc.addPage();
     finalY = 20;
   } else {
@@ -170,40 +183,54 @@ export async function generateEmployeeMonthlyPDF(
 
   doc.setFillColor(241, 245, 249);
   doc.setDrawColor(203, 213, 225);
-  doc.roundedRect(14, finalY, 182, 34, 2, 2, 'FD');
+  doc.roundedRect(14, finalY, 182, 42, 2, 2, 'FD');
 
   doc.setFontSize(10);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...darkTextColor);
   doc.text('RÉSUMÉ DES RÈGLEMENTS DU MOIS', 18, finalY + 7);
 
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
-  doc.text(`Total commission gagnée :`, 18, finalY + 14);
+  doc.text(`Total livraisons du mois :`, 18, finalY + 13);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...darkTextColor);
-  doc.text(formatFC(sumCommissionFC, currency), 90, finalY + 14);
+  doc.text(formatFC(sumDeliveredFC, currency), 95, finalY + 13);
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
-  doc.text(`Avances ou montants déjà versés :`, 18, finalY + 20);
+  doc.text(`Total ventes réalisées :`, 18, finalY + 19);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...darkTextColor);
-  doc.text(`- ${formatFC(totalPaidFC, currency)}`, 90, finalY + 20);
+  doc.text(formatFC(sumSalesFC, currency), 95, finalY + 19);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...mutedTextColor);
+  doc.text(`Total commission gagnée :`, 18, finalY + 25);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkTextColor);
+  doc.text(formatFC(sumCommissionFC, currency), 95, finalY + 25);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...mutedTextColor);
+  doc.text(`Avances ou montants déjà versés :`, 18, finalY + 31);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkTextColor);
+  doc.text(`- ${formatFC(totalPaidFC, currency)}`, 95, finalY + 31);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   if (netDueFC > 0) {
     doc.setTextColor(185, 28, 28); // Red
   } else {
     doc.setTextColor(21, 128, 61); // Green
   }
-  doc.text(`RESTE NET À PAYER :`, 18, finalY + 28);
-  doc.text(formatFC(netDueFC, currency), 90, finalY + 28);
+  doc.text(`RESTE NET À PAYER :`, 18, finalY + 38);
+  doc.text(formatFC(netDueFC, currency), 95, finalY + 38);
 
   // Signatures Section
-  const signatureY = finalY + 44;
+  const signatureY = finalY + 50;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...darkTextColor);
@@ -237,7 +264,7 @@ export async function generateEmployeeMonthlyPDF(
         await navigator.share({
           files: [file],
           title: `Fiche de paie - ${employee.name} (${monthName})`,
-          text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Reste à payer : ${formatFC(netDueFC, currency)}.`,
+          text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Livraisons : ${formatFC(sumDeliveredFC, currency)} | Ventes : ${formatFC(sumSalesFC, currency)} | Commission : ${formatFC(sumCommissionFC, currency)} | Reste à payer : ${formatFC(netDueFC, currency)}.`,
         });
         return true;
       }

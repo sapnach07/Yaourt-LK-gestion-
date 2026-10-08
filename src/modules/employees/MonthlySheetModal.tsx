@@ -72,16 +72,24 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
 
   // Totals calculations
   let sumDelivered = 0;
+  let sumDeliveredFC = 0;
   let sumSold = 0;
   let sumDamaged = 0;
+  let sumDamagedFC = 0;
+  let sumRest = 0;
+  let sumRestFC = 0;
   let sumSalesFC = 0;
   let sumCommissionFC = 0;
 
   for (const entry of entries) {
     for (const item of entry.items) {
       sumDelivered += item.delivered;
+      sumDeliveredFC += item.delivered * (item.unitPrice || 0);
       sumSold += item.sold;
       sumDamaged += item.damaged;
+      sumDamagedFC += item.damaged * (item.unitPrice || 0);
+      sumRest += item.rest;
+      sumRestFC += item.rest * (item.unitPrice || 0);
     }
     sumSalesFC += entry.totalSalesFC;
     sumCommissionFC += entry.employeeCommissionFC;
@@ -160,24 +168,36 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
 
         {/* Scrollable Body */}
         <div className="p-4 overflow-y-auto space-y-4">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+          {/* Summary Cards with Livraisons in FC */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+            <div className="p-3 rounded-2xl bg-teal-50/70 border border-teal-200/80">
+              <span className="text-[11px] font-semibold text-teal-800 block">Livraisons</span>
+              <span className="text-sm font-extrabold text-teal-950 font-mono block">
+                {formatFC(sumDeliveredFC, currency)}
+              </span>
+            </div>
             <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/70">
               <span className="text-[11px] font-semibold text-slate-500 block">Ventes Totales</span>
-              <span className="text-sm font-extrabold text-slate-900 font-mono">
+              <span className="text-sm font-extrabold text-slate-900 font-mono block">
                 {formatFC(sumSalesFC, currency)}
               </span>
             </div>
             <div className="p-3 rounded-2xl bg-teal-50/80 border border-teal-200/70">
               <span className="text-[11px] font-semibold text-teal-700 block">Commission Due</span>
-              <span className="text-sm font-extrabold text-teal-900 font-mono">
+              <span className="text-sm font-extrabold text-teal-900 font-mono block">
                 {formatFC(sumCommissionFC, currency)}
+              </span>
+              <span className="text-[10px] text-teal-700 font-mono block">
+                Taux {formatNumber(employee.commissionRate)} %
               </span>
             </div>
             <div className="p-3 rounded-2xl bg-amber-50/80 border border-amber-200/70">
               <span className="text-[11px] font-semibold text-amber-700 block">Déjà Versé</span>
-              <span className="text-sm font-extrabold text-amber-900 font-mono">
+              <span className="text-sm font-extrabold text-amber-900 font-mono block">
                 {formatFC(totalPaidFC, currency)}
+              </span>
+              <span className="text-[10px] text-amber-700/80 font-mono block">
+                {payments.length} versements
               </span>
             </div>
             <div
@@ -188,18 +208,22 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
               }`}
             >
               <span className="text-[11px] font-semibold block">Reste à Payer</span>
-              <span className="text-sm font-extrabold font-mono">
+              <span className="text-sm font-extrabold font-mono block">
                 {formatFC(remainingDueFC, currency)}
               </span>
+              <span className="text-[10px] opacity-80 font-mono block">Solde net</span>
             </div>
           </div>
 
-          {/* Daily Table */}
+          {/* Daily Table with amounts in Francs */}
           <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-xs">
             <div className="px-3.5 py-2.5 bg-slate-100/70 border-b border-slate-200 flex items-center justify-between">
               <h3 className="text-xs font-bold text-slate-800">
-                Détail journalier ({entries.length} jours)
+                Détail journalier en Francs ({entries.length} jours)
               </h3>
+              <span className="text-[11px] text-slate-500 font-medium">
+                Livraisons, ventes et restes valorisés en {currency}
+              </span>
             </div>
 
             {entries.length === 0 ? (
@@ -211,43 +235,44 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
                     <tr>
-                      <th className="py-2 px-2.5">Date</th>
-                      <th className="py-2 px-2 text-center">Livr.</th>
-                      <th className="py-2 px-2 text-center">Vente</th>
-                      <th className="py-2 px-2 text-center">Reste</th>
-                      <th className="py-2 px-2 text-center">Abîmé</th>
-                      <th className="py-2 px-2.5 text-right">Ventes</th>
-                      <th className="py-2 px-2.5 text-right">Commission</th>
+                      <th className="py-2.5 px-3">Date</th>
+                      <th className="py-2.5 px-2.5 text-right">Livraison</th>
+                      <th className="py-2.5 px-2.5 text-right">Ventes</th>
+                      <th className="py-2.5 px-2.5 text-right">Reste</th>
+                      <th className="py-2.5 px-2.5 text-right">Abîmé</th>
+                      <th className="py-2.5 px-3 text-right">Commission</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {entries.map((entry) => {
-                      const dayDelivered = entry.items.reduce((acc, i) => acc + i.delivered, 0);
-                      const daySold = entry.items.reduce((acc, i) => acc + i.sold, 0);
-                      const dayRest = entry.items.reduce((acc, i) => acc + i.rest, 0);
-                      const dayDamaged = entry.items.reduce((acc, i) => acc + i.damaged, 0);
+                      const dayDeliveredFC = entry.items.reduce((acc, i) => acc + (i.delivered * (i.unitPrice || 0)), 0);
+                      const dayRestFC = entry.items.reduce((acc, i) => acc + (i.rest * (i.unitPrice || 0)), 0);
+                      const dayDamagedFC = entry.items.reduce((acc, i) => acc + (i.damaged * (i.unitPrice || 0)), 0);
 
                       return (
                         <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
-                          <td className="py-2 px-2.5 font-medium text-slate-900 whitespace-nowrap">
+                          <td className="py-2.5 px-3 font-medium text-slate-900 whitespace-nowrap">
                             {formatDate(entry.date)}
                           </td>
-                          <td className="py-2 px-2 text-center font-mono text-slate-600">
-                            {formatNumber(dayDelivered)}
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap font-extrabold text-slate-900 text-xs">
+                            {formatFC(dayDeliveredFC, currency)}
                           </td>
-                          <td className="py-2 px-2 text-center font-mono font-bold text-emerald-700">
-                            {formatNumber(daySold)}
-                          </td>
-                          <td className="py-2 px-2 text-center font-mono text-slate-600">
-                            {formatNumber(dayRest)}
-                          </td>
-                          <td className="py-2 px-2 text-center font-mono text-rose-600">
-                            {formatNumber(dayDamaged)}
-                          </td>
-                          <td className="py-2 px-2.5 text-right font-mono text-slate-800 whitespace-nowrap">
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap font-extrabold text-emerald-700 text-xs">
                             {formatFC(entry.totalSalesFC, currency)}
                           </td>
-                          <td className="py-2 px-2.5 text-right font-mono font-bold text-teal-700 whitespace-nowrap">
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap font-bold text-slate-700 text-xs">
+                            {formatFC(dayRestFC, currency)}
+                          </td>
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap text-xs">
+                            {dayDamagedFC > 0 ? (
+                              <span className="font-bold text-rose-600">
+                                {formatFC(dayDamagedFC, currency)}
+                              </span>
+                            ) : (
+                              <span className="text-slate-400">0 FC</span>
+                            )}
+                          </td>
+                          <td className="py-2.5 px-3 text-right font-mono font-extrabold text-teal-700 whitespace-nowrap text-xs">
                             {formatFC(entry.employeeCommissionFC, currency)}
                           </td>
                         </tr>
@@ -256,15 +281,20 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
                   </tbody>
                   <tfoot className="bg-slate-50 font-bold border-t border-slate-200">
                     <tr>
-                      <td className="py-2.5 px-2.5 text-slate-900">TOTAUX</td>
-                      <td className="py-2.5 px-2 text-center font-mono">{sumDelivered}</td>
-                      <td className="py-2.5 px-2 text-center font-mono text-emerald-700">{sumSold}</td>
-                      <td className="py-2.5 px-2 text-center font-mono text-slate-400">-</td>
-                      <td className="py-2.5 px-2 text-center font-mono text-rose-600">{sumDamaged}</td>
-                      <td className="py-2.5 px-2.5 text-right font-mono text-slate-900 whitespace-nowrap">
+                      <td className="py-3 px-3 text-slate-900 font-extrabold">TOTAUX</td>
+                      <td className="py-3 px-2.5 text-right font-mono whitespace-nowrap text-slate-900 font-extrabold text-xs">
+                        {formatFC(sumDeliveredFC, currency)}
+                      </td>
+                      <td className="py-3 px-2.5 text-right font-mono whitespace-nowrap text-emerald-700 font-extrabold text-xs">
                         {formatFC(sumSalesFC, currency)}
                       </td>
-                      <td className="py-2.5 px-2.5 text-right font-mono text-teal-800 whitespace-nowrap">
+                      <td className="py-3 px-2.5 text-right font-mono whitespace-nowrap text-slate-700 font-extrabold text-xs">
+                        {formatFC(sumRestFC, currency)}
+                      </td>
+                      <td className="py-3 px-2.5 text-right font-mono whitespace-nowrap text-rose-600 font-extrabold text-xs">
+                        {formatFC(sumDamagedFC, currency)}
+                      </td>
+                      <td className="py-3 px-3 text-right font-mono text-teal-800 whitespace-nowrap font-extrabold text-xs">
                         {formatFC(sumCommissionFC, currency)}
                       </td>
                     </tr>
