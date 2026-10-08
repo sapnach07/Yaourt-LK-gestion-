@@ -14,6 +14,7 @@ import {
   Package,
   Layers,
   AlertTriangle,
+  Smartphone,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -24,6 +25,7 @@ import {
 } from '../../utils/exportImport';
 import { formatFC, formatDate, formatPercent } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { PWAInstallButton } from '../../components/PWAInstallButton';
 import type { AppSettings, Product } from '../../types';
 
 interface SettingsViewProps {
@@ -281,6 +283,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         <span className="text-[10px] font-extrabold text-teal-800 bg-white px-2 py-1 rounded-md border border-teal-200">
           HORS LIGNE
         </span>
+      </div>
+
+      {/* PWA Mobile Installation Section */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-2.5">
+        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+          <Smartphone className="w-4 h-4 text-teal-700" />
+          <span>Application Mobile (PWA & Hors Ligne)</span>
+        </h3>
+        <p className="text-xs text-slate-600 leading-relaxed">
+          Yaourt Gestion est configurée pour fonctionner à 100 % hors ligne avec mise en cache locale intégrale de tous les fichiers.
+        </p>
+        <div className="pt-1">
+          <PWAInstallButton variant="full" />
+        </div>
       </div>
 
       {/* Section 1: Business & Calculation Parameters */}

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Fond carré 512x512 #0d9488 -->
+  <rect width="512" height="512" fill="#0d9488" />
+
+  <!-- Pot de yaourt blanc simple -->
+  <g fill="#ffffff">
+    <!-- Couvercle / Opercule supérieur -->
+    <rect x="176" y="112" width="160" height="24" rx="8" />
+    
+    <!-- Col / Rebord sous le couvercle -->
+    <path d="M 188 136 L 324 136 L 316 160 L 196 160 Z" />
+
+    <!-- Corps du pot de yaourt -->
+    <path d="M 192 160 
+             L 320 160 
+             L 300 380 
+             C 298 396, 284 408, 268 408 
+             L 244 408 
+             C 228 408, 214 396, 212 380 
+             Z" />
+
+    <!-- Cuillère minimaliste intégrée sur le côté -->
+    <path d="M 336 128 
+             C 346 112, 366 112, 376 128 
+             C 386 144, 376 168, 360 178 
+             L 336 290 
+             L 326 288 
+             L 348 174 
+             C 342 166, 338 152, 336 128 
+             Z" />
+  </g>
+</svg>

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Lock, ShieldCheck } from 'lucide-react';
 import { formatDate, toISODate } from '../utils/formatters';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   businessName: string;
@@ -38,8 +39,9 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Zone 2 / 3: Quick Action (Lock screen if PIN is enabled) */}
-      <div className="flex items-center gap-1">
+      {/* Zone 2 / 3: Quick Action (PWA Install + Lock screen if PIN is enabled) */}
+      <div className="flex items-center gap-1.5">
+        <PWAInstallButton variant="compact" />
         {hasPin && onLockNow && (
           <button
             type="button"
