@@ -132,7 +132,7 @@ export async function exportSalesToCSV(): Promise<void> {
   const currency = settings?.currency || 'FC';
 
   let csv = '\uFEFF'; // UTF-8 BOM for Excel
-  csv += 'Date;Employée;Produit;Prix Unitaire;Reste Veille;Livraison;Total à Vendre;Vendu;Abîmé;Reste;Ventes (FC);Perte (FC);Commission (%);Commission (FC);Réserve Dépenses (FC);Part Gérant (FC)\r\n';
+  csv += 'Date;Vendeur(se);Produit;Prix Unitaire;Reste Veille;Livraison;Total à Vendre;Vendu;Abîmé;Reste;Ventes (FC);Perte (FC);Commission (%);Commission (FC);Réserve Dépenses (FC);Part Gérant (FC)\r\n';
 
   for (const entry of entries) {
     for (const item of entry.items) {

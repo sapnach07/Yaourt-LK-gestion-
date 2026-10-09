@@ -69,7 +69,7 @@ export const PaymentModal: React.FC<PaymentModalProps> = ({
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50/70">
           <div>
             <h2 className="text-base font-bold text-slate-900">Enregistrer un Paiement</h2>
-            <p className="text-xs text-slate-500 font-medium">Pour {employee.name}</p>
+            <p className="text-xs text-slate-500 font-medium">Vendeur(se) : {employee.name}</p>
           </div>
           <button
             type="button"

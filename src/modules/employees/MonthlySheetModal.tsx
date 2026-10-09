@@ -135,10 +135,10 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50/70">
           <div>
             <h2 className="text-base font-bold text-slate-900">
-              Fiche Mensuelle : {employee.name}
+              Fiche de paie vendeur(se) : {employee.name}
             </h2>
             <p className="text-xs text-slate-500 font-medium">
-              Vérification des ventes et décompte de commission
+              Vérification des ventes et décompte de commission du/de la vendeur(se)
             </p>
           </div>
           <button

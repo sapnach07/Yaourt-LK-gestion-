@@ -55,7 +55,7 @@ export async function generateEmployeeMonthlyPDF(
   doc.setFontSize(11);
   doc.setTextColor(...darkTextColor);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Employée : ${employee.name}`, 18, 36);
+  doc.text(`Vendeur(se) : ${employee.name}`, 18, 36);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
@@ -236,7 +236,7 @@ export async function generateEmployeeMonthlyPDF(
   doc.setTextColor(...darkTextColor);
 
   // Employee signature box
-  doc.text(`Signature de l'employée`, 20, signatureY);
+  doc.text(`Signature du/de la vendeur(se)`, 20, signatureY);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
   doc.text(`(Précédé de la mention "Bon pour accord")`, 20, signatureY + 5);
@@ -263,7 +263,7 @@ export async function generateEmployeeMonthlyPDF(
       if (navigator.canShare && navigator.canShare({ files: [file] })) {
         await navigator.share({
           files: [file],
-          title: `Fiche de paie - ${employee.name} (${monthName})`,
+          title: `Fiche de paie vendeur(se) - ${employee.name} (${monthName})`,
           text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Livraisons : ${formatFC(sumDeliveredFC, currency)} | Ventes : ${formatFC(sumSalesFC, currency)} | Commission : ${formatFC(sumCommissionFC, currency)} | Reste à payer : ${formatFC(netDueFC, currency)}.`,
         });
         return true;
@@ -350,7 +350,7 @@ export async function generateMonthlyManagementReportPDF(
     head: [['Indicateur Clé', 'Valeur', 'Commentaire / Règle']],
     body: [
       ['Ventes Totales', formatFC(stats.totalSalesFC, currency), 'Chiffre d’affaires brut'],
-      ['Commissions Employées', formatFC(stats.totalCommissionFC, currency), 'Rémunérations dues'],
+      ['Commissions Vendeurs(ses)', formatFC(stats.totalCommissionFC, currency), 'Rémunérations dues'],
       ['Dépenses Totales', formatFC(stats.totalExpensesFC, currency), 'Achats & charges du mois'],
       ['BÉNÉFICE RÉEL', formatFC(stats.realProfitFC, currency), 'Ventes - Commissions - Dépenses'],
       ['Marge Bénéficiaire', formatPercent(stats.profitMarginPct), 'Bénéfice réel ÷ Ventes'],
@@ -383,7 +383,7 @@ export async function generateMonthlyManagementReportPDF(
   doc.setFontSize(11);
   doc.setTextColor(...darkTextColor);
   doc.setFont('helvetica', 'bold');
-  doc.text('Performance par Employée', 14, nextY);
+  doc.text('Performance par Vendeur(se)', 14, nextY);
 
   const empRows = employeeBreakdown.map((emp) => [
     emp.name,
@@ -395,7 +395,7 @@ export async function generateMonthlyManagementReportPDF(
 
   autoTable(doc, {
     startY: nextY + 3,
-    head: [['Employée', 'Ventes (FC)', 'Commission (FC)', 'Taux Vente', 'Taux Perte']],
+    head: [['Vendeur(se)', 'Ventes (FC)', 'Commission (FC)', 'Taux Vente', 'Taux Perte']],
     body: empRows.length > 0 ? empRows : [['Aucune donnée', '-', '-', '-', '-']],
     theme: 'grid',
     headStyles: {

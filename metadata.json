@@ -1,6 +1,6 @@
 {
   "name": "Yaourt Gestion",
-  "description": "Application mobile-first de gestion de vente et production de yaourts, commissions des employées et comptabilité hors ligne.",
+  "description": "Application mobile-first de gestion de vente et production de yaourts, commissions des vendeurs(ses) et comptabilité hors ligne.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

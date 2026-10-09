@@ -804,7 +804,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
 
-          {/* Commissions Employées */}
+          {/* Commissions Vendeurs(ses) */}
           <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
             <span className="text-[11px] font-bold text-teal-700 uppercase block">
               Commissions dues
@@ -1131,7 +1131,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* 4. Stacked Bars: Vendu / Reste / Abîmé par employée (%) */}
+        {/* 4. Stacked Bars: Vendu / Reste / Abîmé par vendeur(se) (%) */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs space-y-2">
           <div className="flex items-center justify-between">
             <h4 className="text-xs font-bold text-slate-800">
