@@ -13,6 +13,7 @@ import {
   Clock,
   HelpCircle,
   Wallet,
+  Info,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -192,10 +193,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const expenseReserveFC = (salesFC * expenseReserveRate) / 100;
     const expenseVsSalesPct = safePercentage(expensesFC, salesFC);
 
+    // Dépassement du seuil de dépenses (fonds prévu)
+    const expenseThresholdOverrunFC = Math.max(0, expensesFC - expenseReserveFC);
+    // Part du gérant nette après déduction du dépassement des dépenses
+    const netOwnerProfitFC = Math.round(ownerShareFC - expenseThresholdOverrunFC);
+
     return {
       salesFC: Math.round(salesFC),
       commissionFC: Math.round(commissionFC),
       ownerShareFC: Math.round(ownerShareFC),
+      expenseThresholdOverrunFC: Math.round(expenseThresholdOverrunFC),
+      netOwnerProfitFC,
       damagedFC: Math.round(damagedFC),
       expensesFC: Math.round(expensesFC),
       realProfitFC: Math.round(realProfitFC),
@@ -485,6 +493,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           cumulativeReserve.soldeFC,
           settings.currency
         )}. Dépenses: ${formatFC(cumulativeReserve.totalExpensesFC, settings.currency)}, fonds (${cumulativeReserve.reserveRatePct} %): ${formatFC(cumulativeReserve.totalSalesReserveFC, settings.currency)}, ajouts: ${formatFC(cumulativeReserve.totalAdditionsFC, settings.currency)}, retraits: ${formatFC(cumulativeReserve.totalWithdrawalsFC, settings.currency)}.`,
+      });
+    }
+
+    // 2b. Dépassement du seuil de 50% des dépenses déduit de ma part
+    if (currentMetrics.expenseThresholdOverrunFC > 0) {
+      alerts.push({
+        id: 'expense_overrun_deduction',
+        type: 'warning',
+        title: `Dépassement de seuil déduit de ma part : −${formatFC(currentMetrics.expenseThresholdOverrunFC, settings.currency)}`,
+        message: `Sur cette période, les dépenses (${formatFC(currentMetrics.expensesFC, settings.currency)}) dépassent le seuil de ${settings.expenseReservePct || 50} % prévu (${formatFC(currentMetrics.expenseReserveFC, settings.currency)}). L'excédent de ${formatFC(currentMetrics.expenseThresholdOverrunFC, settings.currency)} est automatiquement déduit de votre part de bénéfices.`,
       });
     }
 
@@ -879,17 +897,47 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
 
-          {/* Ma part théorique */}
-          <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
-            <span className="text-[11px] font-bold text-emerald-700 uppercase block">
-              Ma part théorique
-            </span>
-            <span className="text-base font-extrabold text-emerald-900 font-mono mt-0.5 block">
-              {formatFC(currentMetrics.ownerShareFC, currency)}
-            </span>
-            <span className="text-[10px] text-slate-400 mt-1 block font-mono">
-              (100% − réserve − comm)
-            </span>
+          {/* Ma part (Mes bénéfices réels) */}
+          <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-emerald-700 uppercase block">
+                  Mes bénéfices (Gérant)
+                </span>
+                {currentMetrics.expenseThresholdOverrunFC > 0 && (
+                  <span className="text-[9px] font-extrabold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-md font-mono">
+                    Déduction
+                  </span>
+                )}
+              </div>
+              <span className={`text-base font-extrabold font-mono mt-0.5 block ${
+                currentMetrics.netOwnerProfitFC < 0 ? 'text-rose-700' : 'text-emerald-900'
+              }`}>
+                {formatFC(currentMetrics.netOwnerProfitFC, currency)}
+              </span>
+            </div>
+
+            <div className="mt-1.5 pt-1.5 border-t border-slate-100 space-y-0.5 text-[10px]">
+              <div className="flex items-center justify-between text-slate-500 font-mono">
+                <span>Part brute ({formatFC(currentMetrics.ownerShareFC, currency).replace(currency, '').trim()})</span>
+                <span className="text-slate-400">100%−caisse−comm</span>
+              </div>
+              {currentMetrics.expenseThresholdOverrunFC > 0 ? (
+                <div className="text-[10px] text-rose-700 font-semibold bg-rose-50/80 p-1.5 rounded-lg border border-rose-200/80 mt-1">
+                  <div className="flex items-center justify-between font-mono font-bold">
+                    <span>Déduit de ma part :</span>
+                    <span>−{formatFC(currentMetrics.expenseThresholdOverrunFC, currency)}</span>
+                  </div>
+                  <p className="text-[9px] text-rose-600 font-normal leading-tight mt-0.5">
+                    Motif : les dépenses ({formatFC(currentMetrics.expensesFC, currency)}) ont dépassé les {settings.expenseReservePct || 50}% prévus ({formatFC(currentMetrics.expenseReserveFC, currency)}) de {formatFC(currentMetrics.expenseThresholdOverrunFC, currency)}.
+                  </p>
+                </div>
+              ) : (
+                <div className="text-[9px] text-emerald-600 font-medium">
+                  ✓ Dépenses conformes au seuil de {settings.expenseReservePct || 50} % (aucune déduction)
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

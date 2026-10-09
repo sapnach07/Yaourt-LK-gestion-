@@ -13,6 +13,8 @@ import {
   AlertTriangle,
   FileText,
   Clock,
+  TrendingUp,
+  UserCheck,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -84,6 +86,14 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     expenses,
     reserveRate
   );
+
+  // Bénéfices du gérant cumulés : part théorique et déduction de l'excédent de dépenses
+  let totalOwnerShareGrossFC = 0;
+  for (const entry of dailyEntries) {
+    totalOwnerShareGrossFC += entry.ownerShareFC || 0;
+  }
+  const totalExpenseOverrunFC = Math.max(0, reserveDetails.totalExpensesFC - reserveDetails.totalSalesReserveFC);
+  const netOwnerProfitFC = Math.round(totalOwnerShareGrossFC - totalExpenseOverrunFC);
 
   const handleOpenAdd = () => {
     setEditingMovement(null);
@@ -315,6 +325,63 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                 Prélèvements
               </span>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* SECTION MES BÉNÉFICES (PART DU GÉRANT & DÉDUCTION EN CAS DE DÉPASSEMENT DES DÉPENSES) */}
+      <div className="rounded-3xl border border-slate-200/90 bg-white p-4 shadow-2xs space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 rounded-lg bg-emerald-100 text-emerald-800 flex items-center justify-center">
+              <UserCheck className="w-4 h-4" />
+            </div>
+            <div>
+              <h3 className="text-xs font-black uppercase tracking-wider text-slate-800">
+                Mes Bénéfices à Moi (Part Gérant)
+              </h3>
+              <p className="text-[11px] text-slate-500">
+                Calculé sur le cumul de l'activité
+              </p>
+            </div>
+          </div>
+          <span className={`text-base font-extrabold font-mono ${
+            netOwnerProfitFC < 0 ? 'text-rose-700' : 'text-emerald-900'
+          }`}>
+            {formatFC(netOwnerProfitFC, currency)}
+          </span>
+        </div>
+
+        <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200/80 space-y-2 text-xs">
+          <div className="flex items-center justify-between font-mono">
+            <span className="text-slate-600">Part brute théorique ({100 - reserveRate - 20}% des ventes) :</span>
+            <span className="font-extrabold text-slate-900">+{formatFC(totalOwnerShareGrossFC, currency)}</span>
+          </div>
+
+          {totalExpenseOverrunFC > 0 ? (
+            <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-900 space-y-1">
+              <div className="flex items-center justify-between font-bold font-mono">
+                <span className="flex items-center gap-1.5 text-rose-800">
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-rose-600" />
+                  Dépassement du seuil déduit :
+                </span>
+                <span className="text-rose-700 font-extrabold">−{formatFC(totalExpenseOverrunFC, currency)}</span>
+              </div>
+              <p className="text-[11px] text-rose-800 leading-snug">
+                <strong>Pourquoi ce montant est déduit ?</strong> Les dépenses totales ({formatFC(reserveDetails.totalExpensesFC, currency)}) ont dépassé les {reserveRate} % prévus ({formatFC(reserveDetails.totalSalesReserveFC, currency)}). L'excédent de <strong>{formatFC(totalExpenseOverrunFC, currency)}</strong> a donc été directement retenu sur votre part personnelle.
+              </p>
+            </div>
+          ) : (
+            <div className="p-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] font-medium flex items-center gap-1.5">
+              <span>✓ Les dépenses ({formatFC(reserveDetails.totalExpensesFC, currency)}) ne dépassent pas le seuil de {reserveRate} % ({formatFC(reserveDetails.totalSalesReserveFC, currency)}). Aucune déduction effectuée.</span>
+            </div>
+          )}
+
+          <div className="pt-2 border-t border-slate-200 flex items-center justify-between font-bold">
+            <span className="text-slate-800">Bénéfice net personnel disponible :</span>
+            <span className={`font-mono text-sm ${netOwnerProfitFC < 0 ? 'text-rose-700' : 'text-emerald-700'}`}>
+              {formatFC(netOwnerProfitFC, currency)}
+            </span>
           </div>
         </div>
       </div>
