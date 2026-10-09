@@ -213,10 +213,10 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
           <div>
             <h2 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-2">
               <Wallet className="w-5 h-5 text-teal-700" />
-              Réserve Dépenses
+              Caisse
             </h2>
             <p className="text-xs text-slate-500 font-medium">
-              Trésorerie de réserve cumulée et mouvements manuels
+              Suivi de la caisse (dépenses, fonds de 50 % et mouvements)
             </p>
           </div>
         </div>
@@ -232,7 +232,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
       >
         <div className="flex items-center justify-between">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-600">
-            Solde de Réserve Disponible
+            Solde de Caisse Disponible
           </span>
           <span
             className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full font-mono ${
@@ -241,7 +241,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                 : 'bg-rose-200/90 text-rose-900'
             }`}
           >
-            {reserveDetails.soldeFC >= 0 ? 'Solde Positif' : 'Déficit Réserve'}
+            {reserveDetails.soldeFC >= 0 ? 'Solde Positif' : 'Déficit Caisse'}
           </span>
         </div>
 
@@ -262,16 +262,45 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
         {/* Formule détaillée sous le solde */}
         <div className="pt-3 border-t border-slate-200/80 space-y-2 text-xs">
           <span className="text-[11px] font-bold text-slate-600 block uppercase tracking-wide">
-            Détail du calcul cumulé :
+            Composition de la caisse :
           </span>
 
           <div className="grid grid-cols-2 gap-2 text-slate-800">
+            {/* 1. Dépenses */}
+            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/70">
+              <span className="text-[10px] text-slate-500 block font-semibold">
+                1. Dépenses totales
+              </span>
+              <span className="font-extrabold font-mono text-rose-700 block">
+                −{formatFC(reserveDetails.totalExpensesFC, currency)}
+              </span>
+              <span className="text-[9px] text-slate-400 block">
+                Achats et charges
+              </span>
+            </div>
+
+            {/* 2. Fonds (les 50%) */}
+            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/70">
+              <span className="text-[10px] text-slate-500 block font-semibold">
+                2. Fonds (les {reserveRate} %)
+              </span>
+              <span className="font-extrabold font-mono text-emerald-700 block">
+                +{formatFC(reserveDetails.totalSalesReserveFC, currency)}
+              </span>
+              <span className="text-[9px] text-slate-400 block font-mono">
+                sur {formatFC(reserveDetails.allTimeSalesFC, currency)} ventes
+              </span>
+            </div>
+
             <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/70">
               <span className="text-[10px] text-slate-500 block font-semibold">
                 + Ajouts manuels
               </span>
               <span className="font-extrabold font-mono text-emerald-700 block">
                 +{formatFC(reserveDetails.totalAdditionsFC, currency)}
+              </span>
+              <span className="text-[9px] text-slate-400 block">
+                Argent de ma poche
               </span>
             </div>
 
@@ -282,26 +311,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
               <span className="font-extrabold font-mono text-slate-700 block">
                 −{formatFC(reserveDetails.totalWithdrawalsFC, currency)}
               </span>
-            </div>
-
-            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/70">
-              <span className="text-[10px] text-slate-500 block font-semibold">
-                + Réserve des ventes ({reserveRate} %)
-              </span>
-              <span className="font-extrabold font-mono text-emerald-700 block">
-                +{formatFC(reserveDetails.totalSalesReserveFC, currency)}
-              </span>
-              <span className="text-[9px] text-slate-400 block font-mono">
-                sur {formatFC(reserveDetails.allTimeSalesFC, currency)}
-              </span>
-            </div>
-
-            <div className="bg-white/80 p-2.5 rounded-xl border border-slate-200/70">
-              <span className="text-[10px] text-slate-500 block font-semibold">
-                − Total des dépenses
-              </span>
-              <span className="font-extrabold font-mono text-rose-700 block">
-                −{formatFC(reserveDetails.totalExpensesFC, currency)}
+              <span className="text-[9px] text-slate-400 block">
+                Prélèvements
               </span>
             </div>
           </div>
@@ -334,7 +345,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
             <span>Retirer de l'argent</span>
           </div>
           <span className="text-[10px] text-rose-100 font-normal mt-0.5">
-            Prélèvement sur réserve
+            Prélèvement sur la caisse
           </span>
         </button>
       </div>
@@ -472,8 +483,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                   </h3>
                   <p className="text-[11px] text-slate-500">
                     {formType === 'ajout'
-                      ? 'Argent de ma poche pour alimenter la réserve'
-                      : 'Prélèvement sur le solde de la réserve'}
+                      ? 'Argent de ma poche pour alimenter la caisse'
+                      : 'Prélèvement sur le solde de la caisse'}
                   </p>
                 </div>
               </div>
@@ -581,10 +592,10 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                   placeholder={
                     formType === 'ajout'
                       ? 'Ex: Remise de fonds personnels, avance d’achat...'
-                      : 'Ex: Achat matériel imprévu, prélèvement trésorerie...'
+                      : 'Ex: Achat matériel imprévu, prélèvement caisse...'
                   }
                   required
-                  className="w-full px-3.5 py-2 rounded-xl border border-slate-300 text-xs text-slate-800 focus:outline-none focus:border-teal-600"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-300 text-xs text-slate-800 focus:outline-none focus:border-teal-600"
                 />
               </div>
 
@@ -616,12 +627,12 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
       {/* MODALE DE CONFIRMATION DE SUPPRESSION INTERNE */}
       <ConfirmModal
         isOpen={Boolean(movementToDelete)}
-        title="Supprimer ce mouvement de réserve ?"
+        title="Supprimer ce mouvement de caisse ?"
         message={`Êtes-vous sûr de vouloir supprimer ce ${
           movementToDelete?.type === 'ajout' ? 'ajout' : 'retrait'
         } de ${movementToDelete ? formatFC(movementToDelete.amountFC, currency) : ''} (${
           movementToDelete?.reason || ''
-        }) ? Le solde de réserve sera recalculé immédiatement.`}
+        }) ? Le solde de caisse sera recalculé immédiatement.`}
         confirmLabel="Supprimer"
         cancelLabel="Annuler"
         isDanger={true}

@@ -200,7 +200,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
             >
               <Wallet className="w-4 h-4 text-teal-400" />
-              <span>Réserve</span>
+              <span>Caisse</span>
             </button>
           )}
 
@@ -252,7 +252,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             )}
             <div>
               <h3 className="text-xs font-extrabold uppercase tracking-wide">
-                Solde Réserve Cumulé : {formatFC(cumulativeDetails.soldeFC, currency)}
+                Solde Caisse Cumulé : {formatFC(cumulativeDetails.soldeFC, currency)}
               </h3>
               <span className="text-[11px] text-slate-600">
                 Comparaison du mois : {formatMonthName(selectedMonth)}
@@ -277,7 +277,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   : 'bg-emerald-200/80 text-emerald-800'
               }`}
             >
-              {isCumulativeNegative ? 'DÉFICIT CUMULÉ' : 'RÉSERVE POSITIVE'}
+              {isCumulativeNegative ? 'DÉFICIT CAISSE' : 'CAISSE POSITIVE'}
             </span>
           </div>
         </div>
@@ -319,7 +319,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           <div className="mt-3 p-2 rounded-xl bg-white/90 border border-rose-300 text-rose-800 text-xs font-bold flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
             <span>
-              Alerte : Solde cumulé de réserve négatif ({formatFC(cumulativeDetails.soldeFC, currency)}) ! Pensez à réapprovisionner la réserve.
+              Alerte : Solde cumulé de la caisse négatif ({formatFC(cumulativeDetails.soldeFC, currency)}) ! Pensez à réapprovisionner la caisse.
             </span>
           </div>
         )}

@@ -474,17 +474,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       });
     }
 
-    // 2. Cumulative Reserve is negative
+    // 2. Cumulative Reserve/Caisse is negative
     // L'alerte rouge de la page Dépenses et du tableau de bord ne s'affiche que si le solde cumulé est négatif.
     if (cumulativeReserve.soldeFC < 0) {
       alerts.push({
         id: 'cumulative_reserve_negative',
         type: 'danger',
-        title: 'Solde de réserve cumulé négatif',
-        message: `Le solde cumulé de la réserve est en déficit de ${formatFC(
+        title: 'Solde de caisse cumulé négatif',
+        message: `Le solde cumulé de la caisse est en déficit de ${formatFC(
           cumulativeReserve.soldeFC,
           settings.currency
-        )}. Total ajouts: ${formatFC(cumulativeReserve.totalAdditionsFC, settings.currency)}, retraits: ${formatFC(cumulativeReserve.totalWithdrawalsFC, settings.currency)}, réserve des ventes: ${formatFC(cumulativeReserve.totalSalesReserveFC, settings.currency)}, dépenses: ${formatFC(cumulativeReserve.totalExpensesFC, settings.currency)}.`,
+        )}. Dépenses: ${formatFC(cumulativeReserve.totalExpensesFC, settings.currency)}, fonds (${cumulativeReserve.reserveRatePct} %): ${formatFC(cumulativeReserve.totalSalesReserveFC, settings.currency)}, ajouts: ${formatFC(cumulativeReserve.totalAdditionsFC, settings.currency)}, retraits: ${formatFC(cumulativeReserve.totalWithdrawalsFC, settings.currency)}.`,
       });
     }
 
@@ -621,7 +621,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
               >
                 <Wallet className="w-4 h-4" />
-                <span>Réserve</span>
+                <span>Caisse</span>
               </button>
             )}
 
