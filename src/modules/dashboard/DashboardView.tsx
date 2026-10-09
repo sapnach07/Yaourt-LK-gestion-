@@ -36,6 +36,7 @@ import {
   safePercentage,
   safeDivide,
   getDateRangeForFilter,
+  toISODate,
   toISOMonth,
   getFrenchDayName,
 } from '../../utils/formatters';
@@ -681,20 +682,108 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         {/* Custom date range row */}
         {periodType === 'custom' && (
-          <div className="p-3 bg-white rounded-2xl border border-slate-200 flex items-center gap-2">
-            <input
-              type="date"
-              value={customStart}
-              onChange={(e) => setCustomStart(e.target.value)}
-              className="flex-1 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800"
-            />
-            <span className="text-xs font-bold text-slate-400">à</span>
-            <input
-              type="date"
-              value={customEnd}
-              onChange={(e) => setCustomEnd(e.target.value)}
-              className="flex-1 px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800"
-            />
+          <div className="p-3 bg-white rounded-2xl border border-slate-200/90 shadow-2xs space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                <Calendar className="w-3.5 h-3.5 text-teal-700" />
+                Choisir une date précise ou une période
+              </span>
+              {(customStart || customEnd) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const todayStr = toISODate(new Date());
+                    setCustomStart(todayStr);
+                    setCustomEnd(todayStr);
+                  }}
+                  className="text-[10px] font-bold text-teal-700 hover:text-teal-800"
+                >
+                  Date du jour
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex-1">
+                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                  Du (ou date unique)
+                </label>
+                <input
+                  type="date"
+                  value={customStart}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCustomStart(val);
+                    if (!customEnd || customEnd < val) {
+                      setCustomEnd(val);
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 focus:bg-white focus:outline-teal-700"
+                />
+              </div>
+
+              <span className="text-xs font-bold text-slate-400 mt-4">à</span>
+
+              <div className="flex-1">
+                <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                  Au
+                </label>
+                <input
+                  type="date"
+                  value={customEnd}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCustomEnd(val);
+                    if (!customStart) {
+                      setCustomStart(val);
+                    }
+                  }}
+                  className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 focus:bg-white focus:outline-teal-700"
+                />
+              </div>
+            </div>
+
+            {/* Quick date shortcuts */}
+            <div className="flex items-center gap-1.5 pt-1 overflow-x-auto no-scrollbar text-[10px]">
+              <span className="text-slate-400 shrink-0 font-medium">Accès rapide :</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const todayStr = toISODate(new Date());
+                  setCustomStart(todayStr);
+                  setCustomEnd(todayStr);
+                }}
+                className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold shrink-0"
+              >
+                Aujourd’hui
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const y = new Date();
+                  y.setDate(y.getDate() - 1);
+                  const yStr = toISODate(y);
+                  setCustomStart(yStr);
+                  setCustomEnd(yStr);
+                }}
+                className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold shrink-0"
+              >
+                Hier
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const now = new Date();
+                  const firstDay = toISODate(new Date(now.getFullYear(), now.getMonth(), 1));
+                  const lastDay = toISODate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+                  setCustomStart(firstDay);
+                  setCustomEnd(lastDay);
+                }}
+                className="px-2 py-0.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold shrink-0"
+              >
+                Tout ce mois
+              </button>
+            </div>
           </div>
         )}
 
@@ -783,9 +872,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* SECTION A: KEY PERFORMANCE INDICATORS (KPIs) */}
       <div className="space-y-2.5">
-        <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
-          Indicateurs Clés (Période)
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
+            Indicateurs Clés & Bénéfices
+          </h3>
+          <span className="text-[11px] font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200/80 font-mono">
+            {dateRange.startDate === dateRange.endDate
+              ? formatDate(dateRange.startDate)
+              : `${formatDate(dateRange.startDate)} → ${formatDate(dateRange.endDate)}`}
+          </span>
+        </div>
 
         {/* Hero Card: Bénéfice Réel */}
         <div className="p-4 rounded-3xl bg-slate-900 text-white shadow-md relative overflow-hidden">
