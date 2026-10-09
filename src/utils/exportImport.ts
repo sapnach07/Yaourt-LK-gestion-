@@ -11,6 +11,7 @@ export interface BackupData {
   dailyEntries: any[];
   productionEntries: any[];
   expenses: any[];
+  reserveMovements?: any[];
   payments: any[];
   settings: AppSettings;
 }
@@ -26,6 +27,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     dailyEntries,
     productionEntries,
     expenses,
+    reserveMovements,
     payments,
     settingsList,
   ] = await Promise.all([
@@ -34,6 +36,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     db.dailyEntries.toArray(),
     db.productionEntries.toArray(),
     db.expenses.toArray(),
+    db.reserveMovements.toArray(),
     db.payments.toArray(),
     db.settings.toArray(),
   ]);
@@ -43,7 +46,7 @@ export async function exportAllDataToJSON(): Promise<void> {
   const dateStr = toISODate(now);
 
   const backup: BackupData = {
-    version: 1,
+    version: 2,
     exportDate: now.toISOString(),
     businessName: currentSettings?.businessName || 'Yaourt Gestion',
     employees,
@@ -51,6 +54,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     dailyEntries,
     productionEntries,
     expenses,
+    reserveMovements,
     payments,
     settings: {
       ...currentSettings,
@@ -98,6 +102,7 @@ export async function restoreDataFromJSON(
         db.dailyEntries.clear(),
         db.productionEntries.clear(),
         db.expenses.clear(),
+        db.reserveMovements.clear(),
         db.payments.clear(),
       ]);
     }
@@ -107,6 +112,7 @@ export async function restoreDataFromJSON(
     if (data.dailyEntries?.length) await db.dailyEntries.bulkPut(data.dailyEntries);
     if (data.productionEntries?.length) await db.productionEntries.bulkPut(data.productionEntries);
     if (data.expenses?.length) await db.expenses.bulkPut(data.expenses);
+    if (data.reserveMovements?.length) await db.reserveMovements.bulkPut(data.reserveMovements);
     if (data.payments?.length) await db.payments.bulkPut(data.payments);
     if (data.settings) await db.settings.put(data.settings);
 

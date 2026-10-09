@@ -10,6 +10,7 @@ import {
   Check,
   ShieldCheck,
   Calculator,
+  Wallet,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -25,21 +26,25 @@ import {
 } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
-import type { Expense, DailyEntry, AppSettings } from '../../types';
+import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
+import type { Expense, DailyEntry, ReserveMovement, AppSettings } from '../../types';
 
 interface ExpensesViewProps {
   settings: AppSettings;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenCalculator?: () => void;
+  onOpenReserve?: () => void;
 }
 
 export const ExpensesView: React.FC<ExpensesViewProps> = ({
   settings,
   onShowToast,
   onOpenCalculator,
+  onOpenReserve,
 }) => {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>([]);
+  const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(toISOMonth(new Date()));
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
@@ -61,12 +66,14 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [exps, entries] = await Promise.all([
+    const [exps, entries, movs] = await Promise.all([
       db.expenses.orderBy('date').reverse().toArray(),
       db.dailyEntries.toArray(),
+      db.reserveMovements.toArray(),
     ]);
     setExpenses(exps);
     setDailyEntries(entries);
+    setReserveMovements(movs);
   };
 
   const handleOpenAdd = () => {
@@ -142,7 +149,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     }
   };
 
-  // Month calculations
+  // Month calculations (information secondaire)
   const monthEntries = dailyEntries.filter((e) => e.date.startsWith(selectedMonth));
   const totalSalesInMonthFC = monthEntries.reduce((acc, e) => acc + (e.totalSalesFC || 0), 0);
   const reserveRate = settings.expenseReservePct || 50;
@@ -151,10 +158,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const monthExpenses = expenses.filter((e) => e.date.startsWith(selectedMonth));
   const totalExpensesInMonthFC = monthExpenses.reduce((acc, e) => acc + (e.amountFC || 0), 0);
 
-  const reserveBalanceFC = expenseReserveInMonthFC - totalExpensesInMonthFC;
-  const isReserveExceeded = totalExpensesInMonthFC > expenseReserveInMonthFC;
-  const overrunFC = totalExpensesInMonthFC - expenseReserveInMonthFC;
-  const overrunPct = safePercentage(overrunFC, expenseReserveInMonthFC);
+  const monthReserveBalanceFC = expenseReserveInMonthFC - totalExpensesInMonthFC;
+  const isMonthExceeded = totalExpensesInMonthFC > expenseReserveInMonthFC;
+  const monthOverrunFC = totalExpensesInMonthFC - expenseReserveInMonthFC;
+  const monthOverrunPct = safePercentage(monthOverrunFC, expenseReserveInMonthFC);
+
+  // SOLDE DE RÉSERVE CUMULÉ (depuis le tout début, sans filtre de période ni remise à zéro)
+  const cumulativeDetails = calculateReserveBalance(
+    reserveMovements,
+    dailyEntries,
+    expenses,
+    reserveRate
+  );
+  const isCumulativeNegative = cumulativeDetails.soldeFC < 0;
 
   // Filtered by category
   const displayedExpenses = monthExpenses.filter((e) =>
@@ -176,14 +192,27 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenAdd}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Ajouter</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenReserve && (
+            <button
+              type="button"
+              onClick={onOpenReserve}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+            >
+              <Wallet className="w-4 h-4 text-teal-400" />
+              <span>Réserve</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleOpenAdd}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Ajouter</span>
+          </button>
+        </div>
       </div>
 
       {/* Month Selector */}
@@ -205,14 +234,14 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       {/* Expense Reserve Comparison Card */}
       <div
         className={`rounded-2xl border p-4 shadow-xs transition-all ${
-          isReserveExceeded
+          isCumulativeNegative
             ? 'bg-rose-50 border-rose-300 text-rose-950'
             : 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
         }`}
       >
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            {isReserveExceeded ? (
+            {isCumulativeNegative ? (
               <div className="w-7 h-7 rounded-lg bg-rose-600 text-white flex items-center justify-center">
                 <AlertTriangle className="w-4 h-4" />
               </div>
@@ -223,30 +252,41 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             )}
             <div>
               <h3 className="text-xs font-extrabold uppercase tracking-wide">
-                Contrôle Réserve Dépenses ({reserveRate} %)
+                Solde Réserve Cumulé : {formatFC(cumulativeDetails.soldeFC, currency)}
               </h3>
               <span className="text-[11px] text-slate-600">
-                Sur les ventes de {formatFC(totalSalesInMonthFC, currency)}
+                Comparaison du mois : {formatMonthName(selectedMonth)}
               </span>
             </div>
           </div>
 
-          <span
-            className={`text-xs font-extrabold px-2 py-0.5 rounded-md font-mono ${
-              isReserveExceeded
-                ? 'bg-rose-200/80 text-rose-800'
-                : 'bg-emerald-200/80 text-emerald-800'
-            }`}
-          >
-            {isReserveExceeded ? 'DÉPASSEMENT' : 'DANS LES LIMITES'}
-          </span>
+          <div className="flex items-center gap-1.5">
+            {onOpenReserve && (
+              <button
+                type="button"
+                onClick={onOpenReserve}
+                className="text-[11px] font-bold text-teal-700 hover:underline px-1.5 py-0.5 rounded bg-white/70 border border-slate-200/80"
+              >
+                Gérer
+              </button>
+            )}
+            <span
+              className={`text-xs font-extrabold px-2 py-0.5 rounded-md font-mono ${
+                isCumulativeNegative
+                  ? 'bg-rose-200/80 text-rose-800'
+                  : 'bg-emerald-200/80 text-emerald-800'
+              }`}
+            >
+              {isCumulativeNegative ? 'DÉFICIT CUMULÉ' : 'RÉSERVE POSITIVE'}
+            </span>
+          </div>
         </div>
 
-        {/* 3 Metric Columns */}
+        {/* 3 Metric Columns: Month comparison (information secondaire, sans alerte rouge) */}
         <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-200/60 text-center">
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-semibold block">
-              Réserve (50%)
+              Réserve mois ({reserveRate}%)
             </span>
             <span className="text-xs font-extrabold font-mono text-slate-800">
               {formatFC(expenseReserveInMonthFC, currency)}
@@ -255,38 +295,31 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-semibold block">
-              Dépensé
+              Dépenses mois
             </span>
-            <span
-              className={`text-xs font-extrabold font-mono ${
-                isReserveExceeded ? 'text-rose-700' : 'text-slate-800'
-              }`}
-            >
+            <span className="text-xs font-extrabold font-mono text-slate-800">
               {formatFC(totalExpensesInMonthFC, currency)}
             </span>
           </div>
 
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-semibold block">
-              {isReserveExceeded ? 'Dépassement' : 'Solde restant'}
+              Écart du mois
             </span>
-            <span
-              className={`text-xs font-extrabold font-mono ${
-                isReserveExceeded ? 'text-rose-700' : 'text-emerald-700'
-              }`}
-            >
-              {isReserveExceeded
-                ? `+${formatFC(overrunFC, currency)}`
-                : formatFC(reserveBalanceFC, currency)}
+            <span className="text-xs font-extrabold font-mono text-slate-800">
+              {monthReserveBalanceFC >= 0
+                ? `+${formatFC(monthReserveBalanceFC, currency)}`
+                : formatFC(monthReserveBalanceFC, currency)}
             </span>
           </div>
         </div>
 
-        {isReserveExceeded && (
+        {/* L'alerte rouge ne s'affiche que si le solde CUMULÉ est négatif */}
+        {isCumulativeNegative && (
           <div className="mt-3 p-2 rounded-xl bg-white/90 border border-rose-300 text-rose-800 text-xs font-bold flex items-center gap-1.5">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
             <span>
-              Alerte : Dépenses supérieures à la réserve de {formatFC(overrunFC, currency)} (+{formatPercent(overrunPct)}) !
+              Alerte : Solde cumulé de réserve négatif ({formatFC(cumulativeDetails.soldeFC, currency)}) ! Pensez à réapprovisionner la réserve.
             </span>
           </div>
         )}

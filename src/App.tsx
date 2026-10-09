@@ -12,6 +12,7 @@ import { DashboardView } from './modules/dashboard/DashboardView';
 import { DailyEntryView } from './modules/daily/DailyEntryView';
 import { EmployeesView } from './modules/employees/EmployeesView';
 import { ExpensesView } from './modules/expenses/ExpensesView';
+import { ReserveView } from './modules/expenses/ReserveView';
 import { SettingsView } from './modules/settings/SettingsView';
 
 import type { AppSettings } from './types';
@@ -20,6 +21,7 @@ export default function App() {
   const [isDbReady, setIsDbReady] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [activeTab, setActiveTab] = useState<NavTabId>('dashboard');
+  const [isReserveOpen, setIsReserveOpen] = useState(false);
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
@@ -130,40 +132,55 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 w-full max-w-lg mx-auto">
-        {activeTab === 'dashboard' && (
-          <DashboardView
-            settings={settings}
-            onNavigateToTab={(tab) => setActiveTab(tab)}
-            onShowToast={showToast}
-          />
-        )}
-
-        {activeTab === 'daily' && (
-          <DailyEntryView
+        {isReserveOpen ? (
+          <ReserveView
             settings={settings}
             onShowToast={showToast}
-            onOpenCalculator={() => setIsCalculatorOpen(true)}
+            onBack={() => setIsReserveOpen(false)}
           />
-        )}
+        ) : (
+          <>
+            {activeTab === 'dashboard' && (
+              <DashboardView
+                settings={settings}
+                onNavigateToTab={(tab) => {
+                  setIsReserveOpen(false);
+                  setActiveTab(tab);
+                }}
+                onOpenReserve={() => setIsReserveOpen(true)}
+                onShowToast={showToast}
+              />
+            )}
 
-        {activeTab === 'employees' && (
-          <EmployeesView settings={settings} onShowToast={showToast} />
-        )}
+            {activeTab === 'daily' && (
+              <DailyEntryView
+                settings={settings}
+                onShowToast={showToast}
+                onOpenCalculator={() => setIsCalculatorOpen(true)}
+              />
+            )}
 
-        {activeTab === 'expenses' && (
-          <ExpensesView
-            settings={settings}
-            onShowToast={showToast}
-            onOpenCalculator={() => setIsCalculatorOpen(true)}
-          />
-        )}
+            {activeTab === 'employees' && (
+              <EmployeesView settings={settings} onShowToast={showToast} />
+            )}
 
-        {activeTab === 'settings' && (
-          <SettingsView
-            settings={settings}
-            onSettingsUpdated={handleSettingsUpdated}
-            onShowToast={showToast}
-          />
+            {activeTab === 'expenses' && (
+              <ExpensesView
+                settings={settings}
+                onShowToast={showToast}
+                onOpenCalculator={() => setIsCalculatorOpen(true)}
+                onOpenReserve={() => setIsReserveOpen(true)}
+              />
+            )}
+
+            {activeTab === 'settings' && (
+              <SettingsView
+                settings={settings}
+                onSettingsUpdated={handleSettingsUpdated}
+                onShowToast={showToast}
+              />
+            )}
+          </>
         )}
       </main>
 
@@ -185,7 +202,13 @@ export default function App() {
       />
 
       {/* Bottom Navigation */}
-      <BottomNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <BottomNav
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setIsReserveOpen(false);
+          setActiveTab(tab);
+        }}
+      />
     </div>
   );
 }

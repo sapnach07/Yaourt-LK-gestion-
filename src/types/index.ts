@@ -71,6 +71,15 @@ export interface Expense {
   createdAt: number;
 }
 
+export interface ReserveMovement {
+  id: string;
+  date: string; // YYYY-MM-DD
+  amountFC: number; // nombre positif
+  type: 'ajout' | 'retrait';
+  reason: string; // motif, texte libre
+  createdAt: number;
+}
+
 export interface Payment {
   id: string;
   employeeId: string;

@@ -5,6 +5,7 @@ import type {
   DailyEntry,
   ProductionEntry,
   Expense,
+  ReserveMovement,
   Payment,
   AppSettings,
 } from '../types';
@@ -40,6 +41,7 @@ export class YaourtDatabase extends Dexie {
   dailyEntries!: Table<DailyEntry, string>;
   productionEntries!: Table<ProductionEntry, string>;
   expenses!: Table<Expense, string>;
+  reserveMovements!: Table<ReserveMovement, string>;
   payments!: Table<Payment, string>;
   settings!: Table<AppSettings, string>;
 
@@ -53,6 +55,9 @@ export class YaourtDatabase extends Dexie {
       expenses: 'id, date, category, createdAt',
       payments: 'id, employeeId, month, date, createdAt',
       settings: 'id',
+    });
+    this.version(2).stores({
+      reserveMovements: 'id, date, type, createdAt',
     });
   }
 }

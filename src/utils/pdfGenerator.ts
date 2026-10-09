@@ -221,11 +221,7 @@ export async function generateEmployeeMonthlyPDF(
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
-  if (netDueFC > 0) {
-    doc.setTextColor(185, 28, 28); // Red
-  } else {
-    doc.setTextColor(21, 128, 61); // Green
-  }
+  doc.setTextColor(21, 128, 61); // Vert
   doc.text(`RESTE NET À PAYER :`, 18, finalY + 38);
   doc.text(formatFC(netDueFC, currency), 95, finalY + 38);
 

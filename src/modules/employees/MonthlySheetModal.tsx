@@ -200,18 +200,12 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
                 {payments.length} versements
               </span>
             </div>
-            <div
-              className={`p-3 rounded-2xl border ${
-                remainingDueFC > 0
-                  ? 'bg-rose-50/80 border-rose-200/70 text-rose-900'
-                  : 'bg-emerald-50/80 border-emerald-200/70 text-emerald-900'
-              }`}
-            >
-              <span className="text-[11px] font-semibold block">Reste à Payer</span>
-              <span className="text-sm font-extrabold font-mono block">
+            <div className="p-3 rounded-2xl border bg-emerald-50/80 border-emerald-200/70 text-emerald-900">
+              <span className="text-[11px] font-semibold text-emerald-800 block">Reste à Payer</span>
+              <span className="text-sm font-extrabold font-mono text-emerald-950 block">
                 {formatFC(remainingDueFC, currency)}
               </span>
-              <span className="text-[10px] opacity-80 font-mono block">Solde net</span>
+              <span className="text-[10px] text-emerald-700/80 font-mono block">Solde net</span>
             </div>
           </div>
 

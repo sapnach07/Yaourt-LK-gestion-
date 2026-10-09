@@ -12,6 +12,7 @@ import {
   Target,
   Clock,
   HelpCircle,
+  Wallet,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -39,6 +40,7 @@ import {
 } from '../../utils/formatters';
 import { generateMonthlyManagementReportPDF } from '../../utils/pdfGenerator';
 import { EmptyState } from '../../components/EmptyState';
+import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
 import type {
   DailyEntry,
   Expense,
@@ -48,11 +50,13 @@ import type {
   PeriodFilterType,
   ProductionEntry,
   Payment,
+  ReserveMovement,
 } from '../../types';
 
 interface DashboardViewProps {
   settings: AppSettings;
   onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings') => void;
+  onOpenReserve?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
 }
 
@@ -62,6 +66,7 @@ const CATEGORY_COLORS = ['#10b981', '#f59e0b', '#3b82f6', '#8b5cf6', '#ef4444', 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   settings,
   onNavigateToTab,
+  onOpenReserve,
   onShowToast,
 }) => {
   const [periodType, setPeriodType] = useState<PeriodFilterType>('this_month');
@@ -77,6 +82,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [products, setProducts] = useState<Product[]>([]);
   const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -85,13 +91,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [dList, eList, empList, prodList, pList, payList] = await Promise.all([
+    const [dList, eList, empList, prodList, pList, payList, movList] = await Promise.all([
       db.dailyEntries.toArray(),
       db.expenses.toArray(),
       db.employees.toArray(),
       db.products.orderBy('sortOrder').toArray(),
       db.productionEntries.toArray(),
       db.payments.toArray(),
+      db.reserveMovements.toArray(),
     ]);
 
     setDailyEntries(dList);
@@ -100,6 +107,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setProducts(prodList);
     setProductionEntries(pList);
     setPayments(payList);
+    setReserveMovements(movList);
   };
 
   // Date ranges
@@ -438,6 +446,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return Math.round(currentMetrics.expensesFC / reserveRate);
   }, [currentMetrics.expensesFC, settings.expenseReservePct]);
 
+  // Cumulative Reserve Calculation (depuis le tout début)
+  const cumulativeReserve = useMemo(() => {
+    return calculateReserveBalance(
+      reserveMovements,
+      dailyEntries,
+      expenses,
+      settings.expenseReservePct || 50
+    );
+  }, [reserveMovements, dailyEntries, expenses, settings.expenseReservePct]);
+
   // Smart Alerts
   const smartAlerts = useMemo(() => {
     const alerts: Array<{ id: string; type: 'danger' | 'warning' | 'info'; title: string; message: string }> = [];
@@ -456,19 +474,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       });
     }
 
-    // 2. Expenses > Reserve
-    if (currentMetrics.expensesFC > currentMetrics.expenseReserveFC && currentMetrics.salesFC > 0) {
+    // 2. Cumulative Reserve is negative
+    // L'alerte rouge de la page Dépenses et du tableau de bord ne s'affiche que si le solde cumulé est négatif.
+    if (cumulativeReserve.soldeFC < 0) {
       alerts.push({
-        id: 'exp_overrun',
+        id: 'cumulative_reserve_negative',
         type: 'danger',
-        title: 'Dépassement de la réserve dépenses',
-        message: `Les dépenses (${formatFC(
-          currentMetrics.expensesFC,
+        title: 'Solde de réserve cumulé négatif',
+        message: `Le solde cumulé de la réserve est en déficit de ${formatFC(
+          cumulativeReserve.soldeFC,
           settings.currency
-        )}) dépassent la réserve prévue de 50 % (${formatFC(
-          currentMetrics.expenseReserveFC,
-          settings.currency
-        )}).`,
+        )}. Total ajouts: ${formatFC(cumulativeReserve.totalAdditionsFC, settings.currency)}, retraits: ${formatFC(cumulativeReserve.totalWithdrawalsFC, settings.currency)}, réserve des ventes: ${formatFC(cumulativeReserve.totalSalesReserveFC, settings.currency)}, dépenses: ${formatFC(cumulativeReserve.totalExpensesFC, settings.currency)}.`,
       });
     }
 
@@ -597,15 +613,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </p>
           </div>
 
-          <button
-            type="button"
-            disabled={isGeneratingPdf || dailyEntries.length === 0}
-            onClick={handleExportMonthReportPDF}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
-          >
-            <FileText className="w-4 h-4 text-teal-400" />
-            <span>Rapport PDF</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenReserve && (
+              <button
+                type="button"
+                onClick={onOpenReserve}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+              >
+                <Wallet className="w-4 h-4" />
+                <span>Réserve</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              disabled={isGeneratingPdf || dailyEntries.length === 0}
+              onClick={handleExportMonthReportPDF}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+            >
+              <FileText className="w-4 h-4 text-teal-400" />
+              <span>Rapport PDF</span>
+            </button>
+          </div>
         </div>
 
         {/* Period Selector Tabs */}
