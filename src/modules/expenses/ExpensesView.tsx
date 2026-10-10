@@ -33,7 +33,7 @@ interface ExpensesViewProps {
   settings: AppSettings;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenCalculator?: () => void;
-  onOpenReserve?: () => void;
+  onOpenReserve?: (prefill?: { amount: number; reason: string }) => void;
 }
 
 export const ExpensesView: React.FC<ExpensesViewProps> = ({
@@ -188,7 +188,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             Dépenses
           </h2>
           <p className="text-xs text-slate-500">
-            Achats, charges et suivi de la réserve de 50 %
+            Achats, charges et suivi de la Caisse normale ({reserveRate} %)
           </p>
         </div>
 
@@ -196,7 +196,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           {onOpenReserve && (
             <button
               type="button"
-              onClick={onOpenReserve}
+              onClick={() => onOpenReserve()}
               className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
             >
               <Wallet className="w-4 h-4 text-teal-400" />
@@ -215,6 +215,36 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         </div>
       </div>
 
+      {/* Alerte rouge : si soldeCapitalFC < 0 */}
+      {cumulativeDetails.soldeCapitalFC < 0 && (
+        <div className="p-3.5 rounded-2xl bg-rose-600 text-white shadow-md flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white" />
+            <div>
+              <span className="font-extrabold block">Alerte Caisse Capital</span>
+              <p className="text-[11px] text-rose-100 leading-snug">
+                Il manque {formatFC(cumulativeDetails.manqueFC, currency)} dans la Caisse Capital : ajoute{' '}
+                {formatFC(cumulativeDetails.manqueFC, currency)} de ton argent personnel.
+              </p>
+            </div>
+          </div>
+          {onOpenReserve && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenReserve({
+                  amount: cumulativeDetails.manqueFC,
+                  reason: 'Complément argent personnel',
+                })
+              }
+              className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs"
+            >
+              Ajouter {formatFC(cumulativeDetails.manqueFC, currency)}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Month Selector */}
       <div className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs">
         <div className="flex items-center gap-2">
@@ -231,62 +261,76 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         </span>
       </div>
 
-      {/* Expense Reserve Comparison Card */}
-      <div
-        className={`rounded-2xl border p-4 shadow-xs transition-all ${
-          isCumulativeNegative
-            ? 'bg-rose-50 border-rose-300 text-rose-950'
-            : 'bg-emerald-50/70 border-emerald-300 text-emerald-950'
-        }`}
-      >
-        <div className="flex items-center justify-between mb-2">
+      {/* Suivi des Caisses */}
+      <div className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-xs space-y-3">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {isCumulativeNegative ? (
-              <div className="w-7 h-7 rounded-lg bg-rose-600 text-white flex items-center justify-center">
-                <AlertTriangle className="w-4 h-4" />
-              </div>
-            ) : (
-              <div className="w-7 h-7 rounded-lg bg-emerald-700 text-white flex items-center justify-center">
-                <ShieldCheck className="w-4 h-4" />
-              </div>
-            )}
+            <div className="w-7 h-7 rounded-lg bg-teal-700 text-white flex items-center justify-center">
+              <Wallet className="w-4 h-4" />
+            </div>
             <div>
-              <h3 className="text-xs font-extrabold uppercase tracking-wide">
-                Solde Caisse Cumulé : {formatFC(cumulativeDetails.soldeFC, currency)}
+              <h3 className="text-xs font-black uppercase tracking-wide text-slate-800">
+                État des Caisses
               </h3>
-              <span className="text-[11px] text-slate-600">
-                Comparaison du mois : {formatMonthName(selectedMonth)}
+              <span className="text-[11px] text-slate-500">
+                Mois en cours : {formatMonthName(selectedMonth)}
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
-            {onOpenReserve && (
-              <button
-                type="button"
-                onClick={onOpenReserve}
-                className="text-[11px] font-bold text-teal-700 hover:underline px-1.5 py-0.5 rounded bg-white/70 border border-slate-200/80"
-              >
-                Gérer
-              </button>
-            )}
+          {onOpenReserve && (
+            <button
+              type="button"
+              onClick={() => onOpenReserve()}
+              className="text-xs font-bold text-teal-800 hover:text-teal-900 px-2.5 py-1 rounded-xl bg-teal-50 border border-teal-200/80 active:scale-95 transition-all"
+            >
+              Gérer la Caisse →
+            </button>
+          )}
+        </div>
+
+        {/* 2 Soldes actuels */}
+        <div className="grid grid-cols-2 gap-2.5">
+          <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950">
+            <span className="text-[10px] font-bold uppercase block text-emerald-800">
+              Caisse normale
+            </span>
+            <span className="text-base font-black font-mono mt-0.5 block text-emerald-900">
+              {formatFC(cumulativeDetails.soldeNormaleFC, currency)}
+            </span>
+            <span className="text-[9px] text-emerald-700 block mt-0.5 font-medium">
+              ({reserveRate} % des ventes)
+            </span>
+          </div>
+
+          <div
+            className={`p-2.5 rounded-xl border ${
+              cumulativeDetails.soldeCapitalFC >= 0
+                ? 'bg-slate-50 border-slate-200 text-slate-900'
+                : 'bg-rose-50 border-rose-200 text-rose-950'
+            }`}
+          >
+            <span className="text-[10px] font-bold uppercase block text-slate-600">
+              Caisse Capital
+            </span>
             <span
-              className={`text-xs font-extrabold px-2 py-0.5 rounded-md font-mono ${
-                isCumulativeNegative
-                  ? 'bg-rose-200/80 text-rose-800'
-                  : 'bg-emerald-200/80 text-emerald-800'
+              className={`text-base font-black font-mono mt-0.5 block ${
+                cumulativeDetails.soldeCapitalFC >= 0 ? 'text-slate-900' : 'text-rose-700'
               }`}
             >
-              {isCumulativeNegative ? 'DÉFICIT CAISSE' : 'CAISSE POSITIVE'}
+              {formatFC(cumulativeDetails.soldeCapitalFC, currency)}
+            </span>
+            <span className="text-[9px] text-slate-500 block mt-0.5 font-medium">
+              {cumulativeDetails.soldeCapitalFC >= 0 ? 'Caisse Capital disponible' : `Manque ${formatFC(cumulativeDetails.manqueFC, currency)}`}
             </span>
           </div>
         </div>
 
-        {/* 3 Metric Columns: Month comparison (information secondaire, sans alerte rouge) */}
-        <div className="grid grid-cols-3 gap-2 mt-3 pt-3 border-t border-slate-200/60 text-center">
+        {/* 3 Métriques du mois */}
+        <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center text-xs">
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-semibold block">
-              Réserve mois ({reserveRate}%)
+              Caisse normale mois
             </span>
             <span className="text-xs font-extrabold font-mono text-slate-800">
               {formatFC(expenseReserveInMonthFC, currency)}
@@ -306,23 +350,17 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             <span className="text-[10px] text-slate-500 uppercase font-semibold block">
               Écart du mois
             </span>
-            <span className="text-xs font-extrabold font-mono text-slate-800">
+            <span
+              className={`text-xs font-extrabold font-mono ${
+                monthReserveBalanceFC >= 0 ? 'text-emerald-700' : 'text-rose-700'
+              }`}
+            >
               {monthReserveBalanceFC >= 0
                 ? `+${formatFC(monthReserveBalanceFC, currency)}`
                 : formatFC(monthReserveBalanceFC, currency)}
             </span>
           </div>
         </div>
-
-        {/* L'alerte rouge ne s'affiche que si le solde CUMULÉ est négatif */}
-        {isCumulativeNegative && (
-          <div className="mt-3 p-2 rounded-xl bg-white/90 border border-rose-300 text-rose-800 text-xs font-bold flex items-center gap-1.5">
-            <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
-            <span>
-              Alerte : Solde cumulé de la caisse négatif ({formatFC(cumulativeDetails.soldeFC, currency)}) ! Pensez à réapprovisionner la caisse.
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Category filter pills */}
@@ -504,11 +542,44 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                     {currency}
                   </span>
                 </div>
-                {amount && parseLocaleNumber(amount) > 0 && (
-                  <p className="text-[11px] font-semibold text-teal-700 mt-1">
-                    = {formatFC(parseLocaleNumber(amount), currency)}
-                  </p>
-                )}
+                {(() => {
+                  const numAmount = parseLocaleNumber(amount);
+                  if (!amount || isNaN(numAmount) || numAmount <= 0) return null;
+
+                  // Calcul avec le solde normale actuel
+                  const soldeNormaleActuel = cumulativeDetails.soldeNormaleFC;
+                  const payeeParNormale = Math.min(numAmount, soldeNormaleActuel);
+                  const payeeParCapital = numAmount - payeeParNormale;
+                  const soldeCapitalActuel = cumulativeDetails.soldeCapitalFC;
+                  const capitalInsuffisant = payeeParCapital > soldeCapitalActuel;
+                  const manqueApres = capitalInsuffisant
+                    ? Math.max(0, -(soldeCapitalActuel - payeeParCapital))
+                    : 0;
+
+                  return (
+                    <div className="mt-1.5 space-y-1">
+                      <p className="text-[11px] font-semibold text-slate-700">
+                        Payée par :{' '}
+                        <span className="font-extrabold text-emerald-800">
+                          Caisse normale {formatFC(payeeParNormale, currency)}
+                        </span>
+                        {' / '}
+                        <span className="font-extrabold text-slate-900">
+                          Caisse Capital {formatFC(payeeParCapital, currency)}
+                        </span>
+                      </p>
+
+                      {capitalInsuffisant && manqueApres > 0 && (
+                        <p className="text-[11px] font-extrabold text-rose-600 flex items-center gap-1">
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                          <span>
+                            Le capital ne suffit pas : manque de {formatFC(manqueApres, currency)} (à rajouter de votre poche).
+                          </span>
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               <div>

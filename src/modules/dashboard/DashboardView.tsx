@@ -58,7 +58,7 @@ import type {
 interface DashboardViewProps {
   settings: AppSettings;
   onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings') => void;
-  onOpenReserve?: () => void;
+  onOpenReserve?: (prefill?: { amount: number; reason: string }) => void;
   onOpenEarnings?: () => void;
   onOpenOwnerProfit?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
@@ -519,19 +519,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       });
     }
 
-    // 2. Cumulative Reserve/Caisse is negative
-    // L'alerte rouge de la page Dépenses et du tableau de bord ne s'affiche que si le solde cumulé est négatif.
-    if (cumulativeReserve.soldeFC < 0) {
-      alerts.push({
-        id: 'cumulative_reserve_negative',
-        type: 'danger',
-        title: 'Solde de caisse cumulé négatif',
-        message: `Le solde cumulé de la caisse est en déficit de ${formatFC(
-          cumulativeReserve.soldeFC,
-          settings.currency
-        )}. Dépenses: ${formatFC(cumulativeReserve.totalExpensesFC, settings.currency)}, fonds (${cumulativeReserve.reserveRatePct} %): ${formatFC(cumulativeReserve.totalSalesReserveFC, settings.currency)}, ajouts: ${formatFC(cumulativeReserve.totalAdditionsFC, settings.currency)}, retraits: ${formatFC(cumulativeReserve.totalWithdrawalsFC, settings.currency)}.`,
-      });
-    }
+
 
     // 3. Negative or low house stock
     products.forEach((prod) => {
@@ -646,6 +634,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-5">
+      {/* ALERTE ROUGE : si soldeCapitalFC < 0 */}
+      {cumulativeReserve.soldeCapitalFC < 0 && (
+        <div className="p-3.5 rounded-2xl bg-rose-600 text-white shadow-md flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white" />
+            <div>
+              <span className="font-extrabold block">Alerte Caisse Capital</span>
+              <p className="text-[11px] text-rose-100 leading-snug">
+                Il manque {formatFC(cumulativeReserve.manqueFC, currency)} dans la Caisse Capital : ajoute{' '}
+                {formatFC(cumulativeReserve.manqueFC, currency)} de ton argent personnel.
+              </p>
+            </div>
+          </div>
+          {onOpenReserve && (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenReserve({
+                  amount: cumulativeReserve.manqueFC,
+                  reason: 'Complément argent personnel',
+                })
+              }
+              className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs"
+            >
+              Ajouter {formatFC(cumulativeReserve.manqueFC, currency)}
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Top Header & Period Filter */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
@@ -662,7 +680,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             {onOpenReserve && (
               <button
                 type="button"
-                onClick={onOpenReserve}
+                onClick={() => onOpenReserve()}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
               >
                 <Wallet className="w-4 h-4" />
@@ -1115,11 +1133,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
           </div>
 
-          {/* Dépenses vs Réserve */}
+          {/* Dépenses vs Caisse normale */}
           <div>
             <div className="flex items-center justify-between text-xs font-bold mb-1">
               <span className="text-slate-700">
-                Dépenses en % des ventes (Réserve max : {settings.expenseReservePct} %)
+                Dépenses en % des ventes (Caisse normale : {settings.expenseReservePct} %)
               </span>
               <span
                 className={`font-mono font-extrabold ${

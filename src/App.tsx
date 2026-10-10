@@ -26,6 +26,7 @@ export default function App() {
   const [isReserveOpen, setIsReserveOpen] = useState(false);
   const [isEarningsOpen, setIsEarningsOpen] = useState(false);
   const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
+  const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string } | null>(null);
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
@@ -45,6 +46,7 @@ export default function App() {
     setIsReserveOpen(false);
     setIsEarningsOpen(false);
     setIsOwnerProfitOpen(false);
+    setReservePrefill(null);
   };
 
   const initApp = async () => {
@@ -147,6 +149,8 @@ export default function App() {
             settings={settings}
             onShowToast={showToast}
             onBack={() => setIsReserveOpen(false)}
+            initialPrefill={reservePrefill}
+            onClearPrefill={() => setReservePrefill(null)}
           />
         ) : isEarningsOpen ? (
           <EmployeeEarningsView
@@ -172,8 +176,9 @@ export default function App() {
                   resetSubViews();
                   setActiveTab(tab);
                 }}
-                onOpenReserve={() => {
+                onOpenReserve={(prefill) => {
                   resetSubViews();
+                  if (prefill) setReservePrefill(prefill);
                   setIsReserveOpen(true);
                 }}
                 onOpenEarnings={() => {
@@ -212,8 +217,9 @@ export default function App() {
                 settings={settings}
                 onShowToast={showToast}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
-                onOpenReserve={() => {
+                onOpenReserve={(prefill) => {
                   resetSubViews();
+                  if (prefill) setReservePrefill(prefill);
                   setIsReserveOpen(true);
                 }}
               />
