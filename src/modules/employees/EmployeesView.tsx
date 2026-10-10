@@ -22,11 +22,13 @@ import type { Employee, AppSettings } from '../../types';
 
 interface EmployeesViewProps {
   settings: AppSettings;
+  onOpenEarnings?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
 }
 
 export const EmployeesView: React.FC<EmployeesViewProps> = ({
   settings,
+  onOpenEarnings,
   onShowToast,
 }) => {
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -163,14 +165,27 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={handleOpenAddForm}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Ajouter</span>
-        </button>
+        <div className="flex items-center gap-2">
+          {onOpenEarnings && (
+            <button
+              type="button"
+              onClick={onOpenEarnings}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200/90 text-xs font-bold active:scale-95 transition-all min-h-[44px]"
+            >
+              <Banknote className="w-4 h-4 text-teal-700" />
+              <span>Gains</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={handleOpenAddForm}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Ajouter</span>
+          </button>
+        </div>
       </div>
 
       {/* Filter Tabs: Actifs(ves) vs Archivés(es) */}

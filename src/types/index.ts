@@ -102,6 +102,28 @@ export interface AppSettings {
   pinCode: string; // 4 digits or empty string if disabled
   expenseCategories: string[];
   lastBackupDate: string | null;
+  payslipSettings?: PayslipSettings;
+}
+
+export interface PayslipSettings {
+  logoBase64?: string; // image/png or image/jpeg base64
+  logoPosition?: 'left' | 'center' | 'right'; // Default: left
+  bgImageBase64?: string; // image/png or image/jpeg base64
+  bgOpacityPct?: number; // 5 to 40, Default: 15
+  businessName?: string; // Default: settings.businessName
+  documentTitle?: string; // Default: 'Document officiel de décompte mensuel'
+  headerContact?: string; // Tél / adresse / contact optionnels
+  footerNote?: string; // Note libre multi-ligne en bas
+  primaryColorHex?: string; // Hex color code e.g. '#0d9488'
+  employeeSignatureLabel?: string; // Default: 'Signature du/de la vendeur(se)'
+  employeeSignatureSubtext?: string; // Default: '(Précédé de la mention "Bon pour accord")'
+  ownerSignatureLabel?: string; // Default: 'Signature du gérant / propriétaire'
+  ownerSignatureSubtext?: string; // Default: '(Précédé de la mention "Payé / Validé")'
+  showDeliveryCol?: boolean; // Default: true
+  showDamagedCol?: boolean; // Default: true
+  showEmployeePhone?: boolean; // Default: true
+  showCommissionRate?: boolean; // Default: true
+  showSignatureZones?: boolean; // Default: true
 }
 
 export type PeriodFilterType = 'today' | 'this_week' | 'this_month' | 'last_month' | 'custom';

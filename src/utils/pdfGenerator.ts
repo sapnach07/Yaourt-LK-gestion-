@@ -1,4 +1,4 @@
-import { jsPDF } from 'jspdf';
+import { jsPDF, GState } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatDate, formatFC, formatPercent, formatMonthName, toISODate, formatNumber } from './formatters';
 import type { DailyEntry, Employee, Payment, AppSettings } from '../types';
@@ -30,106 +30,195 @@ export async function generateEmployeeMonthlyPDF(
 
   const currency = settings?.currency || 'FC';
   const monthName = formatMonthName(month);
+  const payslip = settings?.payslipSettings || {};
 
-  // Colors
-  const primaryColor: [number, number, number] = [13, 148, 136]; // Teal #0d9488
+  // Custom primary color or default teal [13, 148, 136]
+  let primaryColor: [number, number, number] = [13, 148, 136];
+  if (payslip.primaryColorHex) {
+    const hex = payslip.primaryColorHex.replace('#', '');
+    if (hex.length === 6) {
+      const r = parseInt(hex.substring(0, 2), 16);
+      const g = parseInt(hex.substring(2, 4), 16);
+      const b = parseInt(hex.substring(4, 6), 16);
+      if (!isNaN(r) && !isNaN(g) && !isNaN(b)) {
+        primaryColor = [r, g, b];
+      }
+    }
+  }
+
   const darkTextColor: [number, number, number] = [30, 41, 59];
   const mutedTextColor: [number, number, number] = [100, 116, 139];
 
-  // Header
+  // Helper to draw background image on any page if configured
+  const drawPageBackground = () => {
+    if (payslip.bgImageBase64) {
+      try {
+        const opacity = Math.min(0.4, Math.max(0.05, (payslip.bgOpacityPct ?? 15) / 100));
+        doc.saveGraphicsState?.();
+        doc.setGState(new GState({ opacity }));
+        doc.addImage(payslip.bgImageBase64, 'JPEG', 0, 0, 210, 297, undefined, 'FAST');
+        doc.restoreGraphicsState?.();
+        doc.setGState(new GState({ opacity: 1.0 }));
+      } catch (err) {
+        console.warn('Erreur rendu photo arrière-plan PDF:', err);
+      }
+    }
+  };
+
+  // Draw background on page 1
+  drawPageBackground();
+
+  // Logo rendering if provided
+  let headerStartY = 18;
+  if (payslip.logoBase64) {
+    try {
+      const logoW = 28;
+      const logoH = 14;
+      let logoX = 14;
+      if (payslip.logoPosition === 'center') {
+        logoX = (210 - logoW) / 2;
+      } else if (payslip.logoPosition === 'right') {
+        logoX = 210 - 14 - logoW;
+      }
+      doc.addImage(payslip.logoBase64, 'PNG', logoX, 8, logoW, logoH, undefined, 'FAST');
+      if (payslip.logoPosition === 'center') {
+        headerStartY = 27;
+      }
+    } catch (err) {
+      console.warn('Erreur rendu logo PDF:', err);
+    }
+  }
+
+  // Header texts
+  const displayName = payslip.businessName || settings?.businessName || 'Yaourt Gestion';
+  const displayTitle = `${payslip.documentTitle || 'Document officiel de décompte mensuel'} - ${monthName}`;
+
   doc.setFontSize(18);
   doc.setTextColor(...primaryColor);
   doc.setFont('helvetica', 'bold');
-  doc.text(settings?.businessName || 'Yaourt Gestion', 14, 18);
+  doc.text(displayName, 14, headerStartY);
 
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.setTextColor(...mutedTextColor);
   doc.setFont('helvetica', 'normal');
-  doc.text(`Document officiel de décompte mensuel - ${monthName}`, 14, 24);
+  doc.text(displayTitle, 14, headerStartY + 6);
+
+  if (payslip.headerContact?.trim()) {
+    doc.setFontSize(8);
+    doc.text(payslip.headerContact.trim(), 14, headerStartY + 11);
+    headerStartY += 5;
+  }
 
   // Employee Card Box
+  const cardBoxY = headerStartY + 10;
   doc.setFillColor(248, 250, 252);
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, 28, 182, 24, 2, 2, 'FD');
+  doc.roundedRect(14, cardBoxY, 182, 24, 2, 2, 'FD');
 
   doc.setFontSize(11);
   doc.setTextColor(...darkTextColor);
   doc.setFont('helvetica', 'bold');
-  doc.text(`Vendeur(se) : ${employee.name}`, 18, 36);
+  doc.text(`Vendeur(se) : ${employee.name}`, 18, cardBoxY + 8);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
-  const phoneText = employee.phone ? `Tél : ${employee.phone}` : 'Tél : Non renseigné';
-  doc.text(`${phoneText}  |  Taux commission : ${formatNumber(employee.commissionRate)} %`, 18, 42);
-  doc.text(`Date d'émission : ${formatDate(toISODate(new Date()))}`, 18, 48);
+
+  const showPhone = payslip.showEmployeePhone ?? true;
+  const showCommission = payslip.showCommissionRate ?? true;
+
+  const phonePart = showPhone
+    ? employee.phone ? `Tél : ${employee.phone}` : 'Tél : Non renseigné'
+    : '';
+  const commPart = showCommission
+    ? `Taux commission : ${formatNumber(employee.commissionRate)} %`
+    : '';
+  const subInfo = [phonePart, commPart].filter(Boolean).join('  |  ');
+
+  if (subInfo) {
+    doc.text(subInfo, 18, cardBoxY + 14);
+  }
+  doc.text(`Date d'émission : ${formatDate(toISODate(new Date()))}`, 18, cardBoxY + 20);
+
+  // Column visibility options
+  const showDelivery = payslip.showDeliveryCol ?? true;
+  const showDamaged = payslip.showDamagedCol ?? true;
+
+  // Build columns dynamically
+  const headCols: string[] = ['Date'];
+  if (showDelivery) headCols.push('Livraison (FC)');
+  headCols.push('Ventes (FC)');
+  headCols.push('Reste (FC)');
+  if (showDamaged) headCols.push('Abîmé (FC)');
+  headCols.push('Commission (FC)');
 
   // Prepare table data
-  // Group or list by day
   const tableRows: any[] = [];
-  let sumDelivered = 0;
   let sumDeliveredFC = 0;
-  let sumSold = 0;
   let sumSoldFC = 0;
-  let sumDamaged = 0;
   let sumDamagedFC = 0;
-  let sumRest = 0;
   let sumRestFC = 0;
-  let sumSalesFC = 0;
   let sumCommissionFC = 0;
 
   // Sort entries by date ascending
   const sortedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
 
   for (const entry of sortedEntries) {
-    let dayDelivered = 0;
     let dayDeliveredFC = 0;
-    let daySold = 0;
-    let dayDamaged = 0;
     let dayDamagedFC = 0;
-    let dayRest = 0;
     let dayRestFC = 0;
 
     for (const item of entry.items) {
-      dayDelivered += item.delivered;
       dayDeliveredFC += item.delivered * (item.unitPrice || 0);
-      daySold += item.sold;
-      dayDamaged += item.damaged;
       dayDamagedFC += item.damaged * (item.unitPrice || 0);
-      dayRest += item.rest;
       dayRestFC += item.rest * (item.unitPrice || 0);
     }
 
-    sumDelivered += dayDelivered;
     sumDeliveredFC += dayDeliveredFC;
-    sumSold += daySold;
     sumSoldFC += entry.totalSalesFC;
-    sumDamaged += dayDamaged;
     sumDamagedFC += dayDamagedFC;
-    sumRest += dayRest;
     sumRestFC += dayRestFC;
-    sumSalesFC += entry.totalSalesFC;
     sumCommissionFC += entry.employeeCommissionFC;
 
-    tableRows.push([
-      formatDate(entry.date),
-      formatFC(dayDeliveredFC, currency),
-      formatFC(entry.totalSalesFC, currency),
-      formatFC(dayRestFC, currency),
-      dayDamagedFC > 0 ? formatFC(dayDamagedFC, currency) : '0 FC',
-      formatFC(entry.employeeCommissionFC, currency),
-    ]);
+    const row: string[] = [formatDate(entry.date)];
+    if (showDelivery) row.push(formatFC(dayDeliveredFC, currency));
+    row.push(formatFC(entry.totalSalesFC, currency));
+    row.push(formatFC(dayRestFC, currency));
+    if (showDamaged) row.push(dayDamagedFC > 0 ? formatFC(dayDamagedFC, currency) : '0 FC');
+    row.push(formatFC(entry.employeeCommissionFC, currency));
+
+    tableRows.push(row);
   }
 
   // Calculate payments
   const totalPaidFC = payments.reduce((acc, p) => acc + (p.amountFC || 0), 0);
   const netDueFC = sumCommissionFC - totalPaidFC;
 
-  // Add Table using autoTable
+  // Table Totals row
+  const totalsRow: string[] = ['TOTAUX'];
+  if (showDelivery) totalsRow.push(formatFC(sumDeliveredFC, currency));
+  totalsRow.push(formatFC(sumSoldFC, currency));
+  totalsRow.push(formatFC(sumRestFC, currency));
+  if (showDamaged) totalsRow.push(formatFC(sumDamagedFC, currency));
+  totalsRow.push(formatFC(sumCommissionFC, currency));
+
+  // Build columnStyles
+  const colStyles: Record<number, any> = { 0: { halign: 'left' } };
+  for (let c = 1; c < headCols.length; c++) {
+    colStyles[c] = {
+      halign: 'right',
+      fontStyle: c === headCols.length - 1 || c === (showDelivery ? 2 : 1) ? 'bold' : 'normal',
+    };
+  }
+
+  // Empty fallback row if no entries
+  const emptyRow: string[] = headCols.map(() => '-');
+
+  // Add Table using autoTable with hook for background on subsequent pages
   autoTable(doc, {
-    startY: 56,
-    head: [['Date', 'Livraison (FC)', 'Ventes (FC)', 'Reste (FC)', 'Abîmé (FC)', 'Commission (FC)']],
-    body: tableRows.length > 0 ? tableRows : [['-', '-', '-', '-', '-', '-']],
+    startY: cardBoxY + 28,
+    head: [headCols],
+    body: tableRows.length > 0 ? tableRows : [emptyRow],
     theme: 'grid',
     headStyles: {
       fillColor: primaryColor,
@@ -144,30 +233,20 @@ export async function generateEmployeeMonthlyPDF(
       cellPadding: 2,
       halign: 'center',
     },
-    columnStyles: {
-      0: { halign: 'left' },
-      1: { halign: 'right', fontStyle: 'bold' },
-      2: { halign: 'right', fontStyle: 'bold' },
-      3: { halign: 'right' },
-      4: { halign: 'right' },
-      5: { halign: 'right', fontStyle: 'bold' },
-    },
-    foot: [
-      [
-        'TOTAUX',
-        formatFC(sumDeliveredFC, currency),
-        formatFC(sumSalesFC, currency),
-        formatFC(sumRestFC, currency),
-        formatFC(sumDamagedFC, currency),
-        formatFC(sumCommissionFC, currency),
-      ],
-    ],
+    columnStyles: colStyles,
+    foot: [totalsRow],
     footStyles: {
       fillColor: [241, 245, 249],
       textColor: darkTextColor,
       fontStyle: 'bold',
       fontSize: 8.5,
       halign: 'center',
+    },
+    didDrawPage: (dataHook) => {
+      // Draw background if page number > 1
+      if (dataHook.pageNumber > 1) {
+        drawPageBackground();
+      }
     },
   });
 
@@ -176,6 +255,7 @@ export async function generateEmployeeMonthlyPDF(
   let finalY = (doc as any).lastAutoTable?.finalY || 180;
   if (finalY > 215) {
     doc.addPage();
+    drawPageBackground();
     finalY = 20;
   } else {
     finalY += 8;
@@ -203,7 +283,7 @@ export async function generateEmployeeMonthlyPDF(
   doc.text(`Total ventes réalisées :`, 18, finalY + 19);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(...darkTextColor);
-  doc.text(formatFC(sumSalesFC, currency), 95, finalY + 19);
+  doc.text(formatFC(sumSoldFC, currency), 95, finalY + 19);
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
@@ -225,29 +305,54 @@ export async function generateEmployeeMonthlyPDF(
   doc.text(`RESTE NET À PAYER :`, 18, finalY + 38);
   doc.text(formatFC(netDueFC, currency), 95, finalY + 38);
 
-  // Signatures Section
-  const signatureY = finalY + 50;
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...darkTextColor);
+  // Footer Note if specified
+  let currentBottomY = finalY + 44;
+  if (payslip.footerNote?.trim()) {
+    currentBottomY += 4;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(...mutedTextColor);
+    const splitNote = doc.splitTextToSize(payslip.footerNote.trim(), 180);
+    doc.text(splitNote, 15, currentBottomY);
+    currentBottomY += splitNote.length * 4;
+  }
 
-  // Employee signature box
-  doc.text(`Signature du/de la vendeur(se)`, 20, signatureY);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...mutedTextColor);
-  doc.text(`(Précédé de la mention "Bon pour accord")`, 20, signatureY + 5);
-  doc.setDrawColor(148, 163, 184);
-  doc.line(20, signatureY + 24, 85, signatureY + 24);
+  // Signatures Section (can be hidden)
+  const showSignatures = payslip.showSignatureZones ?? true;
+  if (showSignatures) {
+    let signatureY = currentBottomY + 6;
+    if (signatureY > 260) {
+      doc.addPage();
+      drawPageBackground();
+      signatureY = 25;
+    }
 
-  // Owner signature box
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(...darkTextColor);
-  doc.text(`Signature du gérant / propriétaire`, 115, signatureY);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(...mutedTextColor);
-  doc.text(`(Précédé de la mention "Payé / Validé")`, 115, signatureY + 5);
-  doc.setDrawColor(148, 163, 184);
-  doc.line(115, signatureY + 24, 180, signatureY + 24);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...darkTextColor);
+
+    // Employee signature box
+    const empLabel = payslip.employeeSignatureLabel || 'Signature du/de la vendeur(se)';
+    const empSub = payslip.employeeSignatureSubtext || '(Précédé de la mention "Bon pour accord")';
+    doc.text(empLabel, 20, signatureY);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...mutedTextColor);
+    doc.text(empSub, 20, signatureY + 5);
+    doc.setDrawColor(148, 163, 184);
+    doc.line(20, signatureY + 24, 85, signatureY + 24);
+
+    // Owner signature box
+    const ownerLabel = payslip.ownerSignatureLabel || 'Signature du gérant / propriétaire';
+    const ownerSub = payslip.ownerSignatureSubtext || '(Précédé de la mention "Payé / Validé")';
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...darkTextColor);
+    doc.text(ownerLabel, 115, signatureY);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...mutedTextColor);
+    doc.text(ownerSub, 115, signatureY + 5);
+    doc.setDrawColor(148, 163, 184);
+    doc.line(115, signatureY + 24, 180, signatureY + 24);
+  }
 
   const cleanEmpName = employee.name.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `Fiche_${cleanEmpName}_${month}.pdf`;
@@ -260,7 +365,7 @@ export async function generateEmployeeMonthlyPDF(
         await navigator.share({
           files: [file],
           title: `Fiche de paie vendeur(se) - ${employee.name} (${monthName})`,
-          text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Livraisons : ${formatFC(sumDeliveredFC, currency)} | Ventes : ${formatFC(sumSalesFC, currency)} | Commission : ${formatFC(sumCommissionFC, currency)} | Reste à payer : ${formatFC(netDueFC, currency)}.`,
+          text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Livraisons : ${formatFC(sumDeliveredFC, currency)} | Ventes : ${formatFC(sumSoldFC, currency)} | Commission : ${formatFC(sumCommissionFC, currency)} | Reste à payer : ${formatFC(netDueFC, currency)}.`,
         });
         return true;
       }

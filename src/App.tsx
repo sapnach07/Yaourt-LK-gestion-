@@ -11,8 +11,10 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { DashboardView } from './modules/dashboard/DashboardView';
 import { DailyEntryView } from './modules/daily/DailyEntryView';
 import { EmployeesView } from './modules/employees/EmployeesView';
+import { EmployeeEarningsView } from './modules/employees/EmployeeEarningsView';
 import { ExpensesView } from './modules/expenses/ExpensesView';
 import { ReserveView } from './modules/expenses/ReserveView';
+import { OwnerProfitView } from './modules/dashboard/OwnerProfitView';
 import { SettingsView } from './modules/settings/SettingsView';
 
 import type { AppSettings } from './types';
@@ -22,6 +24,8 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [activeTab, setActiveTab] = useState<NavTabId>('dashboard');
   const [isReserveOpen, setIsReserveOpen] = useState(false);
+  const [isEarningsOpen, setIsEarningsOpen] = useState(false);
+  const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
@@ -36,6 +40,12 @@ export default function App() {
   useEffect(() => {
     initApp();
   }, []);
+
+  const resetSubViews = () => {
+    setIsReserveOpen(false);
+    setIsEarningsOpen(false);
+    setIsOwnerProfitOpen(false);
+  };
 
   const initApp = async () => {
     try {
@@ -138,16 +148,42 @@ export default function App() {
             onShowToast={showToast}
             onBack={() => setIsReserveOpen(false)}
           />
+        ) : isEarningsOpen ? (
+          <EmployeeEarningsView
+            settings={settings}
+            onShowToast={showToast}
+            onBack={() => setIsEarningsOpen(false)}
+          />
+        ) : isOwnerProfitOpen ? (
+          <OwnerProfitView
+            settings={settings}
+            onBack={() => setIsOwnerProfitOpen(false)}
+            onOpenReserve={() => {
+              resetSubViews();
+              setIsReserveOpen(true);
+            }}
+          />
         ) : (
           <>
             {activeTab === 'dashboard' && (
               <DashboardView
                 settings={settings}
                 onNavigateToTab={(tab) => {
-                  setIsReserveOpen(false);
+                  resetSubViews();
                   setActiveTab(tab);
                 }}
-                onOpenReserve={() => setIsReserveOpen(true)}
+                onOpenReserve={() => {
+                  resetSubViews();
+                  setIsReserveOpen(true);
+                }}
+                onOpenEarnings={() => {
+                  resetSubViews();
+                  setIsEarningsOpen(true);
+                }}
+                onOpenOwnerProfit={() => {
+                  resetSubViews();
+                  setIsOwnerProfitOpen(true);
+                }}
                 onShowToast={showToast}
               />
             )}
@@ -161,7 +197,14 @@ export default function App() {
             )}
 
             {activeTab === 'employees' && (
-              <EmployeesView settings={settings} onShowToast={showToast} />
+              <EmployeesView
+                settings={settings}
+                onOpenEarnings={() => {
+                  resetSubViews();
+                  setIsEarningsOpen(true);
+                }}
+                onShowToast={showToast}
+              />
             )}
 
             {activeTab === 'expenses' && (
@@ -169,7 +212,10 @@ export default function App() {
                 settings={settings}
                 onShowToast={showToast}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
-                onOpenReserve={() => setIsReserveOpen(true)}
+                onOpenReserve={() => {
+                  resetSubViews();
+                  setIsReserveOpen(true);
+                }}
               />
             )}
 
@@ -205,7 +251,7 @@ export default function App() {
       <BottomNav
         activeTab={activeTab}
         onTabChange={(tab) => {
-          setIsReserveOpen(false);
+          resetSubViews();
           setActiveTab(tab);
         }}
       />

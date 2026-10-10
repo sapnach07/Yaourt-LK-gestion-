@@ -26,6 +26,7 @@ import {
 import { formatFC, formatDate, formatPercent, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
+import { PayslipSettingsSection } from './PayslipSettingsSection';
 import type { AppSettings, Product } from '../../types';
 
 interface SettingsViewProps {
@@ -581,6 +582,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Section: Fiche de Paie (Personnalisation PDF) */}
+      <PayslipSettingsSection
+        settings={settings}
+        onSettingsUpdated={onSettingsUpdated}
+        onShowToast={onShowToast}
+      />
 
       {/* Section 5: Backup & Restore */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">

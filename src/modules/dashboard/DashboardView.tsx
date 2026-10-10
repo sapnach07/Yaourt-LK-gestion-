@@ -59,6 +59,8 @@ interface DashboardViewProps {
   settings: AppSettings;
   onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings') => void;
   onOpenReserve?: () => void;
+  onOpenEarnings?: () => void;
+  onOpenOwnerProfit?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
 }
 
@@ -69,6 +71,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   settings,
   onNavigateToTab,
   onOpenReserve,
+  onOpenEarnings,
+  onOpenOwnerProfit,
   onShowToast,
 }) => {
   const [periodType, setPeriodType] = useState<PeriodFilterType>('this_month');
@@ -160,22 +164,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     for (const entry of entries) {
       if (empFilter !== 'all' && entry.employeeId !== empFilter) continue;
 
+      let entrySalesFC = 0;
       for (const item of entry.items) {
         if (prodFilter !== 'all' && item.productId !== prodFilter) continue;
 
         const itemSalesFC = item.sold * item.unitPrice;
         const itemDamagedFC = item.damaged * item.unitPrice;
         salesFC += itemSalesFC;
+        entrySalesFC += itemSalesFC;
         damagedFC += itemDamagedFC;
 
-        // Proportional commission and owner share
-        commissionFC += (itemSalesFC * entry.employeeCommissionRate) / 100;
-        ownerShareFC += (itemSalesFC * entry.ownerShareRate) / 100;
+        // Proportional commission and owner share if product filter is active
+        if (prodFilter !== 'all') {
+          commissionFC += (itemSalesFC * entry.employeeCommissionRate) / 100;
+          ownerShareFC += (itemSalesFC * entry.ownerShareRate) / 100;
+        }
 
         totalToSellQty += item.totalToSell;
         soldQty += item.sold;
         damagedQty += item.damaged;
         restQty += item.rest;
+      }
+
+      if (prodFilter === 'all') {
+        commissionFC += entry.employeeCommissionFC ?? ((entrySalesFC * entry.employeeCommissionRate) / 100);
+        ownerShareFC += entry.ownerShareFC ?? ((entrySalesFC * entry.ownerShareRate) / 100);
       }
     }
 
@@ -194,17 +207,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const expenseReserveFC = (salesFC * expenseReserveRate) / 100;
     const expenseVsSalesPct = safePercentage(expensesFC, salesFC);
 
-    // Dépassement du seuil de dépenses (fonds prévu)
-    const expenseThresholdOverrunFC = Math.max(0, expensesFC - expenseReserveFC);
-    // Part du gérant nette après déduction du dépassement des dépenses
-    const netOwnerProfitFC = Math.round(ownerShareFC - expenseThresholdOverrunFC);
-
     return {
       salesFC: Math.round(salesFC),
       commissionFC: Math.round(commissionFC),
       ownerShareFC: Math.round(ownerShareFC),
-      expenseThresholdOverrunFC: Math.round(expenseThresholdOverrunFC),
-      netOwnerProfitFC,
       damagedFC: Math.round(damagedFC),
       expensesFC: Math.round(expensesFC),
       realProfitFC: Math.round(realProfitFC),
@@ -256,26 +262,39 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Daily Chart Data: Sales & Expenses per day
   const dailyChartData = useMemo(() => {
-    const map: Record<string, { date: string; displayDate: string; ventes: number; depenses: number }> = {};
+    const map: Record<
+      string,
+      { date: string; displayDate: string; ventes: number; commission: number; depenses: number }
+    > = {};
 
     currentEntries.forEach((entry) => {
       if (selectedEmployeeId !== 'all' && entry.employeeId !== selectedEmployeeId) return;
 
       let daySales = 0;
+      let dayComm = 0;
       entry.items.forEach((item) => {
         if (selectedProductId !== 'all' && item.productId !== selectedProductId) return;
-        daySales += item.sold * item.unitPrice;
+        const itemSales = item.sold * item.unitPrice;
+        daySales += itemSales;
+        dayComm += (itemSales * entry.employeeCommissionRate) / 100;
       });
+
+      const actualComm =
+        selectedProductId === 'all'
+          ? (entry.employeeCommissionFC ?? Math.round(dayComm))
+          : Math.round(dayComm);
 
       if (!map[entry.date]) {
         map[entry.date] = {
           date: entry.date,
           displayDate: formatDate(entry.date).slice(0, 5),
           ventes: 0,
+          commission: 0,
           depenses: 0,
         };
       }
       map[entry.date].ventes += daySales;
+      map[entry.date].commission += actualComm;
     });
 
     if (selectedEmployeeId === 'all' && selectedProductId === 'all') {
@@ -285,6 +304,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             date: exp.date,
             displayDate: formatDate(exp.date).slice(0, 5),
             ventes: 0,
+            commission: 0,
             depenses: 0,
           };
         }
@@ -297,12 +317,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   // Employee Sales comparison
   const employeeSalesData = useMemo(() => {
-    const map: Record<string, { name: string; ventes: number; soldQty: number; damagedQty: number; totalQty: number }> = {};
+    const map: Record<
+      string,
+      { id: string; name: string; ventes: number; commissionFC: number; soldQty: number; damagedQty: number; totalQty: number }
+    > = {};
 
     employees.forEach((emp) => {
       map[emp.id] = {
+        id: emp.id,
         name: emp.name,
         ventes: 0,
+        commissionFC: 0,
         soldQty: 0,
         damagedQty: 0,
         totalQty: 0,
@@ -312,13 +337,24 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     currentEntries.forEach((entry) => {
       const target = map[entry.employeeId];
       if (target) {
+        let entrySales = 0;
+        let entryComm = 0;
         entry.items.forEach((item) => {
           if (selectedProductId !== 'all' && item.productId !== selectedProductId) return;
-          target.ventes += item.sold * item.unitPrice;
+          const itemSales = item.sold * item.unitPrice;
+          target.ventes += itemSales;
+          entrySales += itemSales;
+          entryComm += (itemSales * entry.employeeCommissionRate) / 100;
           target.soldQty += item.sold;
           target.damagedQty += item.damaged;
           target.totalQty += item.totalToSell;
         });
+        const actualComm =
+          selectedProductId === 'all'
+            ? (entry.employeeCommissionFC ?? Math.round(entryComm))
+            : Math.round(entryComm);
+
+        target.commissionFC += actualComm;
       }
     });
 
@@ -376,8 +412,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const sorted = [...dailyChartData];
     let running = 0;
     return sorted.map((day) => {
-      // Approximate day commission based on sales proportion
-      const dayComm = (day.ventes * 20) / 100; // general reference or exact
+      // Vraie commission de chaque journée (somme réelle de chaque saisie)
+      const dayComm = day.commission || 0;
       const netDay = day.ventes - dayComm - day.depenses;
       running += netDay;
       return {
@@ -497,16 +533,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       });
     }
 
-    // 2b. Dépassement du seuil de 50% des dépenses déduit de ma part
-    if (currentMetrics.expenseThresholdOverrunFC > 0) {
-      alerts.push({
-        id: 'expense_overrun_deduction',
-        type: 'warning',
-        title: `Dépassement de seuil déduit de ma part : −${formatFC(currentMetrics.expenseThresholdOverrunFC, settings.currency)}`,
-        message: `Sur cette période, les dépenses (${formatFC(currentMetrics.expensesFC, settings.currency)}) dépassent le seuil de ${settings.expenseReservePct || 50} % prévu (${formatFC(currentMetrics.expenseReserveFC, settings.currency)}). L'excédent de ${formatFC(currentMetrics.expenseThresholdOverrunFC, settings.currency)} est automatiquement déduit de votre part de bénéfices.`,
-      });
-    }
-
     // 3. Negative or low house stock
     products.forEach((prod) => {
       const prodSum = productionEntries.reduce((acc, p) => {
@@ -601,7 +627,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         employeeBreakdown: employeeSalesData.map((e) => ({
           name: e.name,
           salesFC: e.ventes,
-          commissionFC: Math.round((e.ventes * 20) / 100),
+          commissionFC: e.commissionFC,
           sellRatePct: safePercentage(e.soldQty, e.totalQty),
           lossRatePct: safePercentage(e.damagedQty, e.totalQty),
         })),
@@ -948,26 +974,41 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           {/* Commissions Vendeurs(ses) */}
-          <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs">
-            <span className="text-[11px] font-bold text-teal-700 uppercase block">
-              Commissions dues
-            </span>
-            <span className="text-base font-extrabold text-teal-900 font-mono mt-0.5 block">
-              {formatFC(currentMetrics.commissionFC, currency)}
-            </span>
-            {commVar && (
-              <div className="flex items-center gap-1 mt-1 text-[11px] font-bold font-mono">
-                {commVar.isUp ? (
-                  <TrendingUp className="w-3 h-3 text-teal-700" />
-                ) : (
-                  <TrendingDown className="w-3 h-3 text-slate-500" />
-                )}
-                <span className="text-slate-600">
-                  {commVar.isUp ? '+' : ''}
-                  {formatPercent(commVar.pct)}
+          <div
+            onClick={onOpenEarnings}
+            role="button"
+            tabIndex={0}
+            className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs cursor-pointer hover:border-teal-400 active:scale-[0.99] transition-all flex flex-col justify-between"
+          >
+            <div>
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-bold text-teal-700 uppercase block">
+                  Commissions dues
+                </span>
+                <span className="text-[9px] font-bold text-teal-700 bg-teal-50 border border-teal-200/80 px-1.5 py-0.5 rounded-md">
+                  Gains →
                 </span>
               </div>
-            )}
+              <span className="text-base font-extrabold text-teal-900 font-mono mt-0.5 block">
+                {formatFC(currentMetrics.commissionFC, currency)}
+              </span>
+              {commVar && (
+                <div className="flex items-center gap-1 mt-1 text-[11px] font-bold font-mono">
+                  {commVar.isUp ? (
+                    <TrendingUp className="w-3 h-3 text-teal-700" />
+                  ) : (
+                    <TrendingDown className="w-3 h-3 text-slate-500" />
+                  )}
+                  <span className="text-slate-600">
+                    {commVar.isUp ? '+' : ''}
+                    {formatPercent(commVar.pct)}
+                  </span>
+                </div>
+              )}
+            </div>
+            <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-teal-700 font-medium">
+              <span>Voir les gains des vendeurs(ses) →</span>
+            </div>
           </div>
 
           {/* Dépenses réelles */}
@@ -993,46 +1034,29 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             )}
           </div>
 
-          {/* Ma part (Mes bénéfices réels) */}
-          <div className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs flex flex-col justify-between">
+          {/* Mes bénéfices (Gérant) */}
+          <div
+            onClick={onOpenOwnerProfit}
+            role="button"
+            tabIndex={0}
+            className="p-3.5 rounded-2xl bg-white border border-slate-200/80 shadow-2xs cursor-pointer hover:border-emerald-400 active:scale-[0.99] transition-all flex flex-col justify-between"
+          >
             <div>
               <div className="flex items-center justify-between">
                 <span className="text-[11px] font-bold text-emerald-700 uppercase block">
                   Mes bénéfices (Gérant)
                 </span>
-                {currentMetrics.expenseThresholdOverrunFC > 0 && (
-                  <span className="text-[9px] font-extrabold text-rose-700 bg-rose-50 border border-rose-200 px-1.5 py-0.5 rounded-md font-mono">
-                    Déduction
-                  </span>
-                )}
+                <span className="text-[9px] font-bold text-emerald-800 bg-emerald-50 border border-emerald-200/80 px-1.5 py-0.5 rounded-md">
+                  Détail →
+                </span>
               </div>
-              <span className={`text-base font-extrabold font-mono mt-0.5 block ${
-                currentMetrics.netOwnerProfitFC < 0 ? 'text-rose-700' : 'text-emerald-900'
-              }`}>
-                {formatFC(currentMetrics.netOwnerProfitFC, currency)}
+              <span className="text-base font-extrabold font-mono mt-0.5 block text-emerald-900">
+                {formatFC(currentMetrics.ownerShareFC, currency)}
               </span>
             </div>
 
-            <div className="mt-1.5 pt-1.5 border-t border-slate-100 space-y-0.5 text-[10px]">
-              <div className="flex items-center justify-between text-slate-500 font-mono">
-                <span>Part brute ({formatFC(currentMetrics.ownerShareFC, currency).replace(currency, '').trim()})</span>
-                <span className="text-slate-400">100%−caisse−comm</span>
-              </div>
-              {currentMetrics.expenseThresholdOverrunFC > 0 ? (
-                <div className="text-[10px] text-rose-700 font-semibold bg-rose-50/80 p-1.5 rounded-lg border border-rose-200/80 mt-1">
-                  <div className="flex items-center justify-between font-mono font-bold">
-                    <span>Déduit de ma part :</span>
-                    <span>−{formatFC(currentMetrics.expenseThresholdOverrunFC, currency)}</span>
-                  </div>
-                  <p className="text-[9px] text-rose-600 font-normal leading-tight mt-0.5">
-                    Motif : les dépenses ({formatFC(currentMetrics.expensesFC, currency)}) ont dépassé les {settings.expenseReservePct || 50}% prévus ({formatFC(currentMetrics.expenseReserveFC, currency)}) de {formatFC(currentMetrics.expenseThresholdOverrunFC, currency)}.
-                  </p>
-                </div>
-              ) : (
-                <div className="text-[9px] text-emerald-600 font-medium">
-                  ✓ Dépenses conformes au seuil de {settings.expenseReservePct || 50} % (aucune déduction)
-                </div>
-              )}
+            <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500">
+              <span>Ventes × ma part % (dépenses prises en charge par la Caisse)</span>
             </div>
           </div>
         </div>
