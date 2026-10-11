@@ -163,12 +163,21 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const monthOverrunFC = totalExpensesInMonthFC - expenseReserveInMonthFC;
   const monthOverrunPct = safePercentage(monthOverrunFC, expenseReserveInMonthFC);
 
-  // SOLDE DE RÉSERVE CUMULÉ (depuis le tout début, sans filtre de période ni remise à zéro)
+  // SOLDE DES CAISSES (en tenant compte du point de départ s'il existe)
+  const startingPoint = settings.caisseStartDate
+    ? {
+        startDate: settings.caisseStartDate,
+        startNormaleFC: settings.caisseStartNormaleFC ?? 0,
+        startCapitalFC: settings.caisseStartCapitalFC ?? 0,
+      }
+    : null;
+
   const cumulativeDetails = calculateReserveBalance(
     reserveMovements,
     dailyEntries,
     expenses,
-    reserveRate
+    reserveRate,
+    startingPoint
   );
   const isCumulativeNegative = cumulativeDetails.soldeFC < 0;
 

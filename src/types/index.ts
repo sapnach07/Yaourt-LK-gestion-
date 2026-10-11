@@ -103,6 +103,10 @@ export interface AppSettings {
   expenseCategories: string[];
   lastBackupDate: string | null;
   payslipSettings?: PayslipSettings;
+  // Point de départ des caisses (optionnel)
+  caisseStartDate?: string; // YYYY-MM-DD
+  caisseStartNormaleFC?: number; // Solde de départ de la Caisse normale
+  caisseStartCapitalFC?: number; // Solde de départ de la Caisse Capital (0 FC par défaut)
 }
 
 export interface PayslipSettings {

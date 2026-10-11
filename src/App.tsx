@@ -147,6 +147,7 @@ export default function App() {
         {isReserveOpen ? (
           <ReserveView
             settings={settings}
+            onSettingsUpdated={handleSettingsUpdated}
             onShowToast={showToast}
             onBack={() => setIsReserveOpen(false)}
             initialPrefill={reservePrefill}

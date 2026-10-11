@@ -15,6 +15,9 @@ import {
   Layers,
   AlertTriangle,
   Smartphone,
+  Wallet,
+  Calendar,
+  RotateCcw,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -23,6 +26,7 @@ import {
   exportSalesToCSV,
   exportExpensesToCSV,
 } from '../../utils/exportImport';
+import { calculateMonthResteNormale } from '../../utils/reserveCalculator';
 import { formatFC, formatDate, formatPercent, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
@@ -70,6 +74,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [confirmPin, setConfirmPin] = useState('');
   const [pinError, setPinError] = useState('');
 
+  // Point de départ des caisses
+  const [caisseStartDate, setCaisseStartDate] = useState(settings.caisseStartDate || '');
+  const [caisseStartNormaleFC, setCaisseStartNormaleFC] = useState(
+    settings.caisseStartNormaleFC !== undefined ? formatNumber(settings.caisseStartNormaleFC) : ''
+  );
+  const [caisseStartCapitalFC, setCaisseStartCapitalFC] = useState(
+    settings.caisseStartCapitalFC !== undefined ? formatNumber(settings.caisseStartCapitalFC) : '0'
+  );
+  const [suggestedNormaleFC, setSuggestedNormaleFC] = useState<number | null>(null);
+
   // Restore file handling
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingRestoreContent, setPendingRestoreContent] = useState<string | null>(null);
@@ -78,7 +92,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   useEffect(() => {
     loadProducts();
     checkPersistence();
+    loadSuggestedStartingPoint();
   }, []);
+
+  const loadSuggestedStartingPoint = async () => {
+    try {
+      const [entries, exps] = await Promise.all([
+        db.dailyEntries.toArray(),
+        db.expenses.toArray(),
+      ]);
+      // Si une date de départ existe ou par défaut, trouver le dernier mois clôturé
+      const refDate = settings.caisseStartDate || '2026-10-01';
+      const closedMonthSet = new Set<string>();
+      for (const e of entries) {
+        if (e.date && e.date < refDate) closedMonthSet.add(e.date.substring(0, 7));
+      }
+      for (const exp of exps) {
+        if (exp.date && exp.date < refDate) closedMonthSet.add(exp.date.substring(0, 7));
+      }
+      const sorted = Array.from(closedMonthSet).sort();
+      if (sorted.length > 0) {
+        const lastMonth = sorted[sorted.length - 1];
+        const res = calculateMonthResteNormale(entries, exps, lastMonth, settings.expenseReservePct || 50);
+        setSuggestedNormaleFC(res.resteNormaleFC);
+      }
+    } catch (e) {
+      console.error('Erreur calcul suggestion point de départ:', e);
+    }
+  };
 
   const loadProducts = async () => {
     const list = await db.products.orderBy('sortOrder').toArray();
@@ -116,6 +157,54 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     await db.settings.put(updated);
     onSettingsUpdated(updated);
     onShowToast('success', 'Paramètres généraux enregistrés.');
+  };
+
+  const handleSaveCaisseStartingPoint = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!caisseStartDate.trim()) {
+      onShowToast('error', 'Veuillez sélectionner une date de départ valide (ex : 2026-10-01).');
+      return;
+    }
+
+    const numNormale = caisseStartNormaleFC === '' ? (suggestedNormaleFC ?? 0) : parseLocaleNumber(caisseStartNormaleFC);
+    const numCapital = caisseStartCapitalFC === '' ? 0 : parseLocaleNumber(caisseStartCapitalFC);
+
+    if (isNaN(numNormale) || numNormale < 0) {
+      onShowToast('error', 'Le solde de départ de la Caisse normale doit être un montant positif ou nul.');
+      return;
+    }
+
+    if (isNaN(numCapital)) {
+      onShowToast('error', 'Le solde de départ de la Caisse Capital doit être un nombre valide.');
+      return;
+    }
+
+    const updated: AppSettings = {
+      ...settings,
+      caisseStartDate: caisseStartDate.trim(),
+      caisseStartNormaleFC: Math.round(numNormale),
+      caisseStartCapitalFC: Math.round(numCapital),
+    };
+
+    await db.settings.put(updated);
+    onSettingsUpdated(updated);
+    onShowToast('success', 'Point de départ des caisses enregistré avec succès.');
+  };
+
+  const handleRemoveCaisseStartingPoint = async () => {
+    const updated: AppSettings = {
+      ...settings,
+      caisseStartDate: undefined,
+      caisseStartNormaleFC: undefined,
+      caisseStartCapitalFC: undefined,
+    };
+
+    await db.settings.put(updated);
+    onSettingsUpdated(updated);
+    setCaisseStartDate('');
+    setCaisseStartNormaleFC('');
+    setCaisseStartCapitalFC('0');
+    onShowToast('info', 'Point de départ retiré : le calcul revient sur tout l’historique.');
   };
 
   // Product management
@@ -391,6 +480,124 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           >
             Enregistrer les ratios
           </button>
+        </form>
+      </div>
+
+      {/* Section : Point de départ des caisses */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+            <Wallet className="w-4 h-4 text-teal-700" />
+            <span>Point de départ des caisses</span>
+          </h3>
+          {settings.caisseStartDate && (
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-mono">
+              Actif ({formatDate(settings.caisseStartDate)})
+            </span>
+          )}
+        </div>
+
+        <p className="text-[11px] text-slate-500 leading-snug">
+          Permet de clôturer les mois passés et de démarrer les caisses à une date précise avec des soldes définis.
+          Les mois antérieurs seront clôturés en un seul bloc, sans utiliser la Caisse Capital.
+        </p>
+
+        <form onSubmit={handleSaveCaisseStartingPoint} className="space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+              <span>Date de départ (début des nouvelles caisses) *</span>
+              {caisseStartDate && (
+                <span className="text-[10px] font-normal text-slate-400 font-mono">
+                  {formatDate(caisseStartDate)}
+                </span>
+              )}
+            </label>
+            <div className="relative">
+              <input
+                type="date"
+                value={caisseStartDate}
+                onChange={(e) => {
+                  setCaisseStartDate(e.target.value);
+                  // Si l'utilisateur choisit une date et qu'aucun solde normale n'est saisi, proposer le reste suggéré
+                  if (suggestedNormaleFC !== null && !caisseStartNormaleFC) {
+                    setCaisseStartNormaleFC(formatNumber(suggestedNormaleFC));
+                  }
+                }}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+              />
+            </div>
+            {!caisseStartDate && (
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Vide par défaut. Entrez par exemple le 01/10/2026 pour clôturer septembre 2026 et avant.
+              </p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Solde Caisse normale ({currency})
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder={suggestedNormaleFC !== null ? `${formatNumber(suggestedNormaleFC)} (suggéré)` : '0'}
+                value={caisseStartNormaleFC}
+                onChange={(e) => setCaisseStartNormaleFC(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+              />
+              {suggestedNormaleFC !== null && (
+                <div className="mt-1 flex items-center justify-between text-[10px]">
+                  <span className="text-slate-400">Reste dernier mois :</span>
+                  <button
+                    type="button"
+                    onClick={() => setCaisseStartNormaleFC(formatNumber(suggestedNormaleFC))}
+                    className="font-bold text-teal-700 hover:text-teal-800 underline"
+                  >
+                    {formatFC(suggestedNormaleFC, currency)}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Solde Caisse Capital ({currency})
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="0"
+                value={caisseStartCapitalFC}
+                onChange={(e) => setCaisseStartCapitalFC(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+              />
+              <span className="text-[10px] text-slate-400 block mt-1">
+                0 {currency} par défaut
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 pt-1">
+            <button
+              type="submit"
+              className="flex-1 py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
+            >
+              Enregistrer le point de départ
+            </button>
+
+            {settings.caisseStartDate && (
+              <button
+                type="button"
+                onClick={handleRemoveCaisseStartingPoint}
+                className="py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold active:scale-95 transition-all min-h-[42px] flex items-center gap-1.5"
+                title="Revenir au calcul sur tout l'historique"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>Retirer</span>
+              </button>
+            )}
+          </div>
         </form>
       </div>
 

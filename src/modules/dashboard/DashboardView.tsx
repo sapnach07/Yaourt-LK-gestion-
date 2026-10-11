@@ -144,6 +144,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     };
   }, [dailyEntries, expenses, dateRange]);
 
+  // Cumulative Reserve Calculation (avec point de départ si configuré)
+  const cumulativeReserve = useMemo(() => {
+    const startingPoint = settings.caisseStartDate
+      ? {
+          startDate: settings.caisseStartDate,
+          startNormaleFC: settings.caisseStartNormaleFC ?? 0,
+          startCapitalFC: settings.caisseStartCapitalFC ?? 0,
+        }
+      : null;
+
+    return calculateReserveBalance(
+      reserveMovements,
+      dailyEntries,
+      expenses,
+      settings.expenseReservePct || 50,
+      startingPoint
+    );
+  }, [
+    reserveMovements,
+    dailyEntries,
+    expenses,
+    settings.expenseReservePct,
+    settings.caisseStartDate,
+    settings.caisseStartNormaleFC,
+    settings.caisseStartCapitalFC,
+  ]);
+
   // Compute metrics for a set of entries
   const computeMetrics = (
     entries: DailyEntry[],
@@ -207,10 +234,27 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const expenseReserveFC = (salesFC * expenseReserveRate) / 100;
     const expenseVsSalesPct = safePercentage(expensesFC, salesFC);
 
+    // Dépassements des mois clôturés uniquement si un point de départ est défini
+    let closedMonthsCompensationFC = 0;
+    if (settings.caisseStartDate && prodFilter === 'all' && empFilter === 'all') {
+      for (const cm of cumulativeReserve.closedMonths) {
+        const monthStart = `${cm.month}-01`;
+        const lastDayObj = new Date(parseInt(cm.month.slice(0, 4), 10), parseInt(cm.month.slice(5, 7), 10), 0);
+        const monthEnd = `${cm.month}-${String(lastDayObj.getDate()).padStart(2, '0')}`;
+        if (monthEnd >= dateRange.startDate && monthStart <= dateRange.endDate) {
+          closedMonthsCompensationFC += cm.depassementPrisSurBeneficeFC;
+        }
+      }
+    }
+
+    const netOwnerShareFC = Math.round(ownerShareFC - closedMonthsCompensationFC);
+
     return {
       salesFC: Math.round(salesFC),
       commissionFC: Math.round(commissionFC),
-      ownerShareFC: Math.round(ownerShareFC),
+      ownerShareFC: netOwnerShareFC,
+      ownerShareGrossFC: Math.round(ownerShareFC),
+      closedMonthsCompensationFC,
       damagedFC: Math.round(damagedFC),
       expensesFC: Math.round(expensesFC),
       realProfitFC: Math.round(realProfitFC),
@@ -229,7 +273,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const currentMetrics = useMemo(
     () => computeMetrics(currentEntries, currentExpenses, selectedEmployeeId, selectedProductId),
-    [currentEntries, currentExpenses, selectedEmployeeId, selectedProductId, settings.expenseReservePct]
+    [
+      currentEntries,
+      currentExpenses,
+      selectedEmployeeId,
+      selectedProductId,
+      settings.expenseReservePct,
+      settings.caisseStartDate,
+      cumulativeReserve.closedMonths,
+      dateRange,
+    ]
   );
 
   const prevMetrics = useMemo(
@@ -491,15 +544,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return Math.round(currentMetrics.expensesFC / reserveRate);
   }, [currentMetrics.expensesFC, settings.expenseReservePct]);
 
-  // Cumulative Reserve Calculation (depuis le tout début)
-  const cumulativeReserve = useMemo(() => {
-    return calculateReserveBalance(
-      reserveMovements,
-      dailyEntries,
-      expenses,
-      settings.expenseReservePct || 50
-    );
-  }, [reserveMovements, dailyEntries, expenses, settings.expenseReservePct]);
 
   // Smart Alerts
   const smartAlerts = useMemo(() => {
@@ -1074,7 +1118,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </div>
 
             <div className="mt-1.5 pt-1.5 border-t border-slate-100 text-[10px] text-slate-500">
-              <span>Ventes × ma part % (dépenses prises en charge par la Caisse)</span>
+              {currentMetrics.closedMonthsCompensationFC > 0 ? (
+                <span className="text-rose-600 font-semibold">
+                  Dont −{formatFC(currentMetrics.closedMonthsCompensationFC, currency)} de compensation des mois clôturés
+                </span>
+              ) : (
+                <span>Ventes × ma part % (dépenses prises en charge par la Caisse)</span>
+              )}
             </div>
           </div>
         </div>

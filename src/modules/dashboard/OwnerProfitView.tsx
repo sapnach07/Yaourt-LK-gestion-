@@ -92,16 +92,31 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     );
   }, [dailyEntries, dateRange]);
 
-  // Overall Cumulative Caisse Capital
+  // Overall Cumulative Caisse
   const cumulativeReserve = useMemo(() => {
-    return calculateReserveBalance(reserveMovements, dailyEntries, expenses, reserveRate);
-  }, [reserveMovements, dailyEntries, expenses, reserveRate]);
+    const startingPoint = settings.caisseStartDate
+      ? {
+          startDate: settings.caisseStartDate,
+          startNormaleFC: settings.caisseStartNormaleFC ?? 0,
+          startCapitalFC: settings.caisseStartCapitalFC ?? 0,
+        }
+      : null;
+    return calculateReserveBalance(reserveMovements, dailyEntries, expenses, reserveRate, startingPoint);
+  }, [
+    reserveMovements,
+    dailyEntries,
+    expenses,
+    reserveRate,
+    settings.caisseStartDate,
+    settings.caisseStartNormaleFC,
+    settings.caisseStartCapitalFC,
+  ]);
 
   // Profit calculation for the period
   const profitStats = useMemo(() => {
     let totalSalesFC = 0;
     let totalCommissionFC = 0;
-    let totalOwnerShareFC = 0;
+    let totalOwnerShareGrossFC = 0;
     let totalDamagedFC = 0;
 
     // Per-seller map
@@ -131,7 +146,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     for (const entry of periodEntries) {
       totalSalesFC += entry.totalSalesFC;
       totalCommissionFC += entry.employeeCommissionFC;
-      totalOwnerShareFC += entry.ownerShareFC;
+      totalOwnerShareGrossFC += entry.ownerShareFC;
 
       // Item damages
       let entryDamagedFC = 0;
@@ -162,15 +177,36 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       .filter((s) => s.salesFC > 0 || !s.employee.isArchived)
       .sort((a, b) => b.ownerShareFC - a.ownerShareFC);
 
+    // Dépassements des mois clôturés uniquement si un point de départ est défini
+    // Déduire le dépassement des mois clôturés qui tombent dans la période sélectionnée
+    let periodClosedMonthsCompensationFC = 0;
+    if (settings.caisseStartDate) {
+      for (const cm of cumulativeReserve.closedMonths) {
+        // Le mois est dans la période si au moins un jour du mois chevauche la période
+        // ou si la date de début / fin de période inclut ce mois
+        const monthStart = `${cm.month}-01`;
+        const lastDayObj = new Date(parseInt(cm.month.slice(0, 4), 10), parseInt(cm.month.slice(5, 7), 10), 0);
+        const monthEnd = `${cm.month}-${String(lastDayObj.getDate()).padStart(2, '0')}`;
+
+        if (monthEnd >= dateRange.startDate && monthStart <= dateRange.endDate) {
+          periodClosedMonthsCompensationFC += cm.depassementPrisSurBeneficeFC;
+        }
+      }
+    }
+
+    const totalOwnerShareFC = Math.round(totalOwnerShareGrossFC - periodClosedMonthsCompensationFC);
+
     return {
       totalSalesFC,
       totalCommissionFC,
       totalCaisseShareFC,
-      totalOwnerShareFC: Math.round(totalOwnerShareFC),
+      totalOwnerShareGrossFC: Math.round(totalOwnerShareGrossFC),
+      periodClosedMonthsCompensationFC,
+      totalOwnerShareFC,
       totalDamagedFC,
       sellerBreakdown,
     };
-  }, [periodEntries, employees, reserveRate]);
+  }, [periodEntries, employees, reserveRate, settings.caisseStartDate, cumulativeReserve.closedMonths, dateRange]);
 
   return (
     <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-4">
@@ -330,6 +366,16 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
               −{formatFC(profitStats.totalCaisseShareFC, currency)}
             </span>
           </div>
+
+          {/* Ligne séparée : Compensation des mois clôturés */}
+          {profitStats.periodClosedMonthsCompensationFC > 0 && (
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800">
+              <span className="font-bold">4. Compensation des mois clôturés</span>
+              <span className="font-mono font-extrabold text-rose-900">
+                −{formatFC(profitStats.periodClosedMonthsCompensationFC, currency)}
+              </span>
+            </div>
+          )}
 
           <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 font-bold">
             <div>
