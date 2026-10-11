@@ -92,6 +92,28 @@ export interface Payment {
   createdAt: number;
 }
 
+export interface PersonalSaleItem {
+  productId: string;
+  productName: string;
+  unitPrice: number;
+  soldQty: number;
+}
+
+export interface PersonalSale {
+  id: string;
+  date: string; // YYYY-MM-DD
+  items: PersonalSaleItem[];
+  totalSalesFC: number;
+  ownerCommissionRate: number; // ma commission %
+  ownerCommissionFC: number; // ma commission de vendeur FC
+  expenseReserveRate: number; // part réserve %
+  expenseReserveFC: number; // part réserve FC
+  ownerShareRate: number; // part gérant % (= 100 - réserve - commission)
+  ownerShareFC: number; // part gérant FC
+  notes?: string;
+  createdAt: number;
+}
+
 export interface AppSettings {
   id: string; // 'app_settings'
   businessName: string; // Default: 'Yaourt Gestion'
@@ -107,6 +129,8 @@ export interface AppSettings {
   caisseStartDate?: string; // YYYY-MM-DD
   caisseStartNormaleFC?: number; // Solde de départ de la Caisse normale
   caisseStartCapitalFC?: number; // Solde de départ de la Caisse Capital (0 FC par défaut)
+  // Commission sur ventes personnelles (optionnel, 0 par défaut)
+  ownerCommissionPct?: number;
 }
 
 export interface PayslipSettings {

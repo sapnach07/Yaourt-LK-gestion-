@@ -8,6 +8,7 @@ import type {
   ReserveMovement,
   Payment,
   AppSettings,
+  PersonalSale,
 } from '../types';
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
@@ -33,6 +34,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   pinCode: '',
   expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
   lastBackupDate: null,
+  ownerCommissionPct: 0,
 };
 
 export class YaourtDatabase extends Dexie {
@@ -44,6 +46,7 @@ export class YaourtDatabase extends Dexie {
   reserveMovements!: Table<ReserveMovement, string>;
   payments!: Table<Payment, string>;
   settings!: Table<AppSettings, string>;
+  personalSales!: Table<PersonalSale, string>;
 
   constructor() {
     super('YaourtGestionDB');
@@ -58,6 +61,9 @@ export class YaourtDatabase extends Dexie {
     });
     this.version(2).stores({
       reserveMovements: 'id, date, type, createdAt',
+    });
+    this.version(3).stores({
+      personalSales: 'id, date, createdAt',
     });
   }
 }

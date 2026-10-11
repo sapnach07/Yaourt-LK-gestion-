@@ -1,5 +1,5 @@
 import { db } from '../db/db';
-import type { ReserveMovement, DailyEntry, Expense } from '../types';
+import type { ReserveMovement, DailyEntry, Expense, PersonalSale } from '../types';
 
 export interface ExpenseBreakdownItem {
   expenseId: string;
@@ -79,7 +79,8 @@ export function calculateMonthResteNormale(
   dailyEntries: DailyEntry[],
   expenses: Expense[],
   monthStr: string, // YYYY-MM
-  reserveRatePct = 50
+  reserveRatePct = 50,
+  personalSales: PersonalSale[] = []
 ): {
   month: string;
   ventesDuMois: number;
@@ -89,9 +90,12 @@ export function calculateMonthResteNormale(
   depassementPrisSurBeneficeFC: number;
 } {
   const monthEntries = dailyEntries.filter((e) => e.date && e.date.startsWith(monthStr));
+  const monthPersonalSales = personalSales.filter((p) => p.date && p.date.startsWith(monthStr));
   const monthExpenses = expenses.filter((e) => e.date && e.date.startsWith(monthStr));
 
-  const ventesDuMois = monthEntries.reduce((sum, e) => sum + (e.totalSalesFC || 0), 0);
+  const ventesDuMois =
+    monthEntries.reduce((sum, e) => sum + (e.totalSalesFC || 0), 0) +
+    monthPersonalSales.reduce((sum, p) => sum + (p.totalSalesFC || 0), 0);
   const reserveDuMois = Math.round((ventesDuMois * reserveRatePct) / 100);
   const depensesDuMois = monthExpenses.reduce((sum, e) => sum + (e.amountFC || 0), 0);
 
@@ -110,7 +114,7 @@ export function calculateMonthResteNormale(
 
 /**
  * Calcule l'état des deux caisses (Caisse normale et Caisse Capital)
- * en tenant compte du point de départ optionnel :
+ * en tenant compte du point de départ optionnel et des ventes personnelles :
  *
  * 1. Si caisseStartingPoint est défini avec une date de départ (ex: '2026-10-01') :
  *    - Mois clôturés (avant la date de départ) : calculés en bloc mois par mois
@@ -119,15 +123,34 @@ export function calculateMonthResteNormale(
  *      en commençant avec soldeNormaleFC = startNormaleFC et soldeCapitalFC = startCapitalFC.
  * 2. Sans point de départ : calcul chronologique sur tout l'historique démarrant à 0.
  */
+export interface PeriodReserveSummary {
+  startDate: string; // YYYY-MM-DD
+  endDate: string; // YYYY-MM-DD
+  // Caisse normale
+  normaleStartFC: number; // Solde au début (fin de la veille du "Du")
+  normaleSalesAddFC: number; // + 50 % des ventes de la période
+  normaleExpensesPaidFC: number; // − dépenses payées par la caisse normale
+  normaleEndFC: number; // = solde à la fin ("Au")
+  // Caisse Capital
+  capitalStartFC: number; // Solde au début
+  capitalAdditionsFC: number; // + dépôts
+  capitalWithdrawalsFC: number; // − retraits
+  capitalExpensesTakenFC: number; // − dépenses prises sur le capital
+  capitalEndFC: number; // = solde à la fin
+}
+
 export function calculateReserveBalance(
   movements: ReserveMovement[],
   dailyEntries: DailyEntry[],
   expenses: Expense[],
   reserveRatePct = 50,
-  startingPoint?: CaisseStartingPoint | null
+  startingPoint?: CaisseStartingPoint | null,
+  asOfDate?: string | null,
+  personalSales: PersonalSale[] = []
 ): ReserveDetails {
   const hasStartingPoint = Boolean(startingPoint && startingPoint.startDate && startingPoint.startDate.trim());
   const startDate = hasStartingPoint ? startingPoint!.startDate!.trim() : '';
+  const filterAsOfDate = asOfDate && asOfDate.trim() ? asOfDate.trim() : null;
 
   // 1. Calcul des mois clôturés (si point de départ actif)
   const closedMonths: ClosedMonthSummary[] = [];
@@ -140,19 +163,30 @@ export function calculateReserveBalance(
 
     for (const e of dailyEntries) {
       if (e.date && e.date < startDate) {
-        closedMonthSet.add(e.date.substring(0, 7));
+        if (!filterAsOfDate || e.date <= filterAsOfDate) {
+          closedMonthSet.add(e.date.substring(0, 7));
+        }
+      }
+    }
+    for (const p of personalSales) {
+      if (p.date && p.date < startDate) {
+        if (!filterAsOfDate || p.date <= filterAsOfDate) {
+          closedMonthSet.add(p.date.substring(0, 7));
+        }
       }
     }
     for (const exp of expenses) {
       if (exp.date && exp.date < startDate) {
-        closedMonthSet.add(exp.date.substring(0, 7));
+        if (!filterAsOfDate || exp.date <= filterAsOfDate) {
+          closedMonthSet.add(exp.date.substring(0, 7));
+        }
       }
     }
 
     const sortedClosedMonths = Array.from(closedMonthSet).sort();
 
     for (const mStr of sortedClosedMonths) {
-      const summary = calculateMonthResteNormale(dailyEntries, expenses, mStr, reserveRatePct);
+      const summary = calculateMonthResteNormale(dailyEntries, expenses, mStr, reserveRatePct, personalSales);
       closedMonths.push(summary);
       totalDepassementClosedMonthsFC += summary.depassementPrisSurBeneficeFC;
     }
@@ -168,6 +202,7 @@ export function calculateReserveBalance(
   // Mouvements manuels de capital (ajouts et retraits)
   for (const m of movements) {
     if (hasStartingPoint && m.date < startDate) continue;
+    if (filterAsOfDate && m.date > filterAsOfDate) continue;
     if (m.type === 'ajout') {
       events.push({
         type: 'ajout',
@@ -189,9 +224,10 @@ export function calculateReserveBalance(
     }
   }
 
-  // Saisies de ventes journalières
+  // Saisies de ventes journalières des vendeurs
   for (const e of dailyEntries) {
     if (hasStartingPoint && e.date < startDate) continue;
+    if (filterAsOfDate && e.date > filterAsOfDate) continue;
     events.push({
       type: 'vente',
       order: 2,
@@ -202,9 +238,24 @@ export function calculateReserveBalance(
     });
   }
 
+  // Ventes personnelles du gérant (traitées comme une vente normale pour la caisse)
+  for (const p of personalSales) {
+    if (hasStartingPoint && p.date < startDate) continue;
+    if (filterAsOfDate && p.date > filterAsOfDate) continue;
+    events.push({
+      type: 'vente',
+      order: 2,
+      id: p.id,
+      date: p.date,
+      totalSalesFC: p.totalSalesFC || 0,
+      createdAt: p.createdAt || 0,
+    });
+  }
+
   // Dépenses
   for (const exp of expenses) {
     if (hasStartingPoint && exp.date < startDate) continue;
+    if (filterAsOfDate && exp.date > filterAsOfDate) continue;
     events.push({
       type: 'depense',
       order: 3,
@@ -335,7 +386,8 @@ export function getCapitalBalanceAtDate(
   reserveRatePct: number,
   targetDate: string,
   excludeMovementId?: string,
-  startingPoint?: CaisseStartingPoint | null
+  startingPoint?: CaisseStartingPoint | null,
+  personalSales: PersonalSale[] = []
 ): number {
   const filteredMovements = excludeMovementId
     ? movements.filter((m) => m.id !== excludeMovementId)
@@ -347,7 +399,9 @@ export function getCapitalBalanceAtDate(
     dailyEntries,
     expenses,
     reserveRatePct,
-    startingPoint
+    startingPoint,
+    targetDate,
+    personalSales
   );
 
   // Le solde du capital actuel disponible
@@ -361,11 +415,113 @@ export async function getCumulativeReserveDetails(
   reserveRatePct = 50,
   startingPoint?: CaisseStartingPoint | null
 ): Promise<ReserveDetails> {
-  const [movements, entries, expenses] = await Promise.all([
+  const [movements, entries, expenses, pSales] = await Promise.all([
     db.reserveMovements.toArray(),
     db.dailyEntries.toArray(),
     db.expenses.toArray(),
+    db.personalSales.toArray(),
   ]);
 
-  return calculateReserveBalance(movements, entries, expenses, reserveRatePct, startingPoint);
+  return calculateReserveBalance(movements, entries, expenses, reserveRatePct, startingPoint, null, pSales);
+}
+
+/**
+ * Calcule le résumé de la Caisse normale et Caisse Capital sur une période [startDate, endDate] :
+ * - Caisse normale :
+ *     solde au début (fin de la veille du "Du"),
+ *     + 50 % des ventes de la période,
+ *     − dépenses payées par la caisse normale pendant la période,
+ *     = solde à la fin ("Au").
+ * - Caisse Capital :
+ *     solde au début (fin de la veille du "Du"),
+ *     + dépôts pendant la période,
+ *     − retraits pendant la période,
+ *     − dépenses prises sur le capital pendant la période,
+ *     = solde à la fin.
+ */
+export function calculatePeriodReserveSummary(
+  movements: ReserveMovement[],
+  dailyEntries: DailyEntry[],
+  expenses: Expense[],
+  startDate: string, // YYYY-MM-DD ("Du")
+  endDate: string,   // YYYY-MM-DD ("Au")
+  reserveRatePct = 50,
+  startingPoint?: CaisseStartingPoint | null,
+  personalSales: PersonalSale[] = []
+): PeriodReserveSummary {
+  // Calculer la veille de startDate
+  const sDate = new Date(startDate);
+  sDate.setDate(sDate.getDate() - 1);
+  const dayBefore = sDate.toISOString().slice(0, 10);
+
+  // État à la fin de la veille du "Du"
+  const startDetails = calculateReserveBalance(
+    movements,
+    dailyEntries,
+    expenses,
+    reserveRatePct,
+    startingPoint,
+    dayBefore,
+    personalSales
+  );
+
+  // État à la fin du "Au"
+  const endDetails = calculateReserveBalance(
+    movements,
+    dailyEntries,
+    expenses,
+    reserveRatePct,
+    startingPoint,
+    endDate,
+    personalSales
+  );
+
+  // Événements spécifiques à la période [startDate, endDate]
+  // 1. Ventes de la période (vendeurs + ventes personnelles)
+  const periodSalesEntries = dailyEntries.filter(
+    (e) => e.date && e.date >= startDate && e.date <= endDate
+  );
+  const periodPersonalSales = personalSales.filter(
+    (p) => p.date && p.date >= startDate && p.date <= endDate
+  );
+  const periodSalesFC =
+    periodSalesEntries.reduce((sum, e) => sum + (e.totalSalesFC || 0), 0) +
+    periodPersonalSales.reduce((sum, p) => sum + (p.totalSalesFC || 0), 0);
+  const normaleSalesAddFC = Math.round((periodSalesFC * reserveRatePct) / 100);
+
+  // 2. Dépenses de la période décomposées dans endDetails
+  let normaleExpensesPaidFC = 0;
+  let capitalExpensesTakenFC = 0;
+
+  for (const exp of endDetails.allExpenseBreakdowns) {
+    if (exp.date >= startDate && exp.date <= endDate) {
+      normaleExpensesPaidFC += exp.paidByNormaleFC;
+      capitalExpensesTakenFC += exp.takenFromCapitalFC;
+    }
+  }
+
+  // 3. Mouvements de capital de la période
+  let capitalAdditionsFC = 0;
+  let capitalWithdrawalsFC = 0;
+
+  for (const m of movements) {
+    if (m.date >= startDate && m.date <= endDate) {
+      if (m.type === 'ajout') capitalAdditionsFC += m.amountFC || 0;
+      else if (m.type === 'retrait') capitalWithdrawalsFC += m.amountFC || 0;
+    }
+  }
+
+  return {
+    startDate,
+    endDate,
+    normaleStartFC: startDetails.soldeNormaleFC,
+    normaleSalesAddFC,
+    normaleExpensesPaidFC,
+    normaleEndFC: endDetails.soldeNormaleFC,
+    capitalStartFC: startDetails.soldeCapitalFC,
+    capitalAdditionsFC,
+    capitalWithdrawalsFC,
+    capitalExpensesTakenFC,
+    capitalEndFC: endDetails.soldeCapitalFC,
+  };
 }

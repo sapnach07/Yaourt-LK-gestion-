@@ -32,8 +32,10 @@ import { ConfirmModal } from '../../components/ConfirmModal';
 import {
   calculateReserveBalance,
   calculateMonthResteNormale,
+  calculatePeriodReserveSummary,
   getCapitalBalanceAtDate,
   type ReserveDetails,
+  type PeriodReserveSummary,
 } from '../../utils/reserveCalculator';
 import type { ReserveMovement, DailyEntry, Expense, AppSettings } from '../../types';
 
@@ -119,10 +121,38 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
       }
     : null;
 
+  // Mode de consultation : 'realtime' (par défaut), 'as_of_date' (date précise), 'period' (période du / au)
+  const todayStr = toISODate(new Date());
+  const [viewDate, setViewDate] = useState<string>(todayStr);
+  const [isPeriodOpen, setIsPeriodOpen] = useState(false);
+  const [periodStart, setPeriodStart] = useState<string>(() => {
+    const d = new Date();
+    d.setDate(1);
+    return toISODate(d);
+  });
+  const [periodEnd, setPeriodEnd] = useState<string>(todayStr);
+
+  const isAsOfOtherDate = Boolean(viewDate && viewDate !== todayStr && !isPeriodOpen);
+
+  // État des caisses actif :
+  // - Si une autre date est choisie (as_of_date), calcule l'état à la fin de cette date
+  // - Sinon (aujourd'hui / temps réel), calcule l'état complet en temps réel
   const reserveDetails: ReserveDetails = calculateReserveBalance(
     movements,
     dailyEntries,
     expenses,
+    reserveRate,
+    startingPoint,
+    isAsOfOtherDate ? viewDate : null
+  );
+
+  // Résumé de période si la section période est ouverte
+  const periodSummary: PeriodReserveSummary = calculatePeriodReserveSummary(
+    movements,
+    dailyEntries,
+    expenses,
+    periodStart || todayStr,
+    periodEnd || todayStr,
     reserveRate,
     startingPoint
   );
@@ -343,6 +373,163 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* SÉLECTEUR DE DATE ET PÉRIODE (sous le titre) */}
+      {!isCapitalScreenOpen && (
+        <div className="bg-white rounded-2xl border border-slate-200/90 p-3 shadow-2xs space-y-2.5">
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            {/* Champ date : Voir la caisse au */}
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-slate-700 whitespace-nowrap">Voir la caisse au :</span>
+              <input
+                type="date"
+                value={viewDate}
+                onChange={(e) => {
+                  setViewDate(e.target.value);
+                  setIsPeriodOpen(false);
+                }}
+                className="px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50 focus:bg-white focus:outline-teal-700"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setViewDate(todayStr);
+                  setIsPeriodOpen(false);
+                }}
+                className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  viewDate === todayStr && !isPeriodOpen
+                    ? 'bg-teal-700 text-white shadow-2xs'
+                    : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                }`}
+              >
+                Aujourd’hui
+              </button>
+            </div>
+
+            {/* Bouton Voir une période */}
+            <button
+              type="button"
+              onClick={() => setIsPeriodOpen(!isPeriodOpen)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                isPeriodOpen
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+              }`}
+            >
+              {isPeriodOpen ? 'Fermer la période' : 'Voir une période'}
+            </button>
+          </div>
+
+          {/* Bandeau d'état à une date précise (lecture seule) */}
+          {isAsOfOtherDate && (
+            <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs font-bold flex items-center justify-between gap-2">
+              <span className="flex items-center gap-1.5">
+                <Clock className="w-4 h-4 text-amber-700 shrink-0" />
+                <span>État au {formatDate(viewDate)} (lecture seule)</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setViewDate(todayStr)}
+                className="text-[11px] underline text-amber-800 hover:text-amber-950 font-bold"
+              >
+                Revenir au temps réel
+              </button>
+            </div>
+          )}
+
+          {/* Champs Du et Au pour la période */}
+          {isPeriodOpen && (
+            <div className="pt-2 border-t border-slate-100 space-y-3">
+              <div className="flex items-center gap-2">
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Du :</label>
+                  <input
+                    type="date"
+                    value={periodStart}
+                    onChange={(e) => setPeriodStart(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50 focus:bg-white focus:outline-teal-700"
+                  />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Au :</label>
+                  <input
+                    type="date"
+                    value={periodEnd}
+                    onChange={(e) => setPeriodEnd(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-slate-50 focus:bg-white focus:outline-teal-700"
+                  />
+                </div>
+              </div>
+
+              {/* Résumé de la période pour Caisse normale et Caisse Capital */}
+              <div className="space-y-2.5 pt-1">
+                <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 flex items-center justify-between">
+                  <span>Période du {formatDate(periodSummary.startDate)} au {formatDate(periodSummary.endDate)}</span>
+                  <span className="text-[10px] bg-slate-100 px-2 py-0.5 rounded font-mono">Lecture seule</span>
+                </div>
+
+                {/* Bloc 1 : Caisse normale sur la période */}
+                <div className="p-3 rounded-2xl bg-emerald-50/70 border border-emerald-200 text-xs space-y-1.5">
+                  <span className="font-extrabold text-emerald-900 block text-xs uppercase">
+                    Caisse normale (Période)
+                  </span>
+                  <div className="space-y-1 font-mono text-[11px] text-emerald-950">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 font-sans">Solde au début (fin de la veille) :</span>
+                      <span className="font-bold">{formatFC(periodSummary.normaleStartFC, currency)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-emerald-800">
+                      <span className="font-sans">+ {reserveRate} % des ventes de la période :</span>
+                      <span className="font-bold">+{formatFC(periodSummary.normaleSalesAddFC, currency)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-rose-700">
+                      <span className="font-sans">− Dépenses payées par la caisse normale :</span>
+                      <span className="font-bold">−{formatFC(periodSummary.normaleExpensesPaidFC, currency)}</span>
+                    </div>
+                    <div className="pt-1 border-t border-emerald-200 flex items-center justify-between font-extrabold text-xs text-emerald-900">
+                      <span className="font-sans">= Solde à la fin :</span>
+                      <span>{formatFC(periodSummary.normaleEndFC, currency)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bloc 2 : Caisse Capital sur la période */}
+                <div className="p-3 rounded-2xl bg-slate-50 border border-slate-200 text-xs space-y-1.5">
+                  <span className="font-extrabold text-slate-900 block text-xs uppercase">
+                    Caisse Capital (Période)
+                  </span>
+                  <div className="space-y-1 font-mono text-[11px] text-slate-800">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 font-sans">Solde au début :</span>
+                      <span className={`font-bold ${periodSummary.capitalStartFC < 0 ? 'text-rose-700' : ''}`}>
+                        {formatFC(periodSummary.capitalStartFC, currency)}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-emerald-800">
+                      <span className="font-sans">+ Dépôts :</span>
+                      <span className="font-bold">+{formatFC(periodSummary.capitalAdditionsFC, currency)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span className="font-sans">− Retraits :</span>
+                      <span className="font-bold">−{formatFC(periodSummary.capitalWithdrawalsFC, currency)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-rose-700">
+                      <span className="font-sans">− Dépenses prises sur le capital :</span>
+                      <span className="font-bold">−{formatFC(periodSummary.capitalExpensesTakenFC, currency)}</span>
+                    </div>
+                    <div className="pt-1 border-t border-slate-200 flex items-center justify-between font-extrabold text-xs">
+                      <span className="font-sans">= Solde à la fin :</span>
+                      <span className={periodSummary.capitalEndFC < 0 ? 'text-rose-700' : 'text-slate-900'}>
+                        {formatFC(periodSummary.capitalEndFC, currency)}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ALERTE ROUGE : si soldeCapitalFC < 0 */}
       {reserveDetails.soldeCapitalFC < 0 && (
