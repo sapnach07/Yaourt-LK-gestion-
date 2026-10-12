@@ -31,12 +31,14 @@ interface DailyEntryViewProps {
   settings: AppSettings;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenCalculator?: () => void;
+  initialStatusFilter?: 'all' | 'incomplete' | 'validated';
 }
 
 export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   settings,
   onShowToast,
   onOpenCalculator,
+  initialStatusFilter,
 }) => {
   const [subTab, setSubTab] = useState<'sales' | 'production' | 'personal'>('sales');
 
@@ -49,6 +51,15 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   // Filters for sales
   const [filterEmployeeId, setFilterEmployeeId] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'incomplete' | 'validated'>(
+    initialStatusFilter || 'all'
+  );
+
+  useEffect(() => {
+    if (initialStatusFilter) {
+      setFilterStatus(initialStatusFilter);
+    }
+  }, [initialStatusFilter]);
 
   // Filters for personal sales
   const [filterPersonalDate, setFilterPersonalDate] = useState<string>('');
@@ -170,10 +181,21 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
     }
   };
 
+  // Status helper: defaults to 'validated' if missing
+  const getEntryStatus = (entry: DailyEntry): 'validated' | 'incomplete' => {
+    return entry.status || 'validated';
+  };
+
+  // Incomplete entries count
+  const incompleteCount = dailyEntries.filter((e) => getEntryStatus(e) === 'incomplete').length;
+
   // Filtered sales entries
   const filteredDailyEntries = dailyEntries.filter((entry) => {
     if (filterEmployeeId !== 'all' && entry.employeeId !== filterEmployeeId) return false;
     if (filterDate && entry.date !== filterDate) return false;
+    const entryStatus = getEntryStatus(entry);
+    if (filterStatus === 'incomplete' && entryStatus !== 'incomplete') return false;
+    if (filterStatus === 'validated' && entryStatus !== 'validated') return false;
     return true;
   });
 
@@ -320,6 +342,60 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             )}
           </div>
 
+          {/* Filtre à trois choix : Toutes / À compléter / Validées */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-xl gap-1">
+            <button
+              type="button"
+              onClick={() => setFilterStatus('all')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all text-center min-h-[34px] flex items-center justify-center gap-1.5 ${
+                filterStatus === 'all'
+                  ? 'bg-white text-slate-900 shadow-2xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Toutes</span>
+              <span className="text-[11px] font-mono text-slate-500 font-semibold">
+                ({dailyEntries.length})
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterStatus('incomplete')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all text-center min-h-[34px] flex items-center justify-center gap-1.5 ${
+                filterStatus === 'incomplete'
+                  ? 'bg-amber-500 text-white shadow-2xs font-extrabold'
+                  : 'text-amber-800 hover:text-amber-900'
+              }`}
+            >
+              <span>À compléter</span>
+              <span
+                className={`text-[11px] font-mono font-bold px-1.5 py-0.2 rounded-full ${
+                  filterStatus === 'incomplete'
+                    ? 'bg-white/20 text-white'
+                    : incompleteCount > 0
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'text-slate-500'
+                }`}
+              >
+                {incompleteCount}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setFilterStatus('validated')}
+              className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all text-center min-h-[34px] flex items-center justify-center gap-1.5 ${
+                filterStatus === 'validated'
+                  ? 'bg-white text-emerald-800 shadow-2xs font-extrabold'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Validées</span>
+              <span className="text-[11px] font-mono text-slate-500 font-semibold">
+                ({dailyEntries.length - incompleteCount})
+              </span>
+            </button>
+          </div>
+
           {/* List of Entries */}
           {filteredDailyEntries.length === 0 ? (
             <EmptyState
@@ -337,24 +413,45 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               {filteredDailyEntries.map((entry) => {
                 const totalSoldQty = entry.items.reduce((acc, i) => acc + i.sold, 0);
                 const totalDamagedQty = entry.items.reduce((acc, i) => acc + i.damaged, 0);
+                const status = getEntryStatus(entry);
+                const isIncomplete = status === 'incomplete';
+
+                // Determine missing fields text for display
+                const missingText = entry.missingFields && entry.missingFields.length > 0
+                  ? entry.missingFields.map((f) => (f === 'sold' ? 'Vendu' : 'Abîmé')).join(', ')
+                  : 'Vendu, Abîmé';
 
                 return (
                   <div
                     key={entry.id}
-                    className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs flex flex-col gap-3"
+                    className={`bg-white rounded-2xl p-4 shadow-xs flex flex-col gap-3 transition-all ${
+                      isIncomplete
+                        ? 'border-2 border-amber-400 bg-amber-50/20'
+                        : 'border border-slate-200/80'
+                    }`}
                   >
-                    {/* Top Row: Date, Employee, Commission % */}
+                    {/* Top Row: Date, Employee, Status Badge, Commission % */}
                     <div className="flex items-start justify-between">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-extrabold text-slate-900">
                             {formatDate(entry.date)}
                           </span>
                           <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200/50">
                             {entry.employeeName}
                           </span>
+                          {/* Badge de statut */}
+                          {isIncomplete ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded-lg">
+                              À compléter plus tard
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded-lg">
+                              ✓ Validé
+                            </span>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
+                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 font-mono flex-wrap">
                           <span>Commission : {formatNumber(entry.employeeCommissionRate)} %</span>
                           <span>·</span>
                           <span>{formatNumber(totalSoldQty)} vendus</span>
@@ -367,10 +464,28 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                             </>
                           )}
                         </div>
+                        {isIncomplete && (
+                          <div className="mt-1 text-xs font-bold text-amber-800 flex items-center gap-1">
+                            <span>Manque : {missingText}</span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Actions */}
                       <div className="flex items-center gap-1">
+                        {isIncomplete && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEntryToEdit(entry);
+                              setIsDailyModalOpen(true);
+                            }}
+                            className="px-2.5 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[38px] flex items-center gap-1"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Compléter</span>
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
@@ -822,8 +937,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           setIsDailyModalOpen(false);
           setEntryToEdit(null);
         }}
-        onSaved={async () => {
-          onShowToast('success', 'Saisie journalière enregistrée.');
+        onSaved={async (status, missingLabels) => {
+          if (status === 'validated') {
+            onShowToast('success', 'Saisie validée');
+          } else {
+            const missingText = missingLabels.length > 0 ? missingLabels.join(', ') : 'Vendu, Abîmé';
+            onShowToast('info', `Saisie enregistrée : à compléter plus tard (il manque : ${missingText})`);
+          }
           await loadAllData();
         }}
         onOpenCalculator={onOpenCalculator}

@@ -62,7 +62,7 @@ import type {
 
 interface DashboardViewProps {
   settings: AppSettings;
-  onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings') => void;
+  onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings', statusFilter?: 'all' | 'incomplete' | 'validated') => void;
   onOpenReserve?: (prefill?: { amount: number; reason: string }) => void;
   onOpenEarnings?: () => void;
   onOpenOwnerProfit?: () => void;
@@ -183,6 +183,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [realTimeStockData]
   );
 
+  // Nombre de saisies incomplètes (status === 'incomplete')
+  const incompleteEntriesCount = useMemo(
+    () => dailyEntries.filter((e) => (e.status || 'validated') === 'incomplete').length,
+    [dailyEntries]
+  );
+
   // Date ranges
   const dateRange = useMemo(
     () => getDateRangeForFilter(periodType, customStart, customEnd),
@@ -286,10 +292,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           ownerShareFC += (itemSalesFC * entry.ownerShareRate) / 100;
         }
 
-        totalToSellQty += item.totalToSell;
-        soldQty += item.sold;
-        damagedQty += item.damaged;
-        restQty += item.rest;
+        // Ne compte pas les saisies incomplètes dans les taux de vente et de perte, pour ne pas fausser ces pourcentages.
+        // Rien d'autre ne change dans les calculs : les montants, la caisse, le stock et les bénéfices continuent d'utiliser les valeurs enregistrées.
+        const isEntryValidated = (entry.status || 'validated') === 'validated';
+        if (isEntryValidated) {
+          totalToSellQty += item.totalToSell;
+          soldQty += item.sold;
+          damagedQty += item.damaged;
+          restQty += item.rest;
+        }
       }
 
       if (prodFilter === 'all') {
@@ -528,9 +539,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           target.ventes += itemSales;
           entrySales += itemSales;
           entryComm += (itemSales * entry.employeeCommissionRate) / 100;
-          target.soldQty += item.sold;
-          target.damagedQty += item.damaged;
-          target.totalQty += item.totalToSell;
+          // Ne compte pas les saisies incomplètes dans les taux de vente et de perte (ni par vendeur(se), ni dans le classement)
+          const isEntryValidated = (entry.status || 'validated') === 'validated';
+          if (isEntryValidated) {
+            target.soldQty += item.sold;
+            target.damagedQty += item.damaged;
+            target.totalQty += item.totalToSell;
+          }
         });
         const actualComm =
           selectedProductId === 'all'
@@ -825,6 +840,33 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs"
             >
               Ajouter {formatFC(cumulativeReserve.manqueFC, currency)}
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* BANNIÈRE ORANGE : si au moins une saisie est incomplète */}
+      {incompleteEntriesCount > 0 && (
+        <div className="p-3.5 rounded-2xl bg-amber-500 text-white shadow-md flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white" />
+            <div>
+              <span className="font-extrabold block">
+                {incompleteEntriesCount} saisie{incompleteEntriesCount > 1 ? 's' : ''} à compléter
+              </span>
+              <p className="text-[11px] text-amber-100 leading-snug">
+                Certaines ventes du jour n'ont pas encore été entièrement finalisées.
+              </p>
+            </div>
+          </div>
+          {onNavigateToTab && (
+            <button
+              type="button"
+              onClick={() => onNavigateToTab('daily', 'incomplete')}
+              className="px-3 py-2 rounded-xl bg-white text-amber-800 font-extrabold hover:bg-amber-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1"
+            >
+              <span>Voir les saisies</span>
+              <ChevronRight className="w-3.5 h-3.5" />
             </button>
           )}
         </div>

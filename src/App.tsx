@@ -27,6 +27,7 @@ export default function App() {
   const [isEarningsOpen, setIsEarningsOpen] = useState(false);
   const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
   const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string } | null>(null);
+  const [dailyStatusFilter, setDailyStatusFilter] = useState<'all' | 'incomplete' | 'validated'>('all');
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
@@ -173,8 +174,13 @@ export default function App() {
             {activeTab === 'dashboard' && (
               <DashboardView
                 settings={settings}
-                onNavigateToTab={(tab) => {
+                onNavigateToTab={(tab, statusFilter) => {
                   resetSubViews();
+                  if (tab === 'daily' && statusFilter) {
+                    setDailyStatusFilter(statusFilter);
+                  } else if (tab === 'daily') {
+                    setDailyStatusFilter('all');
+                  }
                   setActiveTab(tab);
                 }}
                 onOpenReserve={(prefill) => {
@@ -199,6 +205,7 @@ export default function App() {
                 settings={settings}
                 onShowToast={showToast}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
+                initialStatusFilter={dailyStatusFilter}
               />
             )}
 

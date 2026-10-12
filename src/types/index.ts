@@ -45,6 +45,8 @@ export interface DailyEntry {
   ownerShareRate: number; // 100% - expenseReserveRate - employeeCommissionRate
   ownerShareFC: number; // ownerShareRate% * totalSalesFC
   notes?: string;
+  status?: 'validated' | 'incomplete';
+  missingFields?: ('sold' | 'damaged')[];
   createdAt: number;
 }
 

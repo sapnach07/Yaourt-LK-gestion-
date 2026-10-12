@@ -11,7 +11,7 @@ interface DailyEntryModalProps {
   products: Product[];
   settings: AppSettings;
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (status: 'validated' | 'incomplete', missingLabels: string[]) => void;
   onOpenCalculator?: () => void;
 }
 
@@ -56,16 +56,44 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       setCustomCommissionRate(formatNumber(entryToEdit.employeeCommissionRate));
       setNotes(entryToEdit.notes || '');
 
+      const isEntryValidated = (entryToEdit.status || 'validated') === 'validated';
+
       const rows: FormProductState[] = activeProducts.map((p) => {
         const existingItem = entryToEdit.items.find((item) => item.productId === p.id);
+        const deliveredStr = existingItem && existingItem.delivered > 0 ? formatNumber(existingItem.delivered) : '';
+
+        let soldStr = '';
+        if (existingItem) {
+          if (existingItem.sold > 0) {
+            soldStr = formatNumber(existingItem.sold);
+          } else if (isEntryValidated) {
+            // Si la saisie est validated, afficher 0 dans les champs Vendu vides
+            soldStr = '0';
+          }
+        } else if (isEntryValidated) {
+          soldStr = '0';
+        }
+
+        let damagedStr = '';
+        if (existingItem) {
+          if (existingItem.damaged > 0) {
+            damagedStr = formatNumber(existingItem.damaged);
+          } else if (isEntryValidated) {
+            // Si la saisie est validated, afficher 0 dans les champs Abîmé vides
+            damagedStr = '0';
+          }
+        } else if (isEntryValidated) {
+          damagedStr = '0';
+        }
+
         return {
           productId: p.id,
           productName: p.name,
           unitPrice: existingItem ? existingItem.unitPrice : p.defaultPrice,
           previousRest: existingItem && existingItem.previousRest > 0 ? formatNumber(existingItem.previousRest) : '',
-          delivered: existingItem && existingItem.delivered > 0 ? formatNumber(existingItem.delivered) : '',
-          sold: existingItem && existingItem.sold > 0 ? formatNumber(existingItem.sold) : '',
-          damaged: existingItem && existingItem.damaged > 0 ? formatNumber(existingItem.damaged) : '',
+          delivered: deliveredStr,
+          sold: soldStr,
+          damaged: damagedStr,
         };
       });
       setProductRows(rows);
@@ -168,6 +196,15 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
   const expenseReserveFC = Math.round((totalSalesFC * expenseReserveRate) / 100);
   const ownerShareFC = Math.round((totalSalesFC * ownerShareRate) / 100);
 
+  const handleSetNoDamaged = () => {
+    setProductRows((prev) =>
+      prev.map((row) => ({
+        ...row,
+        damaged: row.damaged.trim() === '' ? '0' : row.damaged,
+      }))
+    );
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -181,6 +218,38 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       setErrorMsg('Aucun produit disponible.');
       return;
     }
+
+    // Calcul de la commande totale du jour
+    const totalDeliveredQty = productRows.reduce((acc, r) => acc + parseLocaleNumber(r.delivered), 0);
+    if (totalDeliveredQty <= 0) {
+      setErrorMsg('Une saisie sans aucune commande du jour est refusée. Renseignez au moins une commande du jour.');
+      return;
+    }
+
+    // Règle de validation :
+    // La saisie est "validated" si, pour chaque produit dont la commande du jour est supérieure à 0,
+    // le champ Vendu ET le champ Abîmé sont renseignés (0 saisi compte comme renseigné, un champ vide non).
+    // Sinon elle est "incomplete" et on mémorise ce qui manque.
+    let missingSold = false;
+    let missingDamaged = false;
+
+    for (const r of productRows) {
+      const deliveredNum = parseLocaleNumber(r.delivered);
+      if (deliveredNum > 0) {
+        if (r.sold.trim() === '') {
+          missingSold = true;
+        }
+        if (r.damaged.trim() === '') {
+          missingDamaged = true;
+        }
+      }
+    }
+
+    const missingFields: ('sold' | 'damaged')[] = [];
+    if (missingSold) missingFields.push('sold');
+    if (missingDamaged) missingFields.push('damaged');
+
+    const status: 'validated' | 'incomplete' = missingFields.length === 0 ? 'validated' : 'incomplete';
 
     const entry: DailyEntry = {
       id: entryToEdit ? entryToEdit.id : 'entry_' + Date.now().toString(),
@@ -197,12 +266,18 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       ownerShareRate,
       ownerShareFC,
       notes: notes.trim() || undefined,
+      status,
+      missingFields: status === 'incomplete' ? missingFields : undefined,
       createdAt: entryToEdit ? entryToEdit.createdAt : Date.now(),
     };
 
     try {
       await db.dailyEntries.put(entry);
-      onSaved();
+      const missingLabels: string[] = [];
+      if (missingSold) missingLabels.push('Vendu');
+      if (missingDamaged) missingLabels.push('Abîmé');
+
+      onSaved(status, missingLabels);
       onClose();
     } catch (err: any) {
       setErrorMsg('Erreur lors de l’enregistrement : ' + err.message);
@@ -332,13 +407,23 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
 
           {/* Products Input Cards */}
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500">
                 Quantités par produit (ex : 11,5)
               </h3>
-              <span className="text-[11px] text-teal-700 font-semibold">
-                Reste = Commande du jour − Ventes − Abîmé
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleSetNoDamaged}
+                  className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-all border border-slate-200"
+                  title="Remplir 0 dans tous les champs Abîmé vides"
+                >
+                  Aucun abîmé
+                </button>
+                <span className="text-[11px] text-teal-700 font-semibold">
+                  Reste = Commande − Ventes − Abîmé
+                </span>
+              </div>
             </div>
 
             {productRows.map((row, idx) => {

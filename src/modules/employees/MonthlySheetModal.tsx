@@ -7,6 +7,7 @@ import {
   DollarSign,
   Plus,
   Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -99,6 +100,9 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
   const remainingDueFC = sumCommissionFC - totalPaidFC;
   const currency = settings.currency || 'FC';
 
+  // Saisies incomplètes sur ce mois pour cet(te) employé(e)
+  const incompleteEntries = entries.filter((e) => (e.status || 'validated') === 'incomplete');
+
   const handleGeneratePDF = async (action: 'download' | 'share') => {
     setIsGeneratingPdf(true);
     try {
@@ -168,6 +172,25 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
 
         {/* Scrollable Body */}
         <div className="p-4 overflow-y-auto space-y-4">
+          {/* AVERTISSEMENT : saisies incomplètes sur ce mois */}
+          {incompleteEntries.length > 0 && (
+            <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-300 text-amber-900 text-xs space-y-1.5 shadow-xs">
+              <div className="flex items-center gap-2 font-bold text-amber-900">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <span>
+                  {incompleteEntries.length} saisie{incompleteEntries.length > 1 ? 's' : ''} à compléter sur ce mois
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Dates concernées :{' '}
+                <span className="font-semibold font-mono">
+                  {incompleteEntries.map((e) => formatDate(e.date)).join(', ')}
+                </span>
+                . La génération de la fiche reste possible.
+              </p>
+            </div>
+          )}
+
           {/* Summary Cards with Livraisons in FC */}
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
             <div className="p-3 rounded-2xl bg-teal-50/70 border border-teal-200/80">
