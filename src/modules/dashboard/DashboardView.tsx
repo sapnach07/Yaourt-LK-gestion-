@@ -14,6 +14,8 @@ import {
   HelpCircle,
   Wallet,
   Info,
+  Warehouse,
+  ChevronRight,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -33,6 +35,7 @@ import {
   formatDate,
   formatFC,
   formatPercent,
+  formatNumber,
   safePercentage,
   safeDivide,
   getDateRangeForFilter,
@@ -43,6 +46,7 @@ import {
 import { generateMonthlyManagementReportPDF } from '../../utils/pdfGenerator';
 import { EmptyState } from '../../components/EmptyState';
 import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
+import { StockDetailModal } from './StockDetailModal';
 import type {
   DailyEntry,
   Expense,
@@ -93,6 +97,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [selectedStockProductModalId, setSelectedStockProductModalId] = useState<string>('all');
 
   useEffect(() => {
     loadData();
@@ -119,6 +125,63 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setReserveMovements(movList);
     setPersonalSales(psList);
   };
+
+  // Real-time stock calculation across all active products
+  // Stock maison d'un produit = total produit − total livré aux vendeur(se)s − total vendu en ventes personnelles
+  const realTimeStockData = useMemo(() => {
+    return products.map((prod) => {
+      let totalProduced = 0;
+      for (const p of productionEntries) {
+        const item = p.items.find((i) => i.productId === prod.id);
+        if (item) totalProduced += item.producedQty || 0;
+      }
+
+      let totalDelivered = 0;
+      for (const d of dailyEntries) {
+        const item = d.items.find((i) => i.productId === prod.id);
+        if (item) totalDelivered += item.delivered || 0;
+      }
+
+      let totalSoldByOwner = 0;
+      for (const ps of personalSales) {
+        const item = ps.items.find((i) => i.productId === prod.id);
+        if (item) totalSoldByOwner += item.soldQty || 0;
+      }
+
+      const houseStock = totalProduced - totalDelivered - totalSoldByOwner;
+
+      let totalEmployeesRest = 0;
+      employees
+        .filter((e) => !e.isArchived)
+        .forEach((emp) => {
+          const empEntries = dailyEntries.filter((e) => e.employeeId === emp.id);
+          if (empEntries.length > 0) {
+            const latest = empEntries[0];
+            const it = latest.items.find((i) => i.productId === prod.id);
+            if (it) totalEmployeesRest += it.rest || 0;
+          }
+        });
+
+      return {
+        product: prod,
+        totalProduced,
+        totalDelivered,
+        totalSoldByOwner,
+        houseStock,
+        totalEmployeesRest,
+        totalGlobalStock: houseStock + totalEmployeesRest,
+      };
+    });
+  }, [products, productionEntries, dailyEntries, personalSales, employees]);
+
+  const totalHouseStockSum = useMemo(
+    () => realTimeStockData.reduce((acc, it) => acc + it.houseStock, 0),
+    [realTimeStockData]
+  );
+  const totalEmployeesStockSum = useMemo(
+    () => realTimeStockData.reduce((acc, it) => acc + it.totalEmployeesRest, 0),
+    [realTimeStockData]
+  );
 
   // Date ranges
   const dateRange = useMemo(
@@ -633,22 +696,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
 
     // 3. Negative or low house stock
-    products.forEach((prod) => {
-      const prodSum = productionEntries.reduce((acc, p) => {
-        const it = p.items.find((i) => i.productId === prod.id);
-        return acc + (it ? it.producedQty : 0);
-      }, 0);
-      const delivSum = dailyEntries.reduce((acc, d) => {
-        const it = d.items.find((i) => i.productId === prod.id);
-        return acc + (it ? it.delivered : 0);
-      }, 0);
-      const houseStock = prodSum - delivSum;
-      if (houseStock < 0) {
+    realTimeStockData.forEach((item) => {
+      if (item.houseStock < 0) {
         alerts.push({
-          id: `neg_stock_${prod.id}`,
+          id: `neg_stock_${item.product.id}`,
           type: 'danger',
-          title: `Stock maison négatif (${prod.name})`,
-          message: `Le stock calculé pour ${prod.name} est de ${houseStock}. Pensez à enregistrer la production.`,
+          title: `Stock maison négatif (${item.product.name})`,
+          message: `Le stock calculé pour ${item.product.name} est de ${item.houseStock}. Pensez à enregistrer la production.`,
         });
       }
     });
@@ -696,6 +750,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     dailyEntries,
     employees,
     payments,
+    realTimeStockData,
   ]);
 
   const currency = settings.currency || 'FC';
@@ -1280,6 +1335,138 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       </div>
 
+      {/* SECTION: ÉTAT DES STOCKS EN TEMPS RÉEL */}
+      <div className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs font-black uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Warehouse className="w-4 h-4 text-teal-700" />
+              <span>Stock en temps réel</span>
+            </h3>
+            <span className="text-[10px] font-extrabold bg-teal-100 text-teal-800 px-2 py-0.5 rounded-full font-mono">
+              En direct
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedStockProductModalId('all');
+              setIsStockModalOpen(true);
+            }}
+            className="text-xs font-extrabold text-teal-700 hover:text-teal-800 flex items-center gap-1 active:scale-95 transition-all p-1"
+          >
+            <span>Voir plus précisément</span>
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Global Stock Summary Bar */}
+        <div className="grid grid-cols-3 gap-2 bg-slate-900 text-white p-3 rounded-2xl shadow-2xs text-center">
+          <div>
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Stock Maison</span>
+            <span className={`text-base font-extrabold font-mono ${totalHouseStockSum < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+              {formatNumber(totalHouseStockSum)}
+            </span>
+          </div>
+          <div className="border-x border-slate-800">
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Chez Vendeurs</span>
+            <span className="text-base font-extrabold font-mono text-teal-300">
+              {formatNumber(totalEmployeesStockSum)}
+            </span>
+          </div>
+          <div>
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Stock Global</span>
+            <span className="text-base font-extrabold font-mono text-white">
+              {formatNumber(totalHouseStockSum + totalEmployeesStockSum)}
+            </span>
+          </div>
+        </div>
+
+        {/* Product Cards Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {realTimeStockData.map((item) => {
+            const isNegative = item.houseStock < 0;
+            const isLow = item.houseStock >= 0 && item.houseStock <= 10;
+
+            return (
+              <div
+                key={item.product.id}
+                onClick={() => {
+                  setSelectedStockProductModalId(item.product.id);
+                  setIsStockModalOpen(true);
+                }}
+                role="button"
+                tabIndex={0}
+                className="bg-white rounded-2xl border border-slate-200/80 p-3.5 shadow-2xs hover:border-teal-400 active:scale-[0.99] transition-all cursor-pointer space-y-2.5"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-7 h-7 rounded-lg bg-teal-50 text-teal-700 flex items-center justify-center shrink-0">
+                      <Package className="w-3.5 h-3.5" />
+                    </div>
+                    <div className="min-w-0">
+                      <h4 className="text-xs font-bold text-slate-900 truncate">
+                        {item.product.name}
+                      </h4>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {formatFC(item.product.defaultPrice, currency)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <span className="text-[9px] uppercase font-bold text-slate-400 block">
+                      Stock Maison
+                    </span>
+                    <span
+                      className={`text-sm font-extrabold font-mono inline-flex items-center gap-1 ${
+                        isNegative
+                          ? 'text-rose-600'
+                          : isLow
+                          ? 'text-amber-600'
+                          : 'text-emerald-700'
+                      }`}
+                    >
+                      {isNegative && <AlertTriangle className="w-3 h-3" />}
+                      {formatNumber(item.houseStock)}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Micro details grid */}
+                <div className="grid grid-cols-4 gap-1 bg-slate-50 p-2 rounded-xl text-center text-[11px]">
+                  <div>
+                    <span className="text-[9px] text-slate-400 block truncate">Produit</span>
+                    <span className="font-bold text-slate-700 font-mono">
+                      {formatNumber(item.totalProduced)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-slate-400 block truncate">Livré</span>
+                    <span className="font-bold text-slate-700 font-mono">
+                      {formatNumber(item.totalDelivered)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-indigo-700 font-semibold block truncate">Vendu moi</span>
+                    <span className="font-bold text-indigo-700 font-mono">
+                      {formatNumber(item.totalSoldByOwner)}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[9px] text-teal-700 font-semibold block truncate">Chez vend.</span>
+                    <span className="font-bold text-teal-800 font-mono">
+                      {formatNumber(item.totalEmployeesRest)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
       {/* SECTION B: CHARTS (GRAPHICAL ANALYSIS) */}
       <div className="space-y-4">
         <h3 className="text-xs font-black uppercase tracking-wider text-slate-500">
@@ -1671,6 +1858,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           )}
         </div>
       </div>
+
+      {/* Stock Detail & Period Analysis Modal */}
+      <StockDetailModal
+        isOpen={isStockModalOpen}
+        onClose={() => setIsStockModalOpen(false)}
+        products={products}
+        productionEntries={productionEntries}
+        dailyEntries={dailyEntries}
+        personalSales={personalSales}
+        employees={employees}
+        currency={currency}
+        initialPeriodType={periodType}
+        initialCustomStart={customStart}
+        initialCustomEnd={customEnd}
+        initialProductId={selectedStockProductModalId}
+        onNavigateToTab={onNavigateToTab}
+      />
     </div>
   );
 };
