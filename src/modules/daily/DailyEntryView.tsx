@@ -9,11 +9,13 @@ import {
   Trash2,
   Warehouse,
   Users,
+  UserCheck,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import { formatDate, formatFC, toISODate, formatNumber } from '../../utils/formatters';
 import { DailyEntryModal } from './DailyEntryModal';
 import { ProductionStockModal } from './ProductionStockModal';
+import { PersonalSaleModal } from './PersonalSaleModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
 import type {
@@ -22,6 +24,7 @@ import type {
   Employee,
   Product,
   AppSettings,
+  PersonalSale,
 } from '../../types';
 
 interface DailyEntryViewProps {
@@ -35,16 +38,20 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   onShowToast,
   onOpenCalculator,
 }) => {
-  const [subTab, setSubTab] = useState<'sales' | 'production'>('sales');
+  const [subTab, setSubTab] = useState<'sales' | 'production' | 'personal'>('sales');
 
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>([]);
   const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
 
   // Filters for sales
   const [filterEmployeeId, setFilterEmployeeId] = useState<string>('all');
   const [filterDate, setFilterDate] = useState<string>('');
+
+  // Filters for personal sales
+  const [filterPersonalDate, setFilterPersonalDate] = useState<string>('');
 
   // Modals
   const [isDailyModalOpen, setIsDailyModalOpen] = useState(false);
@@ -53,29 +60,35 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   const [isProdModalOpen, setIsProdModalOpen] = useState(false);
   const [prodToEdit, setProdToEdit] = useState<ProductionEntry | null>(null);
 
+  const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
+  const [saleToEdit, setSaleToEdit] = useState<PersonalSale | null>(null);
+
   const [entryToDelete, setEntryToDelete] = useState<DailyEntry | null>(null);
   const [prodToDelete, setProdToDelete] = useState<ProductionEntry | null>(null);
+  const [saleToDelete, setSaleToDelete] = useState<PersonalSale | null>(null);
 
   useEffect(() => {
     loadAllData();
   }, []);
 
   const loadAllData = async () => {
-    const [emps, prods, dEntries, pEntries] = await Promise.all([
+    const [emps, prods, dEntries, pEntries, pSales] = await Promise.all([
       db.employees.toArray(),
       db.products.orderBy('sortOrder').toArray(),
       db.dailyEntries.orderBy('date').reverse().toArray(),
       db.productionEntries.orderBy('date').reverse().toArray(),
+      db.personalSales.orderBy('date').reverse().toArray(),
     ]);
 
     setEmployees(emps);
     setProducts(prods);
     setDailyEntries(dEntries);
     setProductionEntries(pEntries);
+    setPersonalSales(pSales);
   };
 
   // Stock calculations
-  // House stock per product: total produced - total delivered to employees
+  // Stock maison d'un produit = total produit − total livré aux vendeur(se)s − total vendu en ventes personnelles
   const stockData = products.map((prod) => {
     let totalProduced = 0;
     for (const p of productionEntries) {
@@ -89,7 +102,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       if (item) totalDelivered += item.delivered || 0;
     }
 
-    const houseStock = totalProduced - totalDelivered;
+    let totalSoldByOwner = 0;
+    for (const ps of personalSales) {
+      const item = ps.items.find((i) => i.productId === prod.id);
+      if (item) totalSoldByOwner += item.soldQty || 0;
+    }
+
+    const houseStock = totalProduced - totalDelivered - totalSoldByOwner;
 
     // Current stock held by all active employees (latest rest)
     let totalEmployeesRest = 0;
@@ -109,6 +128,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       product: prod,
       totalProduced,
       totalDelivered,
+      totalSoldByOwner,
       houseStock,
       totalEmployeesRest,
     };
@@ -138,10 +158,28 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
     }
   };
 
+  const handleDeletePersonalSale = async () => {
+    if (!saleToDelete) return;
+    try {
+      await db.personalSales.delete(saleToDelete.id);
+      onShowToast('info', 'Vente personnelle supprimée avec succès.');
+      setSaleToDelete(null);
+      await loadAllData();
+    } catch (e: any) {
+      onShowToast('error', 'Erreur lors de la suppression : ' + e.message);
+    }
+  };
+
   // Filtered sales entries
   const filteredDailyEntries = dailyEntries.filter((entry) => {
     if (filterEmployeeId !== 'all' && entry.employeeId !== filterEmployeeId) return false;
     if (filterDate && entry.date !== filterDate) return false;
+    return true;
+  });
+
+  // Filtered personal sales entries
+  const filteredPersonalSales = personalSales.filter((sale) => {
+    if (filterPersonalDate && sale.date !== filterPersonalDate) return false;
     return true;
   });
 
@@ -172,7 +210,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             <Plus className="w-4 h-4" />
             <span>Nouvelle saisie</span>
           </button>
-        ) : (
+        ) : subTab === 'production' ? (
           <button
             type="button"
             onClick={() => {
@@ -184,11 +222,23 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             <Plus className="w-4 h-4" />
             <span>Production</span>
           </button>
+        ) : (
+          <button
+            type="button"
+            onClick={() => {
+              setSaleToEdit(null);
+              setIsPersonalModalOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+          >
+            <Plus className="w-4 h-4" />
+            <span>+ Vente personnelle</span>
+          </button>
         )}
       </div>
 
-      {/* Sub-tab Navigation */}
-      <div className="flex items-center p-1 bg-slate-200/70 rounded-2xl">
+      {/* Sub-tab Navigation (3 onglets) */}
+      <div className="flex items-center p-1 bg-slate-200/70 rounded-2xl gap-1">
         <button
           type="button"
           onClick={() => setSubTab('sales')}
@@ -210,6 +260,17 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           }`}
         >
           Production & Stocks ({productionEntries.length})
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubTab('personal')}
+          className={`flex-1 py-2 text-xs font-bold rounded-xl transition-all min-h-[38px] ${
+            subTab === 'personal'
+              ? 'bg-white text-slate-900 shadow-xs'
+              : 'text-slate-600 hover:text-slate-900'
+          }`}
+        >
+          Mes ventes ({personalSales.length})
         </button>
       </div>
 
@@ -459,21 +520,27 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                     </div>
 
                     {/* Stock Details */}
-                    <div className="grid grid-cols-3 gap-2 bg-slate-50 p-2.5 rounded-xl text-center text-xs">
+                    <div className="grid grid-cols-4 gap-1.5 bg-slate-50 p-2.5 rounded-xl text-center text-xs">
                       <div>
-                        <span className="text-[10px] text-slate-500 block">Total Produit</span>
+                        <span className="text-[10px] text-slate-500 block truncate">Produit</span>
                         <span className="font-bold text-slate-800 font-mono">
                           {formatNumber(item.totalProduced)}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">Total Livré</span>
+                        <span className="text-[10px] text-slate-500 block truncate">Livré</span>
                         <span className="font-bold text-slate-800 font-mono">
                           {formatNumber(item.totalDelivered)}
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-slate-500 block">Chez vendeurs(ses)</span>
+                        <span className="text-[10px] text-indigo-700 font-semibold block truncate">Vendu par moi</span>
+                        <span className="font-bold text-indigo-700 font-mono">
+                          {formatNumber(item.totalSoldByOwner)}
+                        </span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-teal-700 font-semibold block truncate">Chez vendeurs</span>
                         <span className="font-bold text-teal-800 font-mono">
                           {formatNumber(item.totalEmployeesRest)}
                         </span>
@@ -579,6 +646,171 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         </div>
       )}
 
+      {/* SUB-TAB 3: MES VENTES (VENTES PERSONNELLES DU GÉRANT) */}
+      {subTab === 'personal' && (
+        <div className="space-y-3">
+          {/* Filter Bar */}
+          <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-2">
+            <div className="flex-1 min-w-[140px]">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                Filtrer par date
+              </label>
+              <input
+                type="date"
+                value={filterPersonalDate}
+                onChange={(e) => setFilterPersonalDate(e.target.value)}
+                className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800 bg-white"
+              />
+            </div>
+
+            {filterPersonalDate && (
+              <button
+                type="button"
+                onClick={() => setFilterPersonalDate('')}
+                className="text-xs font-bold text-teal-700 hover:underline self-end pb-2 min-h-[36px] flex items-center"
+              >
+                Toutes les dates
+              </button>
+            )}
+          </div>
+
+          {/* List of Personal Sales */}
+          {filteredPersonalSales.length === 0 ? (
+            <EmptyState
+              icon={<UserCheck className="w-7 h-7 text-teal-700" />}
+              title="Aucune vente personnelle enregistrée"
+              description="Enregistrez vos ventes directes sans passer par un(e) vendeur(se). La réserve de caisse et votre part sont calculées en direct."
+              actionLabel="+ Vente personnelle"
+              onAction={() => {
+                setSaleToEdit(null);
+                setIsPersonalModalOpen(true);
+              }}
+            />
+          ) : (
+            <div className="space-y-3">
+              {filteredPersonalSales.map((sale) => {
+                const totalSoldQty = sale.items.reduce((acc, it) => acc + it.soldQty, 0);
+
+                return (
+                  <div
+                    key={sale.id}
+                    className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs flex flex-col gap-3"
+                  >
+                    {/* Top Row: Date, Badge, Actions */}
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-extrabold text-slate-900">
+                            {formatDate(sale.date)}
+                          </span>
+                          <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200/50 flex items-center gap-1">
+                            <UserCheck className="w-3 h-3" />
+                            <span>Vente directe (Moi)</span>
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
+                          <span>{formatNumber(totalSoldQty)} vendus</span>
+                          {sale.ownerCommissionRate > 0 && (
+                            <>
+                              <span>·</span>
+                              <span>Ma comm. : {formatNumber(sale.ownerCommissionRate)} %</span>
+                            </>
+                          )}
+                          <span>·</span>
+                          <span className="text-teal-700 font-semibold">
+                            Caisse : {formatNumber(sale.expenseReserveRate)} %
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSaleToEdit(sale);
+                            setIsPersonalModalOpen(true);
+                          }}
+                          className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 min-w-[40px] min-h-[40px] flex items-center justify-center"
+                          title="Modifier"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSaleToDelete(sale)}
+                          className="p-2 rounded-xl text-slate-400 hover:text-rose-600 hover:bg-slate-100 min-w-[40px] min-h-[40px] flex items-center justify-center"
+                          title="Supprimer"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Products details */}
+                    <div className="space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                      {sale.items.map((it) => (
+                        <div
+                          key={it.productId}
+                          className="flex items-center justify-between text-xs font-medium text-slate-700"
+                        >
+                          <span>
+                            {it.productName} × {formatNumber(it.soldQty)}
+                          </span>
+                          <span className="font-mono font-bold text-slate-900">
+                            {formatFC(it.soldQty * it.unitPrice, currency)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+
+                    {/* Financial summary: Total Ventes, Part Caisse, Ma Commission, Part Gérant */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-100 text-center text-xs">
+                      <div className="bg-slate-50 p-2 rounded-xl">
+                        <span className="text-[10px] text-slate-500 block font-semibold">Total Ventes</span>
+                        <span className="text-xs font-extrabold text-slate-900 font-mono">
+                          {formatFC(sale.totalSalesFC, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-teal-50/70 p-2 rounded-xl">
+                        <span className="text-[10px] text-teal-700 block font-semibold">
+                          Part Caisse ({sale.expenseReserveRate} %)
+                        </span>
+                        <span className="text-xs font-extrabold text-teal-800 font-mono">
+                          {formatFC(sale.expenseReserveFC, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-indigo-50/70 p-2 rounded-xl">
+                        <span className="text-[10px] text-indigo-700 block font-semibold">
+                          Ma Commission
+                        </span>
+                        <span className="text-xs font-extrabold text-indigo-800 font-mono">
+                          {formatFC(sale.ownerCommissionFC, currency)}
+                        </span>
+                      </div>
+                      <div className="bg-emerald-50/70 p-2 rounded-xl">
+                        <span className="text-[10px] text-emerald-700 block font-semibold">
+                          Part Gérant
+                        </span>
+                        <span className="text-xs font-extrabold text-emerald-800 font-mono">
+                          {formatFC(sale.ownerShareFC, currency)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {sale.notes && (
+                      <p className="text-xs text-slate-500 italic bg-slate-50 p-2 rounded-lg">
+                        Note : {sale.notes}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Daily Entry Modal */}
       <DailyEntryModal
         isOpen={isDailyModalOpen}
@@ -612,6 +844,24 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         }}
       />
 
+      {/* Personal Sale Modal */}
+      <PersonalSaleModal
+        isOpen={isPersonalModalOpen}
+        saleToEdit={saleToEdit}
+        products={products}
+        settings={settings}
+        stockMap={Object.fromEntries(stockData.map((s) => [s.product.id, s.houseStock]))}
+        onClose={() => {
+          setIsPersonalModalOpen(false);
+          setSaleToEdit(null);
+        }}
+        onSaved={async () => {
+          onShowToast('success', 'Vente personnelle enregistrée avec succès.');
+          await loadAllData();
+        }}
+        onOpenCalculator={onOpenCalculator}
+      />
+
       {/* Delete Daily Entry Confirm */}
       <ConfirmModal
         isOpen={Boolean(entryToDelete)}
@@ -638,6 +888,20 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         isDanger={true}
         onConfirm={handleDeleteProdEntry}
         onCancel={() => setProdToDelete(null)}
+      />
+
+      {/* Delete Personal Sale Confirm */}
+      <ConfirmModal
+        isOpen={Boolean(saleToDelete)}
+        title="Supprimer cette vente personnelle ?"
+        message={`Voulez-vous supprimer la vente directe du ${formatDate(
+          saleToDelete?.date
+        )} d'un montant de ${formatFC(saleToDelete?.totalSalesFC, currency)} ? Les stocks et la caisse seront recalculés automatiquement.`}
+        confirmLabel="Supprimer"
+        cancelLabel="Annuler"
+        isDanger={true}
+        onConfirm={handleDeletePersonalSale}
+        onCancel={() => setSaleToDelete(null)}
       />
     </div>
   );

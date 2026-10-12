@@ -27,7 +27,7 @@ import {
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
 import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
-import type { Expense, DailyEntry, ReserveMovement, AppSettings } from '../../types';
+import type { Expense, DailyEntry, ReserveMovement, AppSettings, PersonalSale } from '../../types';
 
 interface ExpensesViewProps {
   settings: AppSettings;
@@ -45,6 +45,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>([]);
   const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(toISOMonth(new Date()));
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
@@ -66,14 +67,16 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [exps, entries, movs] = await Promise.all([
+    const [exps, entries, movs, pSales] = await Promise.all([
       db.expenses.orderBy('date').reverse().toArray(),
       db.dailyEntries.toArray(),
       db.reserveMovements.toArray(),
+      db.personalSales.toArray(),
     ]);
     setExpenses(exps);
     setDailyEntries(entries);
     setReserveMovements(movs);
+    setPersonalSales(pSales);
   };
 
   const handleOpenAdd = () => {
@@ -151,7 +154,10 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // Month calculations (information secondaire)
   const monthEntries = dailyEntries.filter((e) => e.date.startsWith(selectedMonth));
-  const totalSalesInMonthFC = monthEntries.reduce((acc, e) => acc + (e.totalSalesFC || 0), 0);
+  const monthPersonalSales = personalSales.filter((p) => p.date.startsWith(selectedMonth));
+  const totalSalesInMonthFC =
+    monthEntries.reduce((acc, e) => acc + (e.totalSalesFC || 0), 0) +
+    monthPersonalSales.reduce((acc, p) => acc + (p.totalSalesFC || 0), 0);
   const reserveRate = settings.expenseReservePct || 50;
   const expenseReserveInMonthFC = Math.round((totalSalesInMonthFC * reserveRate) / 100);
 
@@ -177,7 +183,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     dailyEntries,
     expenses,
     reserveRate,
-    startingPoint
+    startingPoint,
+    null,
+    personalSales
   );
   const isCumulativeNegative = cumulativeDetails.soldeFC < 0;
 

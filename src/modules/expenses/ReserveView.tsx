@@ -37,7 +37,7 @@ import {
   type ReserveDetails,
   type PeriodReserveSummary,
 } from '../../utils/reserveCalculator';
-import type { ReserveMovement, DailyEntry, Expense, AppSettings } from '../../types';
+import type { ReserveMovement, DailyEntry, Expense, AppSettings, PersonalSale } from '../../types';
 
 interface ReserveViewProps {
   settings: AppSettings;
@@ -59,6 +59,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
   const [movements, setMovements] = useState<ReserveMovement[]>([]);
   const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
 
   // View state: main caisse overview or detailed capital screen
   const [isCapitalScreenOpen, setIsCapitalScreenOpen] = useState(false);
@@ -99,14 +100,16 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
 
   const loadData = async () => {
     try {
-      const [movs, entries, exps] = await Promise.all([
+      const [movs, entries, exps, pSales] = await Promise.all([
         db.reserveMovements.orderBy('date').reverse().toArray(),
         db.dailyEntries.toArray(),
         db.expenses.toArray(),
+        db.personalSales.toArray(),
       ]);
       setMovements(movs);
       setDailyEntries(entries);
       setExpenses(exps);
+      setPersonalSales(pSales);
     } catch (e: any) {
       console.error('Erreur chargement caisse:', e);
       onShowToast('error', 'Erreur chargement des données de la caisse');
@@ -143,7 +146,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     expenses,
     reserveRate,
     startingPoint,
-    isAsOfOtherDate ? viewDate : null
+    isAsOfOtherDate ? viewDate : null,
+    personalSales
   );
 
   // Résumé de période si la section période est ouverte
@@ -154,7 +158,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     periodStart || todayStr,
     periodEnd || todayStr,
     reserveRate,
-    startingPoint
+    startingPoint,
+    personalSales
   );
 
   // Mois sélectionné pour le sélecteur de mois (par défaut mois en cours)
@@ -173,7 +178,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     dailyEntries,
     expenses,
     lastMonthStr,
-    reserveRate
+    reserveRate,
+    personalSales
   );
 
   // Calcul du reste pour le mois sélectionné
@@ -181,7 +187,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     dailyEntries,
     expenses,
     selectedMonth,
-    reserveRate
+    reserveRate,
+    personalSales
   );
 
   // Bénéfices du gérant cumulés :
@@ -189,6 +196,9 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
   let totalOwnerShareGrossFC = 0;
   for (const entry of dailyEntries) {
     totalOwnerShareGrossFC += entry.ownerShareFC || 0;
+  }
+  for (const p of personalSales) {
+    totalOwnerShareGrossFC += (p.ownerShareFC || 0) + (p.ownerCommissionFC || 0);
   }
   const compensationClosedMonthsFC = startingPoint
     ? reserveDetails.totalDepassementClosedMonthsFC

@@ -28,6 +28,7 @@ import type {
   Employee,
   AppSettings,
   PeriodFilterType,
+  PersonalSale,
 } from '../../types';
 
 interface OwnerProfitViewProps {
@@ -50,6 +51,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
 
   const currency = settings.currency || 'FC';
   const reserveRate = settings.expenseReservePct || 50;
@@ -57,19 +59,21 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
   // Dexie liveQuery: updates automatically after every entry without page reload
   useEffect(() => {
     const subscription = liveQuery(async () => {
-      const [entries, expList, movList, empList] = await Promise.all([
+      const [entries, expList, movList, empList, pSalesList] = await Promise.all([
         db.dailyEntries.toArray(),
         db.expenses.toArray(),
         db.reserveMovements.toArray(),
         db.employees.toArray(),
+        db.personalSales.toArray(),
       ]);
-      return { entries, expList, movList, empList };
+      return { entries, expList, movList, empList, pSalesList };
     }).subscribe({
-      next: ({ entries, expList, movList, empList }) => {
+      next: ({ entries, expList, movList, empList, pSalesList }) => {
         setDailyEntries(entries);
         setExpenses(expList);
         setReserveMovements(movList);
         setEmployees(empList);
+        setPersonalSales(pSalesList);
       },
       error: (err) => {
         console.error('Erreur liveQuery OwnerProfitView:', err);
@@ -92,6 +96,13 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     );
   }, [dailyEntries, dateRange]);
 
+  // Filter personal sales in selected period
+  const periodPersonalSales = useMemo(() => {
+    return personalSales.filter(
+      (p) => p.date >= dateRange.startDate && p.date <= dateRange.endDate
+    );
+  }, [personalSales, dateRange]);
+
   // Overall Cumulative Caisse
   const cumulativeReserve = useMemo(() => {
     const startingPoint = settings.caisseStartDate
@@ -101,7 +112,15 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
           startCapitalFC: settings.caisseStartCapitalFC ?? 0,
         }
       : null;
-    return calculateReserveBalance(reserveMovements, dailyEntries, expenses, reserveRate, startingPoint);
+    return calculateReserveBalance(
+      reserveMovements,
+      dailyEntries,
+      expenses,
+      reserveRate,
+      startingPoint,
+      null,
+      personalSales
+    );
   }, [
     reserveMovements,
     dailyEntries,
@@ -110,6 +129,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     settings.caisseStartDate,
     settings.caisseStartNormaleFC,
     settings.caisseStartCapitalFC,
+    personalSales,
   ]);
 
   // Profit calculation for the period
@@ -165,6 +185,23 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       }
     }
 
+    // Traitement des ventes personnelles du gérant
+    let personalSalesTotalFC = 0;
+    let personalCommissionFC = 0;
+    let personalOwnerShareFC = 0;
+    let personalCaisseFC = 0;
+
+    for (const p of periodPersonalSales) {
+      personalSalesTotalFC += p.totalSalesFC || 0;
+      personalCommissionFC += p.ownerCommissionFC || 0;
+      personalOwnerShareFC += p.ownerShareFC || 0;
+      personalCaisseFC += p.expenseReserveFC || 0;
+    }
+
+    totalSalesFC += personalSalesTotalFC;
+    totalCommissionFC += personalCommissionFC;
+    totalOwnerShareGrossFC += personalOwnerShareFC + personalCommissionFC;
+
     // Compute caisse share on total sales
     const totalCaisseShareFC = Math.round((totalSalesFC * reserveRate) / 100);
 
@@ -176,6 +213,17 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       }))
       .filter((s) => s.salesFC > 0 || !s.employee.isArchived)
       .sort((a, b) => b.ownerShareFC - a.ownerShareFC);
+
+    if (personalSalesTotalFC > 0) {
+      sellerBreakdown.unshift({
+        employee: { id: 'owner_direct', name: 'Gérant (Ventes directes)', isArchived: false } as Employee,
+        salesFC: personalSalesTotalFC,
+        commissionFC: personalCommissionFC,
+        caisseShareFC: personalCaisseFC,
+        ownerShareFC: personalOwnerShareFC + personalCommissionFC,
+        damagedFC: 0,
+      });
+    }
 
     // Dépassements des mois clôturés uniquement si un point de départ est défini
     // Déduire le dépassement des mois clôturés qui tombent dans la période sélectionnée
@@ -206,7 +254,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       totalDamagedFC,
       sellerBreakdown,
     };
-  }, [periodEntries, employees, reserveRate, settings.caisseStartDate, cumulativeReserve.closedMonths, dateRange]);
+  }, [periodEntries, periodPersonalSales, employees, reserveRate, settings.caisseStartDate, cumulativeReserve.closedMonths, dateRange]);
 
   return (
     <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-4">

@@ -18,6 +18,7 @@ import {
   Wallet,
   Calendar,
   RotateCcw,
+  UserCheck,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -83,6 +84,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     settings.caisseStartCapitalFC !== undefined ? formatNumber(settings.caisseStartCapitalFC) : '0'
   );
   const [suggestedNormaleFC, setSuggestedNormaleFC] = useState<number | null>(null);
+
+  // Ventes personnelles (Ma commission)
+  const [ownerCommissionPct, setOwnerCommissionPct] = useState(
+    settings.ownerCommissionPct !== undefined ? formatNumber(settings.ownerCommissionPct) : '0'
+  );
 
   // Restore file handling
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -205,6 +211,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setCaisseStartNormaleFC('');
     setCaisseStartCapitalFC('0');
     onShowToast('info', 'Point de départ retiré : le calcul revient sur tout l’historique.');
+  };
+
+  const handleSavePersonalSalesSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const commNum = parseLocaleNumber(ownerCommissionPct);
+    if (isNaN(commNum) || commNum < 0 || commNum > 100) {
+      onShowToast('error', 'Ma commission (%) doit être comprise entre 0 et 100.');
+      return;
+    }
+
+    const updated: AppSettings = {
+      ...settings,
+      ownerCommissionPct: commNum,
+    };
+
+    await db.settings.put(updated);
+    onSettingsUpdated(updated);
+    onShowToast('success', 'Commission sur ventes personnelles enregistrée.');
   };
 
   // Product management
@@ -598,6 +622,47 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               </button>
             )}
           </div>
+        </form>
+      </div>
+
+      {/* Section : Ventes personnelles */}
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
+        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+          <UserCheck className="w-4 h-4 text-teal-700" />
+          <span>Ventes personnelles</span>
+        </h3>
+        <p className="text-[11px] text-slate-500 leading-snug">
+          Configurez votre commission de vendeur par défaut pour les ventes directes du gérant sans intermédiaire.
+        </p>
+
+        <form onSubmit={handleSavePersonalSalesSettings} className="space-y-3">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Ma commission (%)
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={ownerCommissionPct}
+                onChange={(e) => setOwnerCommissionPct(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+              />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                %
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              0 % par défaut. Sera proposée automatiquement lors de la création d'une vente personnelle.
+            </p>
+          </div>
+
+          <button
+            type="submit"
+            className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
+          >
+            Enregistrer ma commission
+          </button>
         </form>
       </div>
 

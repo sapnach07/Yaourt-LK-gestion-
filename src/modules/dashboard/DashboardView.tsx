@@ -53,6 +53,7 @@ import type {
   ProductionEntry,
   Payment,
   ReserveMovement,
+  PersonalSale,
 } from '../../types';
 
 interface DashboardViewProps {
@@ -89,6 +90,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -97,7 +99,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [dList, eList, empList, prodList, pList, payList, movList] = await Promise.all([
+    const [dList, eList, empList, prodList, pList, payList, movList, psList] = await Promise.all([
       db.dailyEntries.toArray(),
       db.expenses.toArray(),
       db.employees.toArray(),
@@ -105,6 +107,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       db.productionEntries.toArray(),
       db.payments.toArray(),
       db.reserveMovements.toArray(),
+      db.personalSales.toArray(),
     ]);
 
     setDailyEntries(dList);
@@ -114,6 +117,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setProductionEntries(pList);
     setPayments(payList);
     setReserveMovements(movList);
+    setPersonalSales(psList);
   };
 
   // Date ranges
@@ -123,7 +127,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
 
   // Filter entries in current period vs previous period
-  const { currentEntries, prevEntries, currentExpenses, prevExpenses } = useMemo(() => {
+  const { currentEntries, prevEntries, currentExpenses, prevExpenses, currentPersonalSales, prevPersonalSales } = useMemo(() => {
     const curE = dailyEntries.filter(
       (e) => e.date >= dateRange.startDate && e.date <= dateRange.endDate
     );
@@ -136,13 +140,21 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const prevExp = expenses.filter(
       (e) => e.date >= dateRange.prevStartDate && e.date <= dateRange.prevEndDate
     );
+    const curPS = personalSales.filter(
+      (p) => p.date >= dateRange.startDate && p.date <= dateRange.endDate
+    );
+    const prevPS = personalSales.filter(
+      (p) => p.date >= dateRange.prevStartDate && p.date <= dateRange.prevEndDate
+    );
     return {
       currentEntries: curE,
       prevEntries: prevE,
       currentExpenses: curExp,
       prevExpenses: prevExp,
+      currentPersonalSales: curPS,
+      prevPersonalSales: prevPS,
     };
-  }, [dailyEntries, expenses, dateRange]);
+  }, [dailyEntries, expenses, personalSales, dateRange]);
 
   // Cumulative Reserve Calculation (avec point de départ si configuré)
   const cumulativeReserve = useMemo(() => {
@@ -159,12 +171,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       dailyEntries,
       expenses,
       settings.expenseReservePct || 50,
-      startingPoint
+      startingPoint,
+      null,
+      personalSales
     );
   }, [
     reserveMovements,
     dailyEntries,
     expenses,
+    personalSales,
     settings.expenseReservePct,
     settings.caisseStartDate,
     settings.caisseStartNormaleFC,
@@ -176,7 +191,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     entries: DailyEntry[],
     expensesList: Expense[],
     empFilter: string,
-    prodFilter: string
+    prodFilter: string,
+    personalList: PersonalSale[] = []
   ) => {
     let salesFC = 0;
     let commissionFC = 0;
@@ -216,6 +232,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (prodFilter === 'all') {
         commissionFC += entry.employeeCommissionFC ?? ((entrySalesFC * entry.employeeCommissionRate) / 100);
         ownerShareFC += entry.ownerShareFC ?? ((entrySalesFC * entry.ownerShareRate) / 100);
+      }
+    }
+
+    // Traitement des ventes personnelles (si aucun filtre vendeur particulier n'est actif)
+    if (empFilter === 'all') {
+      for (const p of personalList) {
+        let pSalesFC = 0;
+        let pSoldQty = 0;
+        for (const item of p.items) {
+          if (prodFilter !== 'all' && item.productId !== prodFilter) continue;
+          const itemSalesFC = item.soldQty * item.unitPrice;
+          pSalesFC += itemSalesFC;
+          pSoldQty += item.soldQty;
+        }
+
+        if (prodFilter === 'all') {
+          salesFC += p.totalSalesFC;
+          const totalQty = p.items.reduce((acc, it) => acc + it.soldQty, 0);
+          soldQty += totalQty;
+          totalToSellQty += totalQty;
+          commissionFC += p.ownerCommissionFC;
+          ownerShareFC += p.ownerShareFC + p.ownerCommissionFC;
+        } else if (pSalesFC > 0) {
+          salesFC += pSalesFC;
+          soldQty += pSoldQty;
+          totalToSellQty += pSoldQty;
+          commissionFC += (pSalesFC * p.ownerCommissionRate) / 100;
+          ownerShareFC += (pSalesFC * (p.ownerShareRate + p.ownerCommissionRate)) / 100;
+        }
       }
     }
 
@@ -272,10 +317,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   const currentMetrics = useMemo(
-    () => computeMetrics(currentEntries, currentExpenses, selectedEmployeeId, selectedProductId),
+    () =>
+      computeMetrics(
+        currentEntries,
+        currentExpenses,
+        selectedEmployeeId,
+        selectedProductId,
+        currentPersonalSales
+      ),
     [
       currentEntries,
       currentExpenses,
+      currentPersonalSales,
       selectedEmployeeId,
       selectedProductId,
       settings.expenseReservePct,
@@ -286,8 +339,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   );
 
   const prevMetrics = useMemo(
-    () => computeMetrics(prevEntries, prevExpenses, selectedEmployeeId, selectedProductId),
-    [prevEntries, prevExpenses, selectedEmployeeId, selectedProductId, settings.expenseReservePct]
+    () =>
+      computeMetrics(
+        prevEntries,
+        prevExpenses,
+        selectedEmployeeId,
+        selectedProductId,
+        prevPersonalSales
+      ),
+    [
+      prevEntries,
+      prevExpenses,
+      prevPersonalSales,
+      selectedEmployeeId,
+      selectedProductId,
+      settings.expenseReservePct,
+    ]
   );
 
   // Metric variation calculator
