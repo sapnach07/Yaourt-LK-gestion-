@@ -83,6 +83,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [caisseStartCapitalFC, setCaisseStartCapitalFC] = useState(
     settings.caisseStartCapitalFC !== undefined ? formatNumber(settings.caisseStartCapitalFC) : '0'
   );
+  const [caisseStartVendeursFC, setCaisseStartVendeursFC] = useState(
+    settings.caisseStartVendeursFC !== undefined ? formatNumber(settings.caisseStartVendeursFC) : '0'
+  );
   const [suggestedNormaleFC, setSuggestedNormaleFC] = useState<number | null>(null);
 
   // Ventes personnelles (Ma commission)
@@ -185,11 +188,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
+    const numVendeurs = caisseStartVendeursFC === '' ? 0 : parseLocaleNumber(caisseStartVendeursFC);
+
     const updated: AppSettings = {
       ...settings,
       caisseStartDate: caisseStartDate.trim(),
       caisseStartNormaleFC: Math.round(numNormale),
       caisseStartCapitalFC: Math.round(numCapital),
+      caisseStartReserveFC: Math.round(numNormale) + Math.round(numCapital),
+      caisseStartBeneficesFC: 0,
+      caisseStartVendeursFC: Math.round(numVendeurs),
     };
 
     await db.settings.put(updated);
@@ -203,6 +211,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       caisseStartDate: undefined,
       caisseStartNormaleFC: undefined,
       caisseStartCapitalFC: undefined,
+      caisseStartReserveFC: undefined,
+      caisseStartBeneficesFC: undefined,
+      caisseStartVendeursFC: undefined,
     };
 
     await db.settings.put(updated);
@@ -210,6 +221,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setCaisseStartDate('');
     setCaisseStartNormaleFC('');
     setCaisseStartCapitalFC('0');
+    setCaisseStartVendeursFC('0');
     onShowToast('info', 'Point de départ retiré : le calcul revient sur tout l’historique.');
   };
 

@@ -133,6 +133,7 @@ export interface AppSettings {
   caisseStartDate?: string; // YYYY-MM-DD
   caisseStartReserveFC?: number; // Solde de départ Caisse Réserve
   caisseStartBeneficesFC?: number; // Solde de départ Caisse Bénéfices personnels
+  caisseStartVendeursFC?: number; // Solde de départ Caisse Vendeurs
   caisseStartNormaleFC?: number; // Rétro-compatibilité
   caisseStartCapitalFC?: number; // Rétro-compatibilité
   // Commission sur ventes personnelles (optionnel, 0 par défaut)

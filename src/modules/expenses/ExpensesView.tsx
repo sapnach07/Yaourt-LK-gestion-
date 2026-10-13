@@ -563,35 +563,26 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   const numAmount = parseLocaleNumber(amount);
                   if (!amount || isNaN(numAmount) || numAmount <= 0) return null;
 
-                  // Calcul avec le solde normale actuel
-                  const soldeNormaleActuel = cumulativeDetails.soldeNormaleFC;
-                  const payeeParNormale = Math.min(numAmount, soldeNormaleActuel);
-                  const payeeParCapital = numAmount - payeeParNormale;
-                  const soldeCapitalActuel = cumulativeDetails.soldeCapitalFC;
-                  const capitalInsuffisant = payeeParCapital > soldeCapitalActuel;
-                  const manqueApres = capitalInsuffisant
-                    ? Math.max(0, -(soldeCapitalActuel - payeeParCapital))
-                    : 0;
+                  const reserveAvant = cumulativeDetails.soldeReserveFC;
+                  const diff = editingExpense ? (editingExpense.amountFC || 0) - numAmount : -numAmount;
+                  const reserveApres = reserveAvant + diff;
 
                   return (
                     <div className="mt-1.5 space-y-1">
                       <p className="text-[11px] font-semibold text-slate-700">
-                        Payée par :{' '}
-                        <span className="font-extrabold text-emerald-800">
-                          Caisse normale {formatFC(payeeParNormale, currency)}
+                        Réserve avant :{' '}
+                        <span className={`font-mono font-bold ${reserveAvant < 0 ? 'text-rose-600' : 'text-slate-900'}`}>
+                          {formatFC(reserveAvant, currency)}
                         </span>
-                        {' / '}
-                        <span className="font-extrabold text-slate-900">
-                          Caisse Capital {formatFC(payeeParCapital, currency)}
+                        {' → après : '}
+                        <span className={`font-mono font-extrabold ${reserveApres < 0 ? 'text-rose-600' : 'text-emerald-700'}`}>
+                          {formatFC(reserveApres, currency)}
                         </span>
                       </p>
-
-                      {capitalInsuffisant && manqueApres > 0 && (
+                      {reserveApres < 0 && (
                         <p className="text-[11px] font-extrabold text-rose-600 flex items-center gap-1">
                           <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-                          <span>
-                            Le capital ne suffit pas : manque de {formatFC(manqueApres, currency)} (à rajouter de votre poche).
-                          </span>
+                          <span>Déficit prévu dans la Réserve : {formatFC(Math.abs(reserveApres), currency)}</span>
                         </p>
                       )}
                     </div>
