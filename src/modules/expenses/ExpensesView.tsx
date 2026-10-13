@@ -33,7 +33,7 @@ interface ExpensesViewProps {
   settings: AppSettings;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenCalculator?: () => void;
-  onOpenReserve?: (prefill?: { amount: number; reason: string }) => void;
+  onOpenReserve?: (prefill?: { amount: number; reason: string; source?: 'personnel' | 'benefices' }) => void;
 }
 
 export const ExpensesView: React.FC<ExpensesViewProps> = ({
@@ -173,6 +173,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const startingPoint = settings.caisseStartDate
     ? {
         startDate: settings.caisseStartDate,
+        startReserveFC:
+          settings.caisseStartReserveFC ??
+          ((settings.caisseStartNormaleFC ?? 0) + (settings.caisseStartCapitalFC ?? 0)),
+        startBeneficesFC: settings.caisseStartBeneficesFC ?? 0,
+        startVendeursFC: settings.caisseStartVendeursFC ?? 0,
         startNormaleFC: settings.caisseStartNormaleFC ?? 0,
         startCapitalFC: settings.caisseStartCapitalFC ?? 0,
       }
@@ -187,7 +192,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     null,
     personalSales
   );
-  const isCumulativeNegative = cumulativeDetails.soldeFC < 0;
+  const isCumulativeNegative = cumulativeDetails.soldeReserveFC < 0;
 
   // Filtered by category
   const displayedExpenses = monthExpenses.filter((e) =>
@@ -232,32 +237,49 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         </div>
       </div>
 
-      {/* Alerte rouge : si soldeCapitalFC < 0 */}
-      {cumulativeDetails.soldeCapitalFC < 0 && (
-        <div className="p-3.5 rounded-2xl bg-rose-600 text-white shadow-md flex items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <AlertTriangle className="w-5 h-5 shrink-0 text-white" />
+      {/* Alerte rouge : si soldeReserveFC < 0 */}
+      {cumulativeDetails.soldeReserveFC < 0 && (
+        <div className="p-4 rounded-2xl bg-rose-600 text-white shadow-md space-y-2 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white mt-0.5" />
             <div>
-              <span className="font-extrabold block">Alerte Caisse Capital</span>
-              <p className="text-[11px] text-rose-100 leading-snug">
-                Il manque {formatFC(cumulativeDetails.manqueFC, currency)} dans la Caisse Capital : ajoute{' '}
-                {formatFC(cumulativeDetails.manqueFC, currency)} de ton argent personnel.
+              <span className="font-extrabold text-sm block">
+                Les dépenses dépassent la réserve de {formatFC(cumulativeDetails.manqueFC, currency)}
+              </span>
+              <p className="text-[11px] text-rose-100 leading-snug mt-0.5">
+                La caisse réserve est en déficit. Choisissez comment combler ce manque :
               </p>
             </div>
           </div>
           {onOpenReserve && (
-            <button
-              type="button"
-              onClick={() =>
-                onOpenReserve({
-                  amount: cumulativeDetails.manqueFC,
-                  reason: 'Complément argent personnel',
-                })
-              }
-              className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs"
-            >
-              Ajouter {formatFC(cumulativeDetails.manqueFC, currency)}
-            </button>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenReserve({
+                    amount: cumulativeDetails.manqueFC,
+                    reason: 'Complément argent personnel',
+                    source: 'personnel',
+                  })
+                }
+                className="flex-1 py-2 px-3 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all text-xs shadow-xs text-center min-h-[38px]"
+              >
+                Ajouter mon argent personnel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenReserve({
+                    amount: cumulativeDetails.manqueFC,
+                    reason: 'Transfert pris sur mes bénéfices',
+                    source: 'benefices',
+                  })
+                }
+                className="flex-1 py-2 px-3 rounded-xl bg-rose-800 text-white border border-rose-400/50 font-extrabold hover:bg-rose-900 active:scale-95 transition-all text-xs shadow-xs text-center min-h-[38px]"
+              >
+                Prendre sur mes bénéfices
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -310,35 +332,35 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         <div className="grid grid-cols-2 gap-2.5">
           <div className="p-2.5 rounded-xl bg-emerald-50/70 border border-emerald-200 text-emerald-950">
             <span className="text-[10px] font-bold uppercase block text-emerald-800">
-              Caisse normale
+              Caisse Bénéfices personnels
             </span>
             <span className="text-base font-black font-mono mt-0.5 block text-emerald-900">
-              {formatFC(cumulativeDetails.soldeNormaleFC, currency)}
+              {formatFC(cumulativeDetails.soldeBeneficesFC, currency)}
             </span>
             <span className="text-[9px] text-emerald-700 block mt-0.5 font-medium">
-              ({reserveRate} % des ventes)
+              (Bénéfices disponibles)
             </span>
           </div>
 
           <div
             className={`p-2.5 rounded-xl border ${
-              cumulativeDetails.soldeCapitalFC >= 0
+              cumulativeDetails.soldeReserveFC >= 0
                 ? 'bg-slate-50 border-slate-200 text-slate-900'
                 : 'bg-rose-50 border-rose-200 text-rose-950'
             }`}
           >
             <span className="text-[10px] font-bold uppercase block text-slate-600">
-              Caisse Capital
+              Caisse Réserve
             </span>
             <span
               className={`text-base font-black font-mono mt-0.5 block ${
-                cumulativeDetails.soldeCapitalFC >= 0 ? 'text-slate-900' : 'text-rose-700'
+                cumulativeDetails.soldeReserveFC >= 0 ? 'text-slate-900' : 'text-rose-700'
               }`}
             >
-              {formatFC(cumulativeDetails.soldeCapitalFC, currency)}
+              {formatFC(cumulativeDetails.soldeReserveFC, currency)}
             </span>
             <span className="text-[9px] text-slate-500 block mt-0.5 font-medium">
-              {cumulativeDetails.soldeCapitalFC >= 0 ? 'Caisse Capital disponible' : `Manque ${formatFC(cumulativeDetails.manqueFC, currency)}`}
+              {cumulativeDetails.soldeReserveFC >= 0 ? 'Caisse Réserve disponible' : `Manque ${formatFC(cumulativeDetails.manqueFC, currency)}`}
             </span>
           </div>
         </div>
@@ -347,7 +369,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-100 text-center text-xs">
           <div>
             <span className="text-[10px] text-slate-500 uppercase font-semibold block">
-              Caisse normale mois
+              Réserve du mois
             </span>
             <span className="text-xs font-extrabold font-mono text-slate-800">
               {formatFC(expenseReserveInMonthFC, currency)}

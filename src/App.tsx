@@ -26,7 +26,7 @@ export default function App() {
   const [isReserveOpen, setIsReserveOpen] = useState(false);
   const [isEarningsOpen, setIsEarningsOpen] = useState(false);
   const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
-  const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string } | null>(null);
+  const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string; source?: 'personnel' | 'benefices' } | null>(null);
   const [dailyStatusFilter, setDailyStatusFilter] = useState<'all' | 'incomplete' | 'validated'>('all');
 
   // Security / PIN state

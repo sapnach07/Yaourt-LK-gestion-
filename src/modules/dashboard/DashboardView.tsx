@@ -63,7 +63,7 @@ import type {
 interface DashboardViewProps {
   settings: AppSettings;
   onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings', statusFilter?: 'all' | 'incomplete' | 'validated') => void;
-  onOpenReserve?: (prefill?: { amount: number; reason: string }) => void;
+  onOpenReserve?: (prefill?: { amount: number; reason: string; source?: 'personnel' | 'benefices' }) => void;
   onOpenEarnings?: () => void;
   onOpenOwnerProfit?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
@@ -230,6 +230,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     const startingPoint = settings.caisseStartDate
       ? {
           startDate: settings.caisseStartDate,
+          startReserveFC:
+            settings.caisseStartReserveFC ??
+            ((settings.caisseStartNormaleFC ?? 0) + (settings.caisseStartCapitalFC ?? 0)),
+          startBeneficesFC: settings.caisseStartBeneficesFC ?? 0,
+          startVendeursFC: settings.caisseStartVendeursFC ?? 0,
           startNormaleFC: settings.caisseStartNormaleFC ?? 0,
           startCapitalFC: settings.caisseStartCapitalFC ?? 0,
         }
@@ -251,6 +256,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     personalSales,
     settings.expenseReservePct,
     settings.caisseStartDate,
+    settings.caisseStartReserveFC,
+    settings.caisseStartBeneficesFC,
+    settings.caisseStartVendeursFC,
     settings.caisseStartNormaleFC,
     settings.caisseStartCapitalFC,
   ]);
@@ -815,32 +823,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-5">
-      {/* ALERTE ROUGE : si soldeCapitalFC < 0 */}
-      {cumulativeReserve.soldeCapitalFC < 0 && (
-        <div className="p-3.5 rounded-2xl bg-rose-600 text-white shadow-md flex items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <AlertTriangle className="w-5 h-5 shrink-0 text-white" />
+      {/* ALERTE ROUGE : si soldeReserveFC < 0 */}
+      {cumulativeReserve.soldeReserveFC < 0 && (
+        <div className="p-4 rounded-2xl bg-rose-600 text-white shadow-md space-y-2 text-xs">
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white mt-0.5" />
             <div>
-              <span className="font-extrabold block">Alerte Caisse Capital</span>
-              <p className="text-[11px] text-rose-100 leading-snug">
-                Il manque {formatFC(cumulativeReserve.manqueFC, currency)} dans la Caisse Capital : ajoute{' '}
-                {formatFC(cumulativeReserve.manqueFC, currency)} de ton argent personnel.
+              <span className="font-extrabold text-sm block">
+                Les dépenses dépassent la réserve de {formatFC(cumulativeReserve.manqueFC, currency)}
+              </span>
+              <p className="text-[11px] text-rose-100 leading-snug mt-0.5">
+                La caisse réserve est en déficit. Choisissez comment combler ce manque :
               </p>
             </div>
           </div>
           {onOpenReserve && (
-            <button
-              type="button"
-              onClick={() =>
-                onOpenReserve({
-                  amount: cumulativeReserve.manqueFC,
-                  reason: 'Complément argent personnel',
-                })
-              }
-              className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs"
-            >
-              Ajouter {formatFC(cumulativeReserve.manqueFC, currency)}
-            </button>
+            <div className="flex items-center gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenReserve({
+                    amount: cumulativeReserve.manqueFC,
+                    reason: 'Complément argent personnel',
+                    source: 'personnel',
+                  })
+                }
+                className="flex-1 py-2 px-3 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all text-xs shadow-xs text-center min-h-[38px]"
+              >
+                Ajouter mon argent personnel
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenReserve({
+                    amount: cumulativeReserve.manqueFC,
+                    reason: 'Transfert pris sur mes bénéfices',
+                    source: 'benefices',
+                  })
+                }
+                className="flex-1 py-2 px-3 rounded-xl bg-rose-800 text-white border border-rose-400/50 font-extrabold hover:bg-rose-900 active:scale-95 transition-all text-xs shadow-xs text-center min-h-[38px]"
+              >
+                Prendre sur mes bénéfices
+              </button>
+            </div>
           )}
         </div>
       )}

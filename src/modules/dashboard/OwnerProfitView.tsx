@@ -108,6 +108,11 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     const startingPoint = settings.caisseStartDate
       ? {
           startDate: settings.caisseStartDate,
+          startReserveFC:
+            settings.caisseStartReserveFC ??
+            ((settings.caisseStartNormaleFC ?? 0) + (settings.caisseStartCapitalFC ?? 0)),
+          startBeneficesFC: settings.caisseStartBeneficesFC ?? 0,
+          startVendeursFC: settings.caisseStartVendeursFC ?? 0,
           startNormaleFC: settings.caisseStartNormaleFC ?? 0,
           startCapitalFC: settings.caisseStartCapitalFC ?? 0,
         }
@@ -127,6 +132,9 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     expenses,
     reserveRate,
     settings.caisseStartDate,
+    settings.caisseStartReserveFC,
+    settings.caisseStartBeneficesFC,
+    settings.caisseStartVendeursFC,
     settings.caisseStartNormaleFC,
     settings.caisseStartCapitalFC,
     personalSales,
@@ -379,7 +387,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
             {formatFC(profitStats.totalOwnerShareFC, currency)}
           </span>
           <p className="text-xs text-emerald-200/90 mt-1 leading-snug">
-            Somme de ma part (ventes × ma part %). Les dépenses ne sont pas déduites de mon bénéfice : elles sont prises en charge par la Caisse Capital.
+            Somme de ma part (ventes × ma part %). Les dépenses ne sont pas déduites de mon bénéfice : elles sont prises en charge par la Caisse Réserve.
           </p>
         </div>
       </div>
@@ -408,7 +416,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
 
           <div className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200/70">
             <span className="font-bold text-slate-700">
-              3. Part Caisse Capital ({reserveRate} %)
+              3. Part Caisse Réserve ({reserveRate} %)
             </span>
             <span className="font-mono font-extrabold text-slate-900">
               −{formatFC(profitStats.totalCaisseShareFC, currency)}
@@ -431,7 +439,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
                 = Mon Bénéfice
               </span>
               <span className="text-[10px] text-emerald-700 font-normal">
-                Ventes − Commissions − Part Caisse
+                Ventes − Commissions − Part Réserve
               </span>
             </div>
             <span className="text-base font-black font-mono text-emerald-800">
@@ -443,7 +451,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
 
       {/* INFOS SECONDAIRES (SANS DÉDUCTION) */}
       <div className="grid grid-cols-2 gap-2.5">
-        {/* Solde actuel de la Caisse Capital */}
+        {/* Solde actuel de la Caisse Réserve */}
         <div
           onClick={onOpenReserve}
           className="p-3.5 rounded-3xl bg-white border border-slate-200/90 shadow-2xs cursor-pointer hover:border-teal-400 transition-all flex flex-col justify-between"
@@ -451,16 +459,16 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
           <div>
             <div className="flex items-center justify-between">
               <span className="text-[11px] font-bold text-slate-500 uppercase block">
-                Solde Caisse Capital
+                Solde Caisse Réserve
               </span>
               <Wallet className="w-3.5 h-3.5 text-teal-700" />
             </div>
             <span
               className={`text-base font-black font-mono mt-0.5 block ${
-                cumulativeReserve.soldeFC < 0 ? 'text-rose-700' : 'text-slate-900'
+                cumulativeReserve.soldeReserveFC < 0 ? 'text-rose-700' : 'text-slate-900'
               }`}
             >
-              {formatFC(cumulativeReserve.soldeFC, currency)}
+              {formatFC(cumulativeReserve.soldeReserveFC, currency)}
             </span>
           </div>
           <span className="text-[10px] text-teal-700 font-semibold mt-2 block">
