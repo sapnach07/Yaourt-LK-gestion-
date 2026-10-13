@@ -12,133 +12,107 @@ export interface ExpenseBreakdownItem {
   takenFromCapitalFC: number;
 }
 
-export interface ClosedMonthSummary {
-  month: string; // YYYY-MM
-  ventesDuMois: number;
-  reserveDuMois: number; // réserve % × ventesDuMois
-  depensesDuMois: number;
-  resteNormaleFC: number; // max(0, reserveDuMois - depensesDuMois)
-  depassementPrisSurBeneficeFC: number; // max(0, depensesDuMois - reserveDuMois)
-}
-
 export interface CaisseStartingPoint {
   startDate?: string; // YYYY-MM-DD
+  startReserveFC?: number;
+  startBeneficesFC?: number;
+  // Rétrocompatibilité
   startNormaleFC?: number;
   startCapitalFC?: number;
 }
 
+export interface ProvenanceItem {
+  label: string;
+  amountFC: number;
+  pct: number;
+}
+
+export interface ProvenanceSection {
+  totalEntreesFC: number;
+  entrees: ProvenanceItem[];
+  totalSortiesFC: number;
+  sorties: ProvenanceItem[];
+}
+
 export interface ReserveDetails {
-  soldeNormaleFC: number; // Toujours >= 0
-  soldeCapitalFC: number; // Peut être négatif (manque)
-  capitalUtiliseFC: number; // Somme des restes pris sur le capital
-  depensesPayeesParNormaleFC: number; // Somme des dépenses payées par la caisse normale
-  manqueFC: number; // max(0, -soldeCapitalFC)
+  // 1. Caisse Réserve
+  soldeReserveFC: number; // ajouts − retraits + (réserve % × toutes ventes) − toutes dépenses (peut être négatif)
+  totalAdditionsReserveFC: number; // Ajouts manuels à la réserve (toutes sources)
+  totalWithdrawalsReserveFC: number; // Retraits de la réserve
+  totalSalesReserveFC: number; // réserve % × toutes les ventes
+  totalExpensesFC: number; // Toutes les dépenses
+  manqueFC: number; // max(0, -soldeReserveFC)
 
-  // Détail pour chaque dépense
-  expenseDetails: Record<string, { paidByNormaleFC: number; takenFromCapitalFC: number }>;
-  expensesOnCapital: ExpenseBreakdownItem[]; // Dépenses où takenFromCapitalFC > 0
-  allExpenseBreakdowns: ExpenseBreakdownItem[];
+  // 2. Caisse Bénéfices personnels
+  soldeBeneficesFC: number; // somme(ownerShareFC) + somme(ownerCommissionFC + ownerShareFC ventes perso) − retraits bénéfices − transferts vers réserve
+  totalBeneficesVendeursFC: number; // somme des ownerShareFC des vendeurs
+  totalBeneficesPersoFC: number; // somme des (ownerCommissionFC + ownerShareFC) des ventes personnelles
+  totalWithdrawalsBeneficesFC: number; // retraits caisse = 'benefices'
+  totalTransfersToReserveFC: number; // ajouts réserve de source = 'benefices'
 
-  // Totaux informatifs & compatibilité
-  totalAdditionsFC: number;
-  totalWithdrawalsFC: number;
-  totalSalesReserveFC: number;
-  totalExpensesFC: number;
+  // Provenance détaillée en temps réel
+  provenanceReserve: ProvenanceSection;
+  provenanceBenefices: ProvenanceSection;
+
+  // Totaux globaux & rétrocompatibilité
   allTimeSalesFC: number;
   reserveRatePct: number;
-  soldeFC: number; // solde global combiné (soldeNormaleFC + soldeCapitalFC)
-
-  // Mois clôturés et point de départ
+  soldeFC: number; // solde de la réserve (ou solde combiné)
+  soldeNormaleFC: number; // alias soldeReserveFC pour compatibilité
+  soldeCapitalFC: number; // alias soldeReserveFC pour compatibilité (ou manqueFC = max(0, -soldeCapitalFC))
+  capitalUtiliseFC: number;
+  depensesPayeesParNormaleFC: number;
+  expenseDetails: Record<string, { paidByNormaleFC: number; takenFromCapitalFC: number }>;
+  expensesOnCapital: ExpenseBreakdownItem[];
+  allExpenseBreakdowns: ExpenseBreakdownItem[];
+  totalAdditionsFC: number;
+  totalWithdrawalsFC: number;
   startingPoint?: CaisseStartingPoint | null;
-  closedMonths: ClosedMonthSummary[];
-  totalDepassementClosedMonthsFC: number; // Somme des dépassements pris sur bénéfice des mois clôturés
-  lastClosedMonthResteFC: number; // Reste de la caisse normale du dernier mois clôturé (pour proposition par défaut)
+  closedMonths: any[];
+  totalDepassementClosedMonthsFC: number;
+  lastClosedMonthResteFC: number;
 }
 
-type TimelineEvent =
-  | { type: 'ajout'; order: 1; id: string; date: string; amountFC: number; createdAt: number }
-  | { type: 'vente'; order: 2; id: string; date: string; totalSalesFC: number; createdAt: number }
-  | {
-      type: 'depense';
-      order: 3;
-      id: string;
-      date: string;
-      amountFC: number;
-      category: string;
-      detail?: string;
-      createdAt: number;
-    }
-  | { type: 'retrait'; order: 4; id: string; date: string; amountFC: number; createdAt: number };
-
-/**
- * Calcule pour n'importe quel mois donné (YYYY-MM) le reste de la Caisse normale :
- * - ventesDuMois, reserveDuMois = réserve % × ventesDuMois, depensesDuMois
- * - Reste de la Caisse normale = max(0, reserveDuMois - depensesDuMois)
- */
-export function calculateMonthResteNormale(
-  dailyEntries: DailyEntry[],
-  expenses: Expense[],
-  monthStr: string, // YYYY-MM
-  reserveRatePct = 50,
-  personalSales: PersonalSale[] = []
-): {
-  month: string;
-  ventesDuMois: number;
-  reserveDuMois: number;
-  depensesDuMois: number;
-  resteNormaleFC: number;
-  depassementPrisSurBeneficeFC: number;
-} {
-  const monthEntries = dailyEntries.filter((e) => e.date && e.date.startsWith(monthStr));
-  const monthPersonalSales = personalSales.filter((p) => p.date && p.date.startsWith(monthStr));
-  const monthExpenses = expenses.filter((e) => e.date && e.date.startsWith(monthStr));
-
-  const ventesDuMois =
-    monthEntries.reduce((sum, e) => sum + (e.totalSalesFC || 0), 0) +
-    monthPersonalSales.reduce((sum, p) => sum + (p.totalSalesFC || 0), 0);
-  const reserveDuMois = Math.round((ventesDuMois * reserveRatePct) / 100);
-  const depensesDuMois = monthExpenses.reduce((sum, e) => sum + (e.amountFC || 0), 0);
-
-  const resteNormaleFC = Math.max(0, reserveDuMois - depensesDuMois);
-  const depassementPrisSurBeneficeFC = Math.max(0, depensesDuMois - reserveDuMois);
-
-  return {
-    month: monthStr,
-    ventesDuMois,
-    reserveDuMois,
-    depensesDuMois,
-    resteNormaleFC,
-    depassementPrisSurBeneficeFC,
-  };
-}
-
-/**
- * Calcule l'état des deux caisses (Caisse normale et Caisse Capital)
- * en tenant compte du point de départ optionnel et des ventes personnelles :
- *
- * 1. Si caisseStartingPoint est défini avec une date de départ (ex: '2026-10-01') :
- *    - Mois clôturés (avant la date de départ) : calculés en bloc mois par mois
- *      (ventesDuMois, reserveDuMois, depensesDuMois, resteNormale, depassement).
- *    - Événements à partir de la date de départ : rejoués chronologiquement
- *      en commençant avec soldeNormaleFC = startNormaleFC et soldeCapitalFC = startCapitalFC.
- * 2. Sans point de départ : calcul chronologique sur tout l'historique démarrant à 0.
- */
 export interface PeriodReserveSummary {
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
-  // Caisse normale
-  normaleStartFC: number; // Solde au début (fin de la veille du "Du")
-  normaleSalesAddFC: number; // + 50 % des ventes de la période
-  normaleExpensesPaidFC: number; // − dépenses payées par la caisse normale
-  normaleEndFC: number; // = solde à la fin ("Au")
-  // Caisse Capital
-  capitalStartFC: number; // Solde au début
-  capitalAdditionsFC: number; // + dépôts
-  capitalWithdrawalsFC: number; // − retraits
-  capitalExpensesTakenFC: number; // − dépenses prises sur le capital
-  capitalEndFC: number; // = solde à la fin
+  // Caisse Réserve
+  reserveStartFC: number;
+  reserveAdditionsFC: number;
+  reserveSalesAddFC: number;
+  reserveWithdrawalsFC: number;
+  reserveExpensesFC: number;
+  reserveEndFC: number;
+  // Caisse Bénéfices
+  beneficesStartFC: number;
+  beneficesVendeursFC: number;
+  beneficesPersoFC: number;
+  beneficesWithdrawalsFC: number;
+  beneficesTransfersFC: number;
+  beneficesEndFC: number;
+  // Provenance sur la période
+  provenanceReserve: ProvenanceSection;
+  provenanceBenefices: ProvenanceSection;
+
+  // Rétrocompatibilité
+  normaleStartFC: number;
+  normaleSalesAddFC: number;
+  normaleExpensesPaidFC: number;
+  normaleEndFC: number;
+  capitalStartFC: number;
+  capitalAdditionsFC: number;
+  capitalWithdrawalsFC: number;
+  capitalExpensesTakenFC: number;
+  capitalEndFC: number;
 }
 
+/**
+ * Calcule l'état des deux caisses :
+ * - Caisse Réserve
+ * - Caisse Bénéfices personnels
+ *
+ * Plus d'ordre chronologique : somme directe des composantes.
+ */
 export function calculateReserveBalance(
   movements: ReserveMovement[],
   dailyEntries: DailyEntry[],
@@ -152,234 +126,408 @@ export function calculateReserveBalance(
   const startDate = hasStartingPoint ? startingPoint!.startDate!.trim() : '';
   const filterAsOfDate = asOfDate && asOfDate.trim() ? asOfDate.trim() : null;
 
-  // 1. Calcul des mois clôturés (si point de départ actif)
-  const closedMonths: ClosedMonthSummary[] = [];
-  let totalDepassementClosedMonthsFC = 0;
-  let lastClosedMonthResteFC = 0;
+  // Soldes de départ
+  let startReserveFC = 0;
+  let startBeneficesFC = 0;
 
   if (hasStartingPoint) {
-    // Identifier tous les mois YYYY-MM strictement antérieurs à startDate
-    const closedMonthSet = new Set<string>();
-
-    for (const e of dailyEntries) {
-      if (e.date && e.date < startDate) {
-        if (!filterAsOfDate || e.date <= filterAsOfDate) {
-          closedMonthSet.add(e.date.substring(0, 7));
-        }
-      }
+    if (startingPoint!.startReserveFC !== undefined) {
+      startReserveFC = startingPoint!.startReserveFC;
+    } else {
+      // Rétrocompatibilité : startNormaleFC + startCapitalFC
+      startReserveFC = (startingPoint!.startNormaleFC ?? 0) + (startingPoint!.startCapitalFC ?? 0);
     }
-    for (const p of personalSales) {
-      if (p.date && p.date < startDate) {
-        if (!filterAsOfDate || p.date <= filterAsOfDate) {
-          closedMonthSet.add(p.date.substring(0, 7));
-        }
-      }
-    }
-    for (const exp of expenses) {
-      if (exp.date && exp.date < startDate) {
-        if (!filterAsOfDate || exp.date <= filterAsOfDate) {
-          closedMonthSet.add(exp.date.substring(0, 7));
-        }
-      }
-    }
-
-    const sortedClosedMonths = Array.from(closedMonthSet).sort();
-
-    for (const mStr of sortedClosedMonths) {
-      const summary = calculateMonthResteNormale(dailyEntries, expenses, mStr, reserveRatePct, personalSales);
-      closedMonths.push(summary);
-      totalDepassementClosedMonthsFC += summary.depassementPrisSurBeneficeFC;
-    }
-
-    if (closedMonths.length > 0) {
-      lastClosedMonthResteFC = closedMonths[closedMonths.length - 1].resteNormaleFC;
-    }
+    startBeneficesFC = startingPoint!.startBeneficesFC ?? 0;
   }
 
-  // 2. Événements à rejouer chronologiquement
-  const events: TimelineEvent[] = [];
+  // Filtrage des événements (si point de départ : date >= startDate, si asOfDate : date <= asOfDate)
+  const isDateIncluded = (d?: string) => {
+    if (!d) return false;
+    if (hasStartingPoint && d < startDate) return false;
+    if (filterAsOfDate && d > filterAsOfDate) return false;
+    return true;
+  };
 
-  // Mouvements manuels de capital (ajouts et retraits)
+  // 1. Mouvements manuels
+  let reserveAdditionsPersonnelFC = 0;
+  let reserveAdditionsBeneficesFC = 0;
+  let reserveWithdrawalsFC = 0;
+
+  let beneficesWithdrawalsFC = 0;
+  let beneficesTransfersToReserveFC = 0;
+
   for (const m of movements) {
-    if (hasStartingPoint && m.date < startDate) continue;
-    if (filterAsOfDate && m.date > filterAsOfDate) continue;
-    if (m.type === 'ajout') {
-      events.push({
-        type: 'ajout',
-        order: 1,
-        id: m.id,
-        date: m.date,
-        amountFC: m.amountFC || 0,
-        createdAt: m.createdAt || 0,
-      });
-    } else if (m.type === 'retrait') {
-      events.push({
-        type: 'retrait',
-        order: 4,
-        id: m.id,
-        date: m.date,
-        amountFC: m.amountFC || 0,
-        createdAt: m.createdAt || 0,
-      });
+    if (!isDateIncluded(m.date)) continue;
+    const amount = m.amountFC || 0;
+    const caisse = m.caisse || 'reserve';
+    const source = m.source || 'personnel';
+
+    if (caisse === 'reserve') {
+      if (m.type === 'ajout') {
+        if (source === 'benefices') {
+          reserveAdditionsBeneficesFC += amount;
+          beneficesTransfersToReserveFC += amount;
+        } else {
+          reserveAdditionsPersonnelFC += amount;
+        }
+      } else if (m.type === 'retrait') {
+        reserveWithdrawalsFC += amount;
+      }
+    } else if (caisse === 'benefices') {
+      if (m.type === 'retrait') {
+        beneficesWithdrawalsFC += amount;
+      }
     }
   }
 
-  // Saisies de ventes journalières des vendeurs
-  for (const e of dailyEntries) {
-    if (hasStartingPoint && e.date < startDate) continue;
-    if (filterAsOfDate && e.date > filterAsOfDate) continue;
-    events.push({
-      type: 'vente',
-      order: 2,
-      id: e.id,
-      date: e.date,
-      totalSalesFC: e.totalSalesFC || 0,
-      createdAt: e.createdAt || 0,
-    });
-  }
+  const totalAdditionsReserveFC = reserveAdditionsPersonnelFC + reserveAdditionsBeneficesFC;
 
-  // Ventes personnelles du gérant (traitées comme une vente normale pour la caisse)
-  for (const p of personalSales) {
-    if (hasStartingPoint && p.date < startDate) continue;
-    if (filterAsOfDate && p.date > filterAsOfDate) continue;
-    events.push({
-      type: 'vente',
-      order: 2,
-      id: p.id,
-      date: p.date,
-      totalSalesFC: p.totalSalesFC || 0,
-      createdAt: p.createdAt || 0,
-    });
-  }
-
-  // Dépenses
-  for (const exp of expenses) {
-    if (hasStartingPoint && exp.date < startDate) continue;
-    if (filterAsOfDate && exp.date > filterAsOfDate) continue;
-    events.push({
-      type: 'depense',
-      order: 3,
-      id: exp.id,
-      date: exp.date,
-      amountFC: exp.amountFC || 0,
-      category: exp.category || '',
-      detail: exp.detail || '',
-      createdAt: exp.createdAt || 0,
-    });
-  }
-
-  // Tri chronologique strict :
-  // - Date croissante
-  // - À même date : ajouts (1), puis ventes (2), puis dépenses (3), puis retraits (4)
-  // - À égalité, par createdAt croissant
-  events.sort((a, b) => {
-    if (a.date !== b.date) {
-      return a.date.localeCompare(b.date);
-    }
-    if (a.order !== b.order) {
-      return a.order - b.order;
-    }
-    return a.createdAt - b.createdAt;
-  });
-
-  // Soldes de départ
-  let soldeNormaleFC = hasStartingPoint ? Math.max(0, startingPoint?.startNormaleFC || 0) : 0;
-  let soldeCapitalFC = hasStartingPoint ? (startingPoint?.startCapitalFC || 0) : 0;
-
-  let capitalUtiliseFC = 0;
-  let depensesPayeesParNormaleFC = 0;
-
-  let totalAdditionsFC = hasStartingPoint ? (startingPoint?.startCapitalFC && startingPoint.startCapitalFC > 0 ? startingPoint.startCapitalFC : 0) : 0;
-  let totalWithdrawalsFC = 0;
-  let totalSalesReserveFC = hasStartingPoint ? (startingPoint?.startNormaleFC || 0) : 0;
-  let totalExpensesFC = 0;
+  // 2. Ventes des vendeurs
+  let reserveSalesVendeursFC = 0;
+  let beneficesVendeursFC = 0;
   let allTimeSalesFC = 0;
 
-  const expenseDetails: Record<string, { paidByNormaleFC: number; takenFromCapitalFC: number }> = {};
-  const allExpenseBreakdowns: ExpenseBreakdownItem[] = [];
-  const expensesOnCapital: ExpenseBreakdownItem[] = [];
+  // Pour la provenance des vendeurs
+  const entriesByEmployee: Record<string, { employeeName: string; salesFC: number; reserveFC: number; ownerShareFC: number }> = {};
 
-  for (const ev of events) {
-    if (ev.type === 'ajout') {
-      soldeCapitalFC += ev.amountFC;
-      totalAdditionsFC += ev.amountFC;
-    } else if (ev.type === 'vente') {
-      allTimeSalesFC += ev.totalSalesFC;
-      const partReserve = Math.round((ev.totalSalesFC * reserveRatePct) / 100);
-      soldeNormaleFC += partReserve;
-      totalSalesReserveFC += partReserve;
-    } else if (ev.type === 'depense') {
-      const D = ev.amountFC;
-      totalExpensesFC += D;
+  for (const e of dailyEntries) {
+    if (!isDateIncluded(e.date)) continue;
+    const sales = e.totalSalesFC || 0;
+    allTimeSalesFC += sales;
+    const resPart = Math.round((sales * reserveRatePct) / 100);
+    reserveSalesVendeursFC += resPart;
+    const ownerPart = e.ownerShareFC || 0;
+    beneficesVendeursFC += ownerPart;
 
-      // La dépense est d'abord payée par la caisse normale
-      const payéeParNormale = Math.min(D, soldeNormaleFC);
-      soldeNormaleFC -= payéeParNormale;
-
-      // Le reste est pris sur le capital (peut devenir négatif)
-      const reste = D - payéeParNormale;
-      soldeCapitalFC -= reste;
-
-      capitalUtiliseFC += reste;
-      depensesPayeesParNormaleFC += payéeParNormale;
-
-      const breakdown: ExpenseBreakdownItem = {
-        expenseId: ev.id,
-        date: ev.date,
-        amountFC: D,
-        category: ev.category,
-        detail: ev.detail || '',
-        createdAt: ev.createdAt,
-        paidByNormaleFC: payéeParNormale,
-        takenFromCapitalFC: reste,
+    const empId = e.employeeId || 'unknown';
+    if (!entriesByEmployee[empId]) {
+      entriesByEmployee[empId] = {
+        employeeName: e.employeeName || 'Vendeur(se)',
+        salesFC: 0,
+        reserveFC: 0,
+        ownerShareFC: 0,
       };
-
-      expenseDetails[ev.id] = {
-        paidByNormaleFC: payéeParNormale,
-        takenFromCapitalFC: reste,
-      };
-      allExpenseBreakdowns.push(breakdown);
-      if (reste > 0) {
-        expensesOnCapital.push(breakdown);
-      }
-    } else if (ev.type === 'retrait') {
-      soldeCapitalFC -= ev.amountFC;
-      totalWithdrawalsFC += ev.amountFC;
     }
+    entriesByEmployee[empId].salesFC += sales;
+    entriesByEmployee[empId].reserveFC += resPart;
+    entriesByEmployee[empId].ownerShareFC += ownerPart;
   }
 
-  const manqueFC = Math.max(0, -soldeCapitalFC);
-  const soldeFC = soldeNormaleFC + soldeCapitalFC;
+  // 3. Ventes personnelles
+  let reserveSalesPersoFC = 0;
+  let beneficesPersoFC = 0;
+
+  for (const p of personalSales) {
+    if (!isDateIncluded(p.date)) continue;
+    const sales = p.totalSalesFC || 0;
+    allTimeSalesFC += sales;
+    const resPart = p.expenseReserveFC || Math.round((sales * reserveRatePct) / 100);
+    reserveSalesPersoFC += resPart;
+    const ownerPart = (p.ownerShareFC || 0) + (p.ownerCommissionFC || 0);
+    beneficesPersoFC += ownerPart;
+  }
+
+  const totalSalesReserveFC = reserveSalesVendeursFC + reserveSalesPersoFC;
+
+  // 4. Dépenses (toutes déduites de la Réserve)
+  let totalExpensesFC = 0;
+  const expensesByCategory: Record<string, number> = {};
+  const allExpenseBreakdowns: ExpenseBreakdownItem[] = [];
+  const expenseDetails: Record<string, { paidByNormaleFC: number; takenFromCapitalFC: number }> = {};
+
+  for (const exp of expenses) {
+    if (!isDateIncluded(exp.date)) continue;
+    const amt = exp.amountFC || 0;
+    totalExpensesFC += amt;
+    const cat = exp.category || 'Autre dépense';
+    expensesByCategory[cat] = (expensesByCategory[cat] || 0) + amt;
+
+    const item: ExpenseBreakdownItem = {
+      expenseId: exp.id,
+      date: exp.date,
+      amountFC: amt,
+      category: cat,
+      detail: exp.detail || '',
+      createdAt: exp.createdAt || 0,
+      paidByNormaleFC: amt,
+      takenFromCapitalFC: 0,
+    };
+    allExpenseBreakdowns.push(item);
+    expenseDetails[exp.id] = { paidByNormaleFC: amt, takenFromCapitalFC: 0 };
+  }
+
+  // SOLDES FINAUX
+  // Caisse Réserve = ajouts (toutes sources) − retraits de la Réserve + (réserve % × toutes ventes) − toutes dépenses + départ
+  const soldeReserveFC = startReserveFC + totalAdditionsReserveFC - reserveWithdrawalsFC + totalSalesReserveFC - totalExpensesFC;
+
+  // Caisse Bénéfices personnels = départ + somme(ownerShareFC vendeurs) + somme(ownerCommissionFC + ownerShareFC perso) − retraits bénéfices − transferts vers réserve
+  const soldeBeneficesFC = startBeneficesFC + beneficesVendeursFC + beneficesPersoFC - beneficesWithdrawalsFC - beneficesTransfersToReserveFC;
+
+  const manqueFC = Math.max(0, -soldeReserveFC);
+
+  // 5. Calcul des Provenances
+  // Provenance Réserve
+  const reserveTotalEntreesFC = startReserveFC + totalAdditionsReserveFC + totalSalesReserveFC;
+  const reserveEntreesList: ProvenanceItem[] = [];
+
+  if (startReserveFC > 0) {
+    reserveEntreesList.push({
+      label: 'Solde de départ',
+      amountFC: startReserveFC,
+      pct: reserveTotalEntreesFC > 0 ? (startReserveFC / reserveTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  // Entrées par vendeur(se)
+  Object.values(entriesByEmployee).forEach((emp) => {
+    if (emp.reserveFC > 0) {
+      reserveEntreesList.push({
+        label: `Ventes ${emp.employeeName} (${reserveRatePct} %)`,
+        amountFC: emp.reserveFC,
+        pct: reserveTotalEntreesFC > 0 ? (emp.reserveFC / reserveTotalEntreesFC) * 100 : 0,
+      });
+    }
+  });
+
+  // Ventes personnelles
+  if (reserveSalesPersoFC > 0) {
+    reserveEntreesList.push({
+      label: `Ventes personnelles (${reserveRatePct} %)`,
+      amountFC: reserveSalesPersoFC,
+      pct: reserveTotalEntreesFC > 0 ? (reserveSalesPersoFC / reserveTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  // Dépôts personnels
+  if (reserveAdditionsPersonnelFC > 0) {
+    reserveEntreesList.push({
+      label: 'Dépôts argent personnel',
+      amountFC: reserveAdditionsPersonnelFC,
+      pct: reserveTotalEntreesFC > 0 ? (reserveAdditionsPersonnelFC / reserveTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  // Transferts depuis les bénéfices
+  if (reserveAdditionsBeneficesFC > 0) {
+    reserveEntreesList.push({
+      label: 'Transferts depuis mes bénéfices',
+      amountFC: reserveAdditionsBeneficesFC,
+      pct: reserveTotalEntreesFC > 0 ? (reserveAdditionsBeneficesFC / reserveTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  // Sorties Réserve
+  const reserveTotalSortiesFC = totalExpensesFC + reserveWithdrawalsFC;
+  const reserveSortiesList: ProvenanceItem[] = [];
+
+  // Dépenses par catégorie
+  Object.entries(expensesByCategory).forEach(([cat, amt]) => {
+    reserveSortiesList.push({
+      label: `Dépenses : ${cat}`,
+      amountFC: amt,
+      pct: reserveTotalSortiesFC > 0 ? (amt / reserveTotalSortiesFC) * 100 : 0,
+    });
+  });
+
+  // Retraits
+  if (reserveWithdrawalsFC > 0) {
+    reserveSortiesList.push({
+      label: 'Retraits de la Réserve',
+      amountFC: reserveWithdrawalsFC,
+      pct: reserveTotalSortiesFC > 0 ? (reserveWithdrawalsFC / reserveTotalSortiesFC) * 100 : 0,
+    });
+  }
+
+  const provenanceReserve: ProvenanceSection = {
+    totalEntreesFC: reserveTotalEntreesFC,
+    entrees: reserveEntreesList,
+    totalSortiesFC: reserveTotalSortiesFC,
+    sorties: reserveSortiesList,
+  };
+
+  // Provenance Bénéfices personnels
+  const beneficesTotalEntreesFC = startBeneficesFC + beneficesVendeursFC + beneficesPersoFC;
+  const beneficesEntreesList: ProvenanceItem[] = [];
+
+  if (startBeneficesFC > 0) {
+    beneficesEntreesList.push({
+      label: 'Solde de départ',
+      amountFC: startBeneficesFC,
+      pct: beneficesTotalEntreesFC > 0 ? (startBeneficesFC / beneficesTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  Object.values(entriesByEmployee).forEach((emp) => {
+    if (emp.ownerShareFC > 0) {
+      beneficesEntreesList.push({
+        label: `Part sur ventes : ${emp.employeeName}`,
+        amountFC: emp.ownerShareFC,
+        pct: beneficesTotalEntreesFC > 0 ? (emp.ownerShareFC / beneficesTotalEntreesFC) * 100 : 0,
+      });
+    }
+  });
+
+  if (beneficesPersoFC > 0) {
+    beneficesEntreesList.push({
+      label: 'Part & com. ventes personnelles',
+      amountFC: beneficesPersoFC,
+      pct: beneficesTotalEntreesFC > 0 ? (beneficesPersoFC / beneficesTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  const beneficesTotalSortiesFC = beneficesWithdrawalsFC + beneficesTransfersToReserveFC;
+  const beneficesSortiesList: ProvenanceItem[] = [];
+
+  if (beneficesWithdrawalsFC > 0) {
+    beneficesSortiesList.push({
+      label: 'Retraits personnels',
+      amountFC: beneficesWithdrawalsFC,
+      pct: beneficesTotalSortiesFC > 0 ? (beneficesWithdrawalsFC / beneficesTotalSortiesFC) * 100 : 0,
+    });
+  }
+
+  if (beneficesTransfersToReserveFC > 0) {
+    beneficesSortiesList.push({
+      label: 'Transferts vers la Réserve',
+      amountFC: beneficesTransfersToReserveFC,
+      pct: beneficesTotalSortiesFC > 0 ? (beneficesTransfersToReserveFC / beneficesTotalSortiesFC) * 100 : 0,
+    });
+  }
+
+  const provenanceBenefices: ProvenanceSection = {
+    totalEntreesFC: beneficesTotalEntreesFC,
+    entrees: beneficesEntreesList,
+    totalSortiesFC: beneficesTotalSortiesFC,
+    sorties: beneficesSortiesList,
+  };
 
   return {
-    soldeNormaleFC,
-    soldeCapitalFC,
-    capitalUtiliseFC,
-    depensesPayeesParNormaleFC,
-    manqueFC,
-    expenseDetails,
-    expensesOnCapital,
-    allExpenseBreakdowns,
-    totalAdditionsFC,
-    totalWithdrawalsFC,
+    soldeReserveFC,
+    totalAdditionsReserveFC,
+    totalWithdrawalsReserveFC: reserveWithdrawalsFC,
     totalSalesReserveFC,
     totalExpensesFC,
+    manqueFC,
+
+    soldeBeneficesFC,
+    totalBeneficesVendeursFC: beneficesVendeursFC,
+    totalBeneficesPersoFC: beneficesPersoFC,
+    totalWithdrawalsBeneficesFC: beneficesWithdrawalsFC,
+    totalTransfersToReserveFC: beneficesTransfersToReserveFC,
+
+    provenanceReserve,
+    provenanceBenefices,
+
     allTimeSalesFC,
     reserveRatePct,
-    soldeFC,
+    soldeFC: soldeReserveFC,
+    soldeNormaleFC: soldeReserveFC,
+    soldeCapitalFC: soldeReserveFC,
+    capitalUtiliseFC: 0,
+    depensesPayeesParNormaleFC: totalExpensesFC,
+    expenseDetails,
+    expensesOnCapital: [],
+    allExpenseBreakdowns,
+    totalAdditionsFC: totalAdditionsReserveFC,
+    totalWithdrawalsFC: reserveWithdrawalsFC + beneficesWithdrawalsFC,
     startingPoint: hasStartingPoint ? startingPoint : null,
-    closedMonths,
-    totalDepassementClosedMonthsFC,
-    lastClosedMonthResteFC,
+    closedMonths: [],
+    totalDepassementClosedMonthsFC: 0,
+    lastClosedMonthResteFC: 0,
   };
 }
 
 /**
- * Calcule le solde disponible dans la Caisse Capital à une date donnée,
- * pour valider si un retrait est autorisé.
- * Si le capital est négatif ou nul à cette date, le retrait est interdit.
+ * Calcul du résumé des caisses sur une période donnée [startDate, endDate]
  */
-export function getCapitalBalanceAtDate(
+export function calculatePeriodReserveSummary(
+  movements: ReserveMovement[],
+  dailyEntries: DailyEntry[],
+  expenses: Expense[],
+  startDate: string, // YYYY-MM-DD
+  endDate: string,   // YYYY-MM-DD
+  reserveRatePct = 50,
+  startingPoint?: CaisseStartingPoint | null,
+  personalSales: PersonalSale[] = []
+): PeriodReserveSummary {
+  // Calculer la veille de startDate pour l'état au début
+  const sDate = new Date(startDate);
+  sDate.setDate(sDate.getDate() - 1);
+  const dayBefore = sDate.toISOString().slice(0, 10);
+
+  const startDetails = calculateReserveBalance(
+    movements,
+    dailyEntries,
+    expenses,
+    reserveRatePct,
+    startingPoint,
+    dayBefore,
+    personalSales
+  );
+
+  const endDetails = calculateReserveBalance(
+    movements,
+    dailyEntries,
+    expenses,
+    reserveRatePct,
+    startingPoint,
+    endDate,
+    personalSales
+  );
+
+  // Événements stricts de la période [startDate, endDate]
+  const periodMovements = movements.filter((m) => m.date && m.date >= startDate && m.date <= endDate);
+  const periodEntries = dailyEntries.filter((e) => e.date && e.date >= startDate && e.date <= endDate);
+  const periodExpenses = expenses.filter((e) => e.date && e.date >= startDate && e.date <= endDate);
+  const periodPersonalSales = personalSales.filter((p) => p.date && p.date >= startDate && p.date <= endDate);
+
+  // Calcul sur la période seule (sans startingPoint pour avoir les flux stricts de la période)
+  const periodOnlyDetails = calculateReserveBalance(
+    periodMovements,
+    periodEntries,
+    periodExpenses,
+    reserveRatePct,
+    null,
+    null,
+    periodPersonalSales
+  );
+
+  return {
+    startDate,
+    endDate,
+    reserveStartFC: startDetails.soldeReserveFC,
+    reserveAdditionsFC: periodOnlyDetails.totalAdditionsReserveFC,
+    reserveSalesAddFC: periodOnlyDetails.totalSalesReserveFC,
+    reserveWithdrawalsFC: periodOnlyDetails.totalWithdrawalsReserveFC,
+    reserveExpensesFC: periodOnlyDetails.totalExpensesFC,
+    reserveEndFC: endDetails.soldeReserveFC,
+
+    beneficesStartFC: startDetails.soldeBeneficesFC,
+    beneficesVendeursFC: periodOnlyDetails.totalBeneficesVendeursFC,
+    beneficesPersoFC: periodOnlyDetails.totalBeneficesPersoFC,
+    beneficesWithdrawalsFC: periodOnlyDetails.totalWithdrawalsBeneficesFC,
+    beneficesTransfersFC: periodOnlyDetails.totalTransfersToReserveFC,
+    beneficesEndFC: endDetails.soldeBeneficesFC,
+
+    provenanceReserve: periodOnlyDetails.provenanceReserve,
+    provenanceBenefices: periodOnlyDetails.provenanceBenefices,
+
+    normaleStartFC: startDetails.soldeReserveFC,
+    normaleSalesAddFC: periodOnlyDetails.totalSalesReserveFC,
+    normaleExpensesPaidFC: periodOnlyDetails.totalExpensesFC,
+    normaleEndFC: endDetails.soldeReserveFC,
+    capitalStartFC: startDetails.soldeBeneficesFC,
+    capitalAdditionsFC: periodOnlyDetails.totalAdditionsReserveFC,
+    capitalWithdrawalsFC: periodOnlyDetails.totalWithdrawalsReserveFC,
+    capitalExpensesTakenFC: 0,
+    capitalEndFC: endDetails.soldeBeneficesFC,
+  };
+}
+
+/**
+ * Solde des bénéfices personnels disponible à une date donnée pour valider un retrait ou transfert
+ */
+export function getBeneficesBalanceAtDate(
   movements: ReserveMovement[],
   dailyEntries: DailyEntry[],
   expenses: Expense[],
@@ -393,7 +541,6 @@ export function getCapitalBalanceAtDate(
     ? movements.filter((m) => m.id !== excludeMovementId)
     : movements;
 
-  // Calcul du solde chronologique complet avec les mouvements filtrés
   const details = calculateReserveBalance(
     filteredMovements,
     dailyEntries,
@@ -404,8 +551,32 @@ export function getCapitalBalanceAtDate(
     personalSales
   );
 
-  // Le solde du capital actuel disponible
-  return details.soldeCapitalFC;
+  return details.soldeBeneficesFC;
+}
+
+/**
+ * Rétro-compatibilité : alias vers getBeneficesBalanceAtDate ou solde capital
+ */
+export function getCapitalBalanceAtDate(
+  movements: ReserveMovement[],
+  dailyEntries: DailyEntry[],
+  expenses: Expense[],
+  reserveRatePct: number,
+  targetDate: string,
+  excludeMovementId?: string,
+  startingPoint?: CaisseStartingPoint | null,
+  personalSales: PersonalSale[] = []
+): number {
+  return getBeneficesBalanceAtDate(
+    movements,
+    dailyEntries,
+    expenses,
+    reserveRatePct,
+    targetDate,
+    excludeMovementId,
+    startingPoint,
+    personalSales
+  );
 }
 
 /**
@@ -426,102 +597,34 @@ export async function getCumulativeReserveDetails(
 }
 
 /**
- * Calcule le résumé de la Caisse normale et Caisse Capital sur une période [startDate, endDate] :
- * - Caisse normale :
- *     solde au début (fin de la veille du "Du"),
- *     + 50 % des ventes de la période,
- *     − dépenses payées par la caisse normale pendant la période,
- *     = solde à la fin ("Au").
- * - Caisse Capital :
- *     solde au début (fin de la veille du "Du"),
- *     + dépôts pendant la période,
- *     − retraits pendant la période,
- *     − dépenses prises sur le capital pendant la période,
- *     = solde à la fin.
+ * Rétrocompatibilité : calcul du reste d'un mois
  */
-export function calculatePeriodReserveSummary(
-  movements: ReserveMovement[],
+export function calculateMonthResteNormale(
   dailyEntries: DailyEntry[],
   expenses: Expense[],
-  startDate: string, // YYYY-MM-DD ("Du")
-  endDate: string,   // YYYY-MM-DD ("Au")
+  monthStr: string,
   reserveRatePct = 50,
-  startingPoint?: CaisseStartingPoint | null,
   personalSales: PersonalSale[] = []
-): PeriodReserveSummary {
-  // Calculer la veille de startDate
-  const sDate = new Date(startDate);
-  sDate.setDate(sDate.getDate() - 1);
-  const dayBefore = sDate.toISOString().slice(0, 10);
+) {
+  const monthEntries = dailyEntries.filter((e) => e.date && e.date.startsWith(monthStr));
+  const monthPersonalSales = personalSales.filter((p) => p.date && p.date.startsWith(monthStr));
+  const monthExpenses = expenses.filter((e) => e.date && e.date.startsWith(monthStr));
 
-  // État à la fin de la veille du "Du"
-  const startDetails = calculateReserveBalance(
-    movements,
-    dailyEntries,
-    expenses,
-    reserveRatePct,
-    startingPoint,
-    dayBefore,
-    personalSales
-  );
+  const ventesDuMois =
+    monthEntries.reduce((sum, e) => sum + (e.totalSalesFC || 0), 0) +
+    monthPersonalSales.reduce((sum, p) => sum + (p.totalSalesFC || 0), 0);
+  const reserveDuMois = Math.round((ventesDuMois * reserveRatePct) / 100);
+  const depensesDuMois = monthExpenses.reduce((sum, e) => sum + (e.amountFC || 0), 0);
 
-  // État à la fin du "Au"
-  const endDetails = calculateReserveBalance(
-    movements,
-    dailyEntries,
-    expenses,
-    reserveRatePct,
-    startingPoint,
-    endDate,
-    personalSales
-  );
-
-  // Événements spécifiques à la période [startDate, endDate]
-  // 1. Ventes de la période (vendeurs + ventes personnelles)
-  const periodSalesEntries = dailyEntries.filter(
-    (e) => e.date && e.date >= startDate && e.date <= endDate
-  );
-  const periodPersonalSales = personalSales.filter(
-    (p) => p.date && p.date >= startDate && p.date <= endDate
-  );
-  const periodSalesFC =
-    periodSalesEntries.reduce((sum, e) => sum + (e.totalSalesFC || 0), 0) +
-    periodPersonalSales.reduce((sum, p) => sum + (p.totalSalesFC || 0), 0);
-  const normaleSalesAddFC = Math.round((periodSalesFC * reserveRatePct) / 100);
-
-  // 2. Dépenses de la période décomposées dans endDetails
-  let normaleExpensesPaidFC = 0;
-  let capitalExpensesTakenFC = 0;
-
-  for (const exp of endDetails.allExpenseBreakdowns) {
-    if (exp.date >= startDate && exp.date <= endDate) {
-      normaleExpensesPaidFC += exp.paidByNormaleFC;
-      capitalExpensesTakenFC += exp.takenFromCapitalFC;
-    }
-  }
-
-  // 3. Mouvements de capital de la période
-  let capitalAdditionsFC = 0;
-  let capitalWithdrawalsFC = 0;
-
-  for (const m of movements) {
-    if (m.date >= startDate && m.date <= endDate) {
-      if (m.type === 'ajout') capitalAdditionsFC += m.amountFC || 0;
-      else if (m.type === 'retrait') capitalWithdrawalsFC += m.amountFC || 0;
-    }
-  }
+  const resteNormaleFC = Math.max(0, reserveDuMois - depensesDuMois);
+  const depassementPrisSurBeneficeFC = Math.max(0, depensesDuMois - reserveDuMois);
 
   return {
-    startDate,
-    endDate,
-    normaleStartFC: startDetails.soldeNormaleFC,
-    normaleSalesAddFC,
-    normaleExpensesPaidFC,
-    normaleEndFC: endDetails.soldeNormaleFC,
-    capitalStartFC: startDetails.soldeCapitalFC,
-    capitalAdditionsFC,
-    capitalWithdrawalsFC,
-    capitalExpensesTakenFC,
-    capitalEndFC: endDetails.soldeCapitalFC,
+    month: monthStr,
+    ventesDuMois,
+    reserveDuMois,
+    depensesDuMois,
+    resteNormaleFC,
+    depassementPrisSurBeneficeFC,
   };
 }

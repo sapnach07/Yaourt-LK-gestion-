@@ -79,6 +79,8 @@ export interface ReserveMovement {
   amountFC: number; // nombre positif
   type: 'ajout' | 'retrait';
   reason: string; // motif, texte libre
+  caisse?: 'reserve' | 'benefices'; // défaut 'reserve' si absent
+  source?: 'personnel' | 'benefices'; // pour les ajouts à la Réserve, défaut 'personnel' si absent
   createdAt: number;
 }
 
@@ -129,8 +131,10 @@ export interface AppSettings {
   payslipSettings?: PayslipSettings;
   // Point de départ des caisses (optionnel)
   caisseStartDate?: string; // YYYY-MM-DD
-  caisseStartNormaleFC?: number; // Solde de départ de la Caisse normale
-  caisseStartCapitalFC?: number; // Solde de départ de la Caisse Capital (0 FC par défaut)
+  caisseStartReserveFC?: number; // Solde de départ Caisse Réserve
+  caisseStartBeneficesFC?: number; // Solde de départ Caisse Bénéfices personnels
+  caisseStartNormaleFC?: number; // Rétro-compatibilité
+  caisseStartCapitalFC?: number; // Rétro-compatibilité
   // Commission sur ventes personnelles (optionnel, 0 par défaut)
   ownerCommissionPct?: number;
 }
