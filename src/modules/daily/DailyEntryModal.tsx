@@ -508,19 +508,24 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
                   </div>
 
                   {/* Calculated Result row */}
-                  <div className="flex items-center justify-between mt-2 pt-2 border-t border-slate-200/60 text-xs">
-                    <span className="text-slate-600 font-medium">
-                      Ventes :{' '}
-                      <span className="font-bold font-mono text-emerald-700">
-                        {formatFC(soldNum * row.unitPrice, currency)}
+                  <div className="mt-2 pt-2 border-t border-slate-200/60 text-xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-slate-600 font-medium">
+                        Ventes :{' '}
+                        <span className="font-bold font-mono text-emerald-700">
+                          {formatFC(soldNum * row.unitPrice, currency)}
+                        </span>
                       </span>
-                    </span>
-                    <span className="font-medium">
-                      Reste calculé :{' '}
-                      <span className="font-extrabold font-mono text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200/50">
-                        {formatNumber(rest)}
+                      <span className="font-medium">
+                        Reste calculé :{' '}
+                        <span className="font-extrabold font-mono text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200/50">
+                          {formatNumber(rest)}
+                        </span>
                       </span>
-                    </span>
+                    </div>
+                    <p className="text-[10px] text-teal-700 font-medium italic text-right">
+                      Le reste revient dans le stock maison.
+                    </p>
                   </div>
                 </div>
               );

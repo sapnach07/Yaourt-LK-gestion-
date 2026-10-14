@@ -46,6 +46,7 @@ import {
 import { generateMonthlyManagementReportPDF } from '../../utils/pdfGenerator';
 import { EmptyState } from '../../components/EmptyState';
 import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
+import { calculateAllProductsStock } from '../../utils/stockCalculator';
 import { StockDetailModal } from './StockDetailModal';
 import type {
   DailyEntry,
@@ -127,59 +128,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   };
 
   // Real-time stock calculation across all active products
-  // Stock maison d'un produit = total produit − total livré aux vendeur(se)s − total vendu en ventes personnelles
+  // Stock maison d'un produit = total produit − total livré (somme des delivered) + total des restes (somme des rest) − total vendu en ventes personnelles
   const realTimeStockData = useMemo(() => {
-    return products.map((prod) => {
-      let totalProduced = 0;
-      for (const p of productionEntries) {
-        const item = p.items.find((i) => i.productId === prod.id);
-        if (item) totalProduced += item.producedQty || 0;
-      }
-
-      let totalDelivered = 0;
-      for (const d of dailyEntries) {
-        const item = d.items.find((i) => i.productId === prod.id);
-        if (item) totalDelivered += item.delivered || 0;
-      }
-
-      let totalSoldByOwner = 0;
-      for (const ps of personalSales) {
-        const item = ps.items.find((i) => i.productId === prod.id);
-        if (item) totalSoldByOwner += item.soldQty || 0;
-      }
-
-      const houseStock = totalProduced - totalDelivered - totalSoldByOwner;
-
-      let totalEmployeesRest = 0;
-      employees
-        .filter((e) => !e.isArchived)
-        .forEach((emp) => {
-          const empEntries = dailyEntries.filter((e) => e.employeeId === emp.id);
-          if (empEntries.length > 0) {
-            const latest = empEntries[0];
-            const it = latest.items.find((i) => i.productId === prod.id);
-            if (it) totalEmployeesRest += it.rest || 0;
-          }
-        });
-
-      return {
-        product: prod,
-        totalProduced,
-        totalDelivered,
-        totalSoldByOwner,
-        houseStock,
-        totalEmployeesRest,
-        totalGlobalStock: houseStock + totalEmployeesRest,
-      };
-    });
-  }, [products, productionEntries, dailyEntries, personalSales, employees]);
+    return calculateAllProductsStock(products, productionEntries, dailyEntries, personalSales);
+  }, [products, productionEntries, dailyEntries, personalSales]);
 
   const totalHouseStockSum = useMemo(
     () => realTimeStockData.reduce((acc, it) => acc + it.houseStock, 0),
     [realTimeStockData]
   );
-  const totalEmployeesStockSum = useMemo(
-    () => realTimeStockData.reduce((acc, it) => acc + it.totalEmployeesRest, 0),
+  const totalRestSum = useMemo(
+    () => realTimeStockData.reduce((acc, it) => acc + it.totalRest, 0),
     [realTimeStockData]
   );
 
@@ -1429,23 +1388,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
 
         {/* Global Stock Summary Bar */}
-        <div className="grid grid-cols-3 gap-2 bg-slate-900 text-white p-3 rounded-2xl shadow-2xs text-center">
+        <div className="grid grid-cols-2 gap-2 bg-slate-900 text-white p-3 rounded-2xl shadow-2xs text-center">
           <div>
             <span className="text-[10px] text-slate-400 block font-semibold truncate">Stock Maison</span>
             <span className={`text-base font-extrabold font-mono ${totalHouseStockSum < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
               {formatNumber(totalHouseStockSum)}
             </span>
           </div>
-          <div className="border-x border-slate-800">
-            <span className="text-[10px] text-slate-400 block font-semibold truncate">Chez Vendeurs</span>
+          <div className="border-l border-slate-800">
+            <span className="text-[10px] text-slate-400 block font-semibold truncate">Reste ramené</span>
             <span className="text-base font-extrabold font-mono text-teal-300">
-              {formatNumber(totalEmployeesStockSum)}
-            </span>
-          </div>
-          <div>
-            <span className="text-[10px] text-slate-400 block font-semibold truncate">Stock Global</span>
-            <span className="text-base font-extrabold font-mono text-white">
-              {formatNumber(totalHouseStockSum + totalEmployeesStockSum)}
+              {formatNumber(totalRestSum)}
             </span>
           </div>
         </div>
@@ -1522,9 +1475,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                     </span>
                   </div>
                   <div>
-                    <span className="text-[9px] text-teal-700 font-semibold block truncate">Chez vend.</span>
+                    <span className="text-[9px] text-teal-700 font-semibold block truncate">Reste ram.</span>
                     <span className="font-bold text-teal-800 font-mono">
-                      {formatNumber(item.totalEmployeesRest)}
+                      {formatNumber(item.totalRest)}
                     </span>
                   </div>
                 </div>

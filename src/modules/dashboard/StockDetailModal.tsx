@@ -24,6 +24,7 @@ import {
   toISODate,
   getDateRangeForFilter,
 } from '../../utils/formatters';
+import { calculateProductStock } from '../../utils/stockCalculator';
 import type {
   Product,
   ProductionEntry,
@@ -108,56 +109,19 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       {
         totalProduced: number;
         totalDelivered: number;
+        totalRest: number;
         totalSoldByOwner: number;
         houseStock: number;
-        totalEmployeesRest: number;
       }
     >();
 
     products.forEach((prod) => {
-      let totalProduced = 0;
-      for (const p of productionEntries) {
-        const item = p.items.find((i) => i.productId === prod.id);
-        if (item) totalProduced += item.producedQty || 0;
-      }
-
-      let totalDelivered = 0;
-      for (const d of dailyEntries) {
-        const item = d.items.find((i) => i.productId === prod.id);
-        if (item) totalDelivered += item.delivered || 0;
-      }
-
-      let totalSoldByOwner = 0;
-      for (const ps of personalSales) {
-        const item = ps.items.find((i) => i.productId === prod.id);
-        if (item) totalSoldByOwner += item.soldQty || 0;
-      }
-
-      const houseStock = totalProduced - totalDelivered - totalSoldByOwner;
-
-      let totalEmployeesRest = 0;
-      employees
-        .filter((e) => !e.isArchived)
-        .forEach((emp) => {
-          const empEntries = dailyEntries.filter((e) => e.employeeId === emp.id);
-          if (empEntries.length > 0) {
-            const latest = empEntries[0]; // sorted by date descending
-            const it = latest.items.find((i) => i.productId === prod.id);
-            if (it) totalEmployeesRest += it.rest || 0;
-          }
-        });
-
-      map.set(prod.id, {
-        totalProduced,
-        totalDelivered,
-        totalSoldByOwner,
-        houseStock,
-        totalEmployeesRest,
-      });
+      const stock = calculateProductStock(prod.id, productionEntries, dailyEntries, personalSales);
+      map.set(prod.id, stock);
     });
 
     return map;
-  }, [products, productionEntries, dailyEntries, personalSales, employees]);
+  }, [products, productionEntries, dailyEntries, personalSales]);
 
   // Period statistics per product
   const periodProductStats = useMemo(() => {
@@ -175,12 +139,14 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         let deliveredInPeriod = 0;
         let soldByEmployeesInPeriod = 0;
         let damagedInPeriod = 0;
+        let restInPeriod = 0;
         periodDailyEntries.forEach((d) => {
           const it = d.items.find((i) => i.productId === prod.id);
           if (it) {
             deliveredInPeriod += it.delivered || 0;
             soldByEmployeesInPeriod += it.sold || 0;
             damagedInPeriod += it.damaged || 0;
+            restInPeriod += it.rest || 0;
           }
         });
 
@@ -191,9 +157,9 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           if (it) soldByOwnerInPeriod += it.soldQty || 0;
         });
 
-        // Net house stock flow in period = +Produced -Delivered -SoldByOwner
+        // Net house stock flow in period = +Produced -Delivered +Rest -SoldByOwner
         const netHouseFlowInPeriod =
-          producedInPeriod - deliveredInPeriod - soldByOwnerInPeriod;
+          producedInPeriod - deliveredInPeriod + restInPeriod - soldByOwnerInPeriod;
 
         // Total sales in period (employees + owner)
         const totalSoldInPeriod = soldByEmployeesInPeriod + soldByOwnerInPeriod;
@@ -202,9 +168,9 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         const rt = realTimeStockMap.get(prod.id) || {
           totalProduced: 0,
           totalDelivered: 0,
+          totalRest: 0,
           totalSoldByOwner: 0,
           houseStock: 0,
-          totalEmployeesRest: 0,
         };
 
         return {
@@ -215,10 +181,11 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           soldByOwnerInPeriod,
           totalSoldInPeriod,
           damagedInPeriod,
+          restInPeriod,
           netHouseFlowInPeriod,
           realTimeHouseStock: rt.houseStock,
-          realTimeEmployeesRest: rt.totalEmployeesRest,
-          realTimeTotalStock: rt.houseStock + rt.totalEmployeesRest,
+          realTimeTotalRest: rt.totalRest,
+          realTimeTotalStock: rt.houseStock,
         };
       });
   }, [
@@ -237,9 +204,10 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
     let soldEmployees = 0;
     let soldOwner = 0;
     let damaged = 0;
+    let rest = 0;
     let netHouse = 0;
     let currentHouse = 0;
-    let currentEmployees = 0;
+    let currentRest = 0;
 
     periodProductStats.forEach((p) => {
       produced += p.producedInPeriod;
@@ -247,9 +215,10 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       soldEmployees += p.soldByEmployeesInPeriod;
       soldOwner += p.soldByOwnerInPeriod;
       damaged += p.damagedInPeriod;
+      rest += p.restInPeriod;
       netHouse += p.netHouseFlowInPeriod;
       currentHouse += p.realTimeHouseStock;
-      currentEmployees += p.realTimeEmployeesRest;
+      currentRest += p.realTimeTotalRest;
     });
 
     return {
@@ -259,10 +228,11 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       soldOwner,
       totalSold: soldEmployees + soldOwner,
       damaged,
+      rest,
       netHouse,
       currentHouse,
-      currentEmployees,
-      currentTotal: currentHouse + currentEmployees,
+      currentRest,
+      currentTotal: currentHouse,
     };
   }, [periodProductStats]);
 
@@ -576,12 +546,12 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
 
               <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60">
                 <span className="text-[10px] text-slate-400 block font-semibold truncate">
-                  Chez Vendeurs
+                  Reste ramené
                 </span>
                 <span className="text-lg sm:text-xl font-black font-mono text-teal-300 mt-0.5 block">
-                  {formatNumber(periodTotals.currentEmployees)}
+                  {formatNumber(periodTotals.currentRest)}
                 </span>
-                <span className="text-[9px] text-slate-400">Restes en cours</span>
+                <span className="text-[9px] text-slate-400">Total retourné</span>
               </div>
 
               <div className="bg-slate-800/80 p-2.5 rounded-xl border border-slate-700/60">
@@ -833,9 +803,9 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
                             </strong>
                           </span>
                           <span>
-                            Actuellement chez vendeurs :{' '}
+                            Reste ramené :{' '}
                             <strong className="text-teal-800 font-mono">
-                              {formatNumber(item.realTimeEmployeesRest)}
+                              {formatNumber(item.realTimeTotalRest)}
                             </strong>
                           </span>
                           <span>
@@ -881,7 +851,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
 
                       <div className="text-right shrink-0">
                         <span className="text-[10px] text-slate-500 uppercase font-semibold block">
-                          Reste actuel
+                          Reste ramené
                         </span>
                         <span className="text-sm font-extrabold font-mono text-teal-800">
                           {formatNumber(s.currentRest)}

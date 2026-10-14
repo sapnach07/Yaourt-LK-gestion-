@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ClipboardEdit,
   Plus,
@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { db } from '../../db/db';
 import { formatDate, formatFC, toISODate, formatNumber } from '../../utils/formatters';
+import { calculateAllProductsStock } from '../../utils/stockCalculator';
 import { DailyEntryModal } from './DailyEntryModal';
 import { ProductionStockModal } from './ProductionStockModal';
 import { PersonalSaleModal } from './PersonalSaleModal';
@@ -99,51 +100,10 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   };
 
   // Stock calculations
-  // Stock maison d'un produit = total produit − total livré aux vendeur(se)s − total vendu en ventes personnelles
-  const stockData = products.map((prod) => {
-    let totalProduced = 0;
-    for (const p of productionEntries) {
-      const item = p.items.find((i) => i.productId === prod.id);
-      if (item) totalProduced += item.producedQty || 0;
-    }
-
-    let totalDelivered = 0;
-    for (const d of dailyEntries) {
-      const item = d.items.find((i) => i.productId === prod.id);
-      if (item) totalDelivered += item.delivered || 0;
-    }
-
-    let totalSoldByOwner = 0;
-    for (const ps of personalSales) {
-      const item = ps.items.find((i) => i.productId === prod.id);
-      if (item) totalSoldByOwner += item.soldQty || 0;
-    }
-
-    const houseStock = totalProduced - totalDelivered - totalSoldByOwner;
-
-    // Current stock held by all active employees (latest rest)
-    let totalEmployeesRest = 0;
-    employees
-      .filter((e) => !e.isArchived)
-      .forEach((emp) => {
-        // find latest entry for this employee
-        const empEntries = dailyEntries.filter((e) => e.employeeId === emp.id);
-        if (empEntries.length > 0) {
-          const latest = empEntries[0]; // already reversed by date
-          const it = latest.items.find((i) => i.productId === prod.id);
-          if (it) totalEmployeesRest += it.rest || 0;
-        }
-      });
-
-    return {
-      product: prod,
-      totalProduced,
-      totalDelivered,
-      totalSoldByOwner,
-      houseStock,
-      totalEmployeesRest,
-    };
-  });
+  // Stock maison d'un produit = total produit − total livré (somme des delivered) + total des restes (somme des rest) − total vendu en ventes personnelles
+  const stockData = useMemo(() => {
+    return calculateAllProductsStock(products, productionEntries, dailyEntries, personalSales);
+  }, [products, productionEntries, dailyEntries, personalSales]);
 
   const handleDeleteDailyEntry = async () => {
     if (!entryToDelete) return;
@@ -655,9 +615,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                         </span>
                       </div>
                       <div>
-                        <span className="text-[10px] text-teal-700 font-semibold block truncate">Chez vendeurs</span>
+                        <span className="text-[10px] text-teal-700 font-semibold block truncate">Reste ramené</span>
                         <span className="font-bold text-teal-800 font-mono">
-                          {formatNumber(item.totalEmployeesRest)}
+                          {formatNumber(item.totalRest)}
                         </span>
                       </div>
                     </div>
