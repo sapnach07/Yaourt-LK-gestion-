@@ -146,7 +146,10 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
             deliveredInPeriod += it.delivered || 0;
             soldByEmployeesInPeriod += it.sold || 0;
             damagedInPeriod += it.damaged || 0;
-            restInPeriod += it.rest || 0;
+            const isValidated = !d.status || d.status === 'validated';
+            if (isValidated) {
+              restInPeriod += it.rest || 0;
+            }
           }
         });
 
@@ -255,15 +258,18 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           });
         });
 
-        // Current real-time rest for this employee
+        // Current real-time rest for this employee (seules les saisies validées sont comptabilisées)
         const allEmpEntries = dailyEntries.filter((d) => d.employeeId === emp.id);
         let currentRest = 0;
         if (allEmpEntries.length > 0) {
           const latest = allEmpEntries[0];
-          latest.items.forEach((item) => {
-            if (selectedProductId !== 'all' && item.productId !== selectedProductId) return;
-            currentRest += item.rest || 0;
-          });
+          const isValidated = !latest.status || latest.status === 'validated';
+          if (isValidated) {
+            latest.items.forEach((item) => {
+              if (selectedProductId !== 'all' && item.productId !== selectedProductId) return;
+              currentRest += item.rest || 0;
+            });
+          }
         }
 
         return {

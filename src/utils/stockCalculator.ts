@@ -37,7 +37,12 @@ export function calculateProductStock(
     const item = d.items.find((i) => i.productId === productId);
     if (item) {
       totalDelivered += item.delivered || 0;
-      totalRest += item.rest || 0;
+      // Un reste n'est compté dans le stock maison que pour les saisies dont le statut est "validated" (une saisie sans statut compte comme "validated")
+      // Pour une saisie "incomplete", le reste compte pour 0
+      const isValidated = !d.status || d.status === 'validated';
+      if (isValidated) {
+        totalRest += item.rest || 0;
+      }
     }
   }
 
