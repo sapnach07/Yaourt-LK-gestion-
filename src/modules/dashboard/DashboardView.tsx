@@ -16,6 +16,7 @@ import {
   Info,
   Warehouse,
   ChevronRight,
+  CalendarCheck,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -46,8 +47,12 @@ import {
 import { generateMonthlyManagementReportPDF } from '../../utils/pdfGenerator';
 import { EmptyState } from '../../components/EmptyState';
 import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
-import { calculateAllProductsStock } from '../../utils/stockCalculator';
+import {
+  calculateAllProductsStock,
+  calculateMonthlyStockClosures,
+} from '../../utils/stockCalculator';
 import { StockDetailModal } from './StockDetailModal';
+import { MonthlyStockClosureModal } from '../daily/MonthlyStockClosureModal';
 import type {
   DailyEntry,
   Expense,
@@ -99,6 +104,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
+  const [isMonthlyClosureModalOpen, setIsMonthlyClosureModalOpen] = useState(false);
   const [selectedStockProductModalId, setSelectedStockProductModalId] = useState<string>('all');
 
   useEffect(() => {
@@ -131,6 +137,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Stock maison d'un produit = total produit − total livré (somme des delivered) + total des restes (somme des rest) − total vendu en ventes personnelles
   const realTimeStockData = useMemo(() => {
     return calculateAllProductsStock(products, productionEntries, dailyEntries, personalSales);
+  }, [products, productionEntries, dailyEntries, personalSales]);
+
+  // Clôtures mensuelles des stocks
+  const monthlyStockClosures = useMemo(() => {
+    return calculateMonthlyStockClosures(products, productionEntries, dailyEntries, personalSales);
   }, [products, productionEntries, dailyEntries, personalSales]);
 
   const totalHouseStockSum = useMemo(
@@ -1374,17 +1385,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </span>
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedStockProductModalId('all');
-              setIsStockModalOpen(true);
-            }}
-            className="text-xs font-extrabold text-teal-700 hover:text-teal-800 flex items-center gap-1 active:scale-95 transition-all p-1"
-          >
-            <span>Voir plus précisément</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setIsMonthlyClosureModalOpen(true)}
+              className="text-xs font-bold text-teal-800 hover:text-teal-950 flex items-center gap-1 active:scale-95 transition-all bg-teal-50 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-xl"
+            >
+              <CalendarCheck className="w-3.5 h-3.5 text-teal-700" />
+              <span className="hidden sm:inline">Clôtures mensuelles</span>
+              <span className="sm:hidden">Clôtures</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedStockProductModalId('all');
+                setIsStockModalOpen(true);
+              }}
+              className="text-xs font-extrabold text-teal-700 hover:text-teal-800 flex items-center gap-1 active:scale-95 transition-all p-1"
+            >
+              <span>Voir plus précisément</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* Global Stock Summary Bar */}
@@ -1894,6 +1916,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         initialCustomEnd={customEnd}
         initialProductId={selectedStockProductModalId}
         onNavigateToTab={onNavigateToTab}
+      />
+
+      {/* Monthly Stock Closures Modal */}
+      <MonthlyStockClosureModal
+        isOpen={isMonthlyClosureModalOpen}
+        onClose={() => setIsMonthlyClosureModalOpen(false)}
+        closures={monthlyStockClosures}
+        currency={currency}
       />
     </div>
   );

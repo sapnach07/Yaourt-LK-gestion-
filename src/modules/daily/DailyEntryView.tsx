@@ -10,13 +10,30 @@ import {
   Warehouse,
   Users,
   UserCheck,
+  CalendarCheck,
+  Filter,
+  RotateCcw,
 } from 'lucide-react';
 import { db } from '../../db/db';
-import { formatDate, formatFC, toISODate, formatNumber } from '../../utils/formatters';
-import { calculateAllProductsStock } from '../../utils/stockCalculator';
+import {
+  formatDate,
+  formatFC,
+  toISODate,
+  toISOMonth,
+  formatMonthName,
+  formatNumber,
+} from '../../utils/formatters';
+import {
+  calculateAllProductsStock,
+  calculateAllProductsStockForPeriod,
+  calculateMonthlyStockClosures,
+  getMonthDateRange,
+  getAllActivityMonths,
+} from '../../utils/stockCalculator';
 import { DailyEntryModal } from './DailyEntryModal';
 import { ProductionStockModal } from './ProductionStockModal';
 import { PersonalSaleModal } from './PersonalSaleModal';
+import { MonthlyStockClosureModal } from './MonthlyStockClosureModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
 import type {
@@ -65,6 +82,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   // Filters for personal sales
   const [filterPersonalDate, setFilterPersonalDate] = useState<string>('');
 
+  // Stock period & monthly closure filters (par défaut en temps réel)
+  const [stockFilterMode, setStockFilterMode] = useState<'realtime' | 'month' | 'custom'>('realtime');
+  const [selectedStockMonth, setSelectedStockMonth] = useState<string>(toISOMonth(new Date()));
+  const [customStockStart, setCustomStockStart] = useState<string>(toISODate(new Date()));
+  const [customStockEnd, setCustomStockEnd] = useState<string>(toISODate(new Date()));
+  const [isMonthlyClosureModalOpen, setIsMonthlyClosureModalOpen] = useState(false);
+
   // Modals
   const [isDailyModalOpen, setIsDailyModalOpen] = useState(false);
   const [entryToEdit, setEntryToEdit] = useState<DailyEntry | null>(null);
@@ -100,10 +124,47 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   };
 
   // Stock calculations
-  // Stock maison d'un produit = total produit − total livré (somme des delivered) + total des restes (somme des rest) − total vendu en ventes personnelles
+  // 1. Stock maison d'un produit en temps réel (par défaut)
   const stockData = useMemo(() => {
     return calculateAllProductsStock(products, productionEntries, dailyEntries, personalSales);
   }, [products, productionEntries, dailyEntries, personalSales]);
+
+  // 2. Clôtures mensuelles calculées pour chaque mois (sans mélange de mois)
+  const monthlyStockClosures = useMemo(() => {
+    return calculateMonthlyStockClosures(products, productionEntries, dailyEntries, personalSales);
+  }, [products, productionEntries, dailyEntries, personalSales]);
+
+  // 3. Mois disponibles pour la sélection
+  const availableStockMonths = useMemo(() => {
+    return getAllActivityMonths(productionEntries, dailyEntries, personalSales);
+  }, [productionEntries, dailyEntries, personalSales]);
+
+  // 4. Plage de dates pour le mode sélectionné
+  const activePeriodRange = useMemo(() => {
+    if (stockFilterMode === 'month') {
+      return getMonthDateRange(selectedStockMonth);
+    }
+    if (stockFilterMode === 'custom') {
+      return {
+        startDate: customStockStart || toISODate(new Date()),
+        endDate: customStockEnd || toISODate(new Date()),
+      };
+    }
+    return null;
+  }, [stockFilterMode, selectedStockMonth, customStockStart, customStockEnd]);
+
+  // 5. Calculs des stocks sur la période sélectionnée (clôture mensuelle ou dates personnalisées)
+  const periodStockData = useMemo(() => {
+    if (!activePeriodRange) return null;
+    return calculateAllProductsStockForPeriod(
+      products,
+      activePeriodRange.startDate,
+      activePeriodRange.endDate,
+      productionEntries,
+      dailyEntries,
+      personalSales
+    );
+  }, [activePeriodRange, products, productionEntries, dailyEntries, personalSales]);
 
   const handleDeleteDailyEntry = async () => {
     if (!entryToDelete) return;
@@ -542,99 +603,371 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       {/* SUB-TAB 2: PRODUCTION & STOCK */}
       {subTab === 'production' && (
         <div className="space-y-4">
-          {/* Stock Dashboard Cards */}
-          <div className="space-y-2.5">
-            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-              <Warehouse className="w-4 h-4 text-teal-700" />
-              <span>État des stocks en temps réel</span>
-            </h3>
+          {/* Stock Dashboard Header & Filter Bar */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-3.5 shadow-xs space-y-3">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <Warehouse className="w-4 h-4 text-teal-700" />
+                <h3 className="text-xs font-black uppercase tracking-wider text-slate-700">
+                  {stockFilterMode === 'realtime'
+                    ? 'État des stocks en temps réel'
+                    : stockFilterMode === 'month'
+                    ? `Clôture des stocks : ${formatMonthName(selectedStockMonth)}`
+                    : 'État des stocks sur la période sélectionnée'}
+                </h3>
+              </div>
 
-            <div className="grid grid-cols-1 gap-2.5">
-              {stockData.map((item) => {
-                const isHouseNegative = item.houseStock < 0;
-                const isHouseLow = item.houseStock >= 0 && item.houseStock <= 10;
+              {/* Bouton vers le Bilan complet des Clôtures mensuelles */}
+              <button
+                type="button"
+                onClick={() => setIsMonthlyClosureModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-50 text-teal-800 hover:bg-teal-100 border border-teal-200 text-xs font-bold transition-all active:scale-95"
+              >
+                <CalendarCheck className="w-3.5 h-3.5 text-teal-700" />
+                <span>Clôtures mensuelles</span>
+                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-teal-200/70 text-[10px] font-mono font-bold">
+                  {monthlyStockClosures.length}
+                </span>
+              </button>
+            </div>
 
-                return (
-                  <div
-                    key={item.product.id}
-                    className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs"
+            {/* Onglets de sélection du mode d'affichage (par défaut en temps réel) */}
+            <div className="flex items-center p-1 bg-slate-100 rounded-xl gap-1">
+              <button
+                type="button"
+                onClick={() => setStockFilterMode('realtime')}
+                className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all min-h-[34px] flex items-center justify-center gap-1.5 ${
+                  stockFilterMode === 'realtime'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <span>⚡ Temps réel (Actuel)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStockFilterMode('month')}
+                className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all min-h-[34px] flex items-center justify-center gap-1.5 ${
+                  stockFilterMode === 'month'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Calendar className="w-3.5 h-3.5" />
+                <span>Par Mois (Clôture)</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setStockFilterMode('custom')}
+                className={`flex-1 py-1.5 px-2 text-xs font-bold rounded-lg transition-all min-h-[34px] flex items-center justify-center gap-1.5 ${
+                  stockFilterMode === 'custom'
+                    ? 'bg-white text-slate-900 shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                <Filter className="w-3.5 h-3.5" />
+                <span>Période (Dates)</span>
+              </button>
+            </div>
+
+            {/* Sélecteur de mois si mode "month" */}
+            {stockFilterMode === 'month' && (
+              <div className="p-3 bg-teal-50/60 rounded-xl border border-teal-100 space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-bold text-slate-700">Choisir le mois :</label>
+                    <select
+                      value={selectedStockMonth}
+                      onChange={(e) => setSelectedStockMonth(e.target.value)}
+                      className="px-3 py-1.5 rounded-xl border border-teal-200 bg-white text-xs font-bold text-slate-900 focus:outline-teal-700 font-sans"
+                    >
+                      {availableStockMonths.map((m) => (
+                        <option key={m} value={m}>
+                          {formatMonthName(m)} {m === toISOMonth(new Date()) ? '(Mois en cours)' : '(Clôturé)'}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setStockFilterMode('realtime')}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-teal-800 hover:text-teal-950 underline underline-offset-2"
                   >
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center">
-                          <Package className="w-4 h-4" />
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Revenir au temps réel</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between text-[11px] text-teal-950 font-medium pt-1 border-t border-teal-200/60">
+                  <span>
+                    Bilan clôturé du {formatDate(activePeriodRange?.startDate || '')} au {formatDate(activePeriodRange?.endDate || '')} — mouvements isolés sur ce mois
+                  </span>
+                  <span className="font-bold text-teal-900">
+                    {selectedStockMonth === toISOMonth(new Date())
+                      ? '● Clôture provisoire'
+                      : '✓ Mois clôturé'}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Sélecteur de dates personnalisées si mode "custom" */}
+            {stockFilterMode === 'custom' && (
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-slate-500" />
+                    Choisir les dates pour voir le stock pendant cette période :
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setStockFilterMode('realtime')}
+                    className="inline-flex items-center gap-1 text-xs font-bold text-teal-700 hover:text-teal-900 underline underline-offset-2"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Revenir au temps réel</span>
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                      Date début
+                    </label>
+                    <input
+                      type="date"
+                      value={customStockStart}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setCustomStockStart(val);
+                        if (!customStockEnd || customStockEnd < val) setCustomStockEnd(val);
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-white"
+                    />
+                  </div>
+                  <span className="text-xs font-bold text-slate-400 mt-4">à</span>
+                  <div className="flex-1">
+                    <label className="block text-[10px] font-semibold text-slate-500 mb-0.5">
+                      Date fin
+                    </label>
+                    <input
+                      type="date"
+                      value={customStockEnd}
+                      min={customStockStart}
+                      onChange={(e) => setCustomStockEnd(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-white"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Cartes des Stocks : Mode Temps Réel (par défaut) */}
+          {stockFilterMode === 'realtime' && (
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 gap-2.5">
+                {stockData.map((item) => {
+                  const isHouseNegative = item.houseStock < 0;
+                  const isHouseLow = item.houseStock >= 0 && item.houseStock <= 10;
+
+                  return (
+                    <div
+                      key={item.product.id}
+                      className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs"
+                    >
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center">
+                            <Package className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-900 leading-tight">
+                              {item.product.name}
+                            </h4>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              Prix : {formatFC(item.product.defaultPrice, currency)}
+                            </span>
+                          </div>
                         </div>
-                        <div>
-                          <h4 className="text-sm font-bold text-slate-900 leading-tight">
-                            {item.product.name}
-                          </h4>
-                          <span className="text-[11px] text-slate-500 font-mono">
-                            Prix : {formatFC(item.product.defaultPrice, currency)}
+
+                        {/* House stock badge */}
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            Stock maison
+                          </span>
+                          <span
+                            className={`text-base font-extrabold font-mono inline-flex items-center gap-1 ${
+                              isHouseNegative
+                                ? 'text-rose-600'
+                                : isHouseLow
+                                ? 'text-amber-600'
+                                : 'text-emerald-700'
+                            }`}
+                          >
+                            {isHouseNegative && <AlertTriangle className="w-4 h-4" />}
+                            {formatNumber(item.houseStock)}
                           </span>
                         </div>
                       </div>
 
-                      {/* House stock badge */}
-                      <div className="text-right">
-                        <span className="text-[10px] uppercase font-bold text-slate-500 block">
-                          Stock maison
-                        </span>
-                        <span
-                          className={`text-base font-extrabold font-mono inline-flex items-center gap-1 ${
-                            isHouseNegative
-                              ? 'text-rose-600'
-                              : isHouseLow
-                              ? 'text-amber-600'
-                              : 'text-emerald-700'
-                          }`}
-                        >
-                          {isHouseNegative && <AlertTriangle className="w-4 h-4" />}
-                          {formatNumber(item.houseStock)}
-                        </span>
+                      {/* Stock Details */}
+                      <div className="grid grid-cols-4 gap-1.5 bg-slate-50 p-2.5 rounded-xl text-center text-xs">
+                        <div>
+                          <span className="text-[10px] text-slate-500 block truncate">Produit</span>
+                          <span className="font-bold text-slate-800 font-mono">
+                            {formatNumber(item.totalProduced)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-500 block truncate">Livré</span>
+                          <span className="font-bold text-slate-800 font-mono">
+                            {formatNumber(item.totalDelivered)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-indigo-700 font-semibold block truncate">
+                            Vendu par moi
+                          </span>
+                          <span className="font-bold text-indigo-700 font-mono">
+                            {formatNumber(item.totalSoldByOwner)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-teal-700 font-semibold block truncate">
+                            Reste ramené
+                          </span>
+                          <span className="font-bold text-teal-800 font-mono">
+                            {formatNumber(item.totalRest)}
+                          </span>
+                        </div>
                       </div>
-                    </div>
 
-                    {/* Stock Details */}
-                    <div className="grid grid-cols-4 gap-1.5 bg-slate-50 p-2.5 rounded-xl text-center text-xs">
-                      <div>
-                        <span className="text-[10px] text-slate-500 block truncate">Produit</span>
-                        <span className="font-bold text-slate-800 font-mono">
-                          {formatNumber(item.totalProduced)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-slate-500 block truncate">Livré</span>
-                        <span className="font-bold text-slate-800 font-mono">
-                          {formatNumber(item.totalDelivered)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-indigo-700 font-semibold block truncate">Vendu par moi</span>
-                        <span className="font-bold text-indigo-700 font-mono">
-                          {formatNumber(item.totalSoldByOwner)}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] text-teal-700 font-semibold block truncate">Reste ramené</span>
-                        <span className="font-bold text-teal-800 font-mono">
-                          {formatNumber(item.totalRest)}
-                        </span>
-                      </div>
+                      {isHouseNegative && (
+                        <div className="mt-2.5 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                          <span>
+                            Alerte : Stock maison négatif ({formatNumber(item.houseStock)}) ! Enregistrez la production réalisée.
+                          </span>
+                        </div>
+                      )}
                     </div>
-
-                    {isHouseNegative && (
-                      <div className="mt-2.5 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4 shrink-0" />
-                        <span>
-                          Alerte : Stock maison négatif ({formatNumber(item.houseStock)}) ! Enregistrez la production réalisée.
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Cartes des Stocks : Mode Période / Clôture Mensuelle */}
+          {stockFilterMode !== 'realtime' && periodStockData && (
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 gap-2.5">
+                {periodStockData.map((item) => {
+                  const isNegative = item.closingStock < 0;
+                  const isLow = item.closingStock >= 0 && item.closingStock <= 10;
+                  const isPositiveChange = item.netChange >= 0;
+
+                  return (
+                    <div
+                      key={item.product.id}
+                      className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-8 h-8 rounded-xl bg-teal-50 text-teal-700 flex items-center justify-center">
+                            <Package className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-900 leading-tight">
+                              {item.product.name}
+                            </h4>
+                            <span className="text-[11px] text-slate-500 font-mono">
+                              Stock au 1er / début : <strong>{formatNumber(item.initialStock)}</strong>
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Closing stock badge */}
+                        <div className="text-right">
+                          <span className="text-[10px] uppercase font-bold text-slate-500 block">
+                            {stockFilterMode === 'month' ? 'Stock clôturé' : 'Stock fin période'}
+                          </span>
+                          <span
+                            className={`text-base font-extrabold font-mono inline-flex items-center gap-1 ${
+                              isNegative
+                                ? 'text-rose-600'
+                                : isLow
+                                ? 'text-amber-600'
+                                : 'text-emerald-700'
+                            }`}
+                          >
+                            {isNegative && <AlertTriangle className="w-4 h-4" />}
+                            {formatNumber(item.closingStock)}
+                          </span>
+                          <span className="text-[10px] text-slate-400 block font-mono">
+                            Flux net : {isPositiveChange ? '+' : ''}
+                            {formatNumber(item.netChange)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Period Micro Details Grid */}
+                      <div className="grid grid-cols-6 gap-1 bg-slate-50 p-2 rounded-xl text-center text-xs">
+                        <div>
+                          <span className="text-[9px] text-slate-500 block truncate">Stock Début</span>
+                          <span className="font-bold text-slate-700 font-mono">
+                            {formatNumber(item.initialStock)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-teal-700 block truncate">Produit</span>
+                          <span className="font-bold text-teal-800 font-mono">
+                            +{formatNumber(item.producedInPeriod)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-sky-700 block truncate">Livré</span>
+                          <span className="font-bold text-sky-800 font-mono">
+                            -{formatNumber(item.deliveredInPeriod)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-indigo-700 block truncate">Vendu moi</span>
+                          <span className="font-bold text-indigo-800 font-mono">
+                            -{formatNumber(item.soldByOwnerInPeriod)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-teal-700 font-semibold block truncate">Reste ram.</span>
+                          <span className="font-bold text-teal-800 font-mono">
+                            +{formatNumber(item.restInPeriod)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[9px] text-rose-600 block truncate">Abîmé</span>
+                          <span className="font-bold text-rose-700 font-mono">
+                            {formatNumber(item.damagedInPeriod)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {isNegative && (
+                        <div className="mt-2.5 p-2 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs font-semibold flex items-center gap-1.5">
+                          <AlertTriangle className="w-4 h-4 shrink-0" />
+                          <span>
+                            Alerte : Stock clôturé négatif ({formatNumber(item.closingStock)}) pour cette période.
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Production History List */}
           <div className="space-y-3 pt-2">
@@ -982,6 +1315,19 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         isDanger={true}
         onConfirm={handleDeletePersonalSale}
         onCancel={() => setSaleToDelete(null)}
+      />
+
+      {/* Monthly Stock Closures Modal */}
+      <MonthlyStockClosureModal
+        isOpen={isMonthlyClosureModalOpen}
+        onClose={() => setIsMonthlyClosureModalOpen(false)}
+        closures={monthlyStockClosures}
+        currency={currency}
+        onSelectMonth={(month) => {
+          setSelectedStockMonth(month);
+          setStockFilterMode('month');
+          setIsMonthlyClosureModalOpen(false);
+        }}
       />
     </div>
   );

@@ -14,6 +14,7 @@ import {
   Layers,
   ChevronRight,
   Filter,
+  CalendarCheck,
 } from 'lucide-react';
 import {
   formatDate,
@@ -24,7 +25,12 @@ import {
   toISODate,
   getDateRangeForFilter,
 } from '../../utils/formatters';
-import { calculateProductStock } from '../../utils/stockCalculator';
+import {
+  calculateProductStock,
+  calculateProductStockBeforeDate,
+  calculateMonthlyStockClosures,
+} from '../../utils/stockCalculator';
+import { MonthlyStockClosureModal } from '../daily/MonthlyStockClosureModal';
 import type {
   Product,
   ProductionEntry,
@@ -70,6 +76,11 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   const [customEnd, setCustomEnd] = useState<string>(initialCustomEnd);
   const [selectedProductId, setSelectedProductId] = useState<string>(initialProductId);
   const [activeTab, setActiveTab] = useState<'products' | 'employees' | 'movements'>('products');
+  const [isMonthlyClosureModalOpen, setIsMonthlyClosureModalOpen] = useState(false);
+
+  const monthlyStockClosures = useMemo(() => {
+    return calculateMonthlyStockClosures(products, productionEntries, dailyEntries, personalSales);
+  }, [products, productionEntries, dailyEntries, personalSales]);
 
   // Compute date range for the modal
   const dateRange = useMemo(
@@ -176,8 +187,19 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           houseStock: 0,
         };
 
+        const initialStock = calculateProductStockBeforeDate(
+          prod.id,
+          dateRange.startDate,
+          productionEntries,
+          dailyEntries,
+          personalSales
+        );
+        const closingStock = initialStock + netHouseFlowInPeriod;
+
         return {
           product: prod,
+          initialStock,
+          closingStock,
           producedInPeriod,
           deliveredInPeriod,
           soldByEmployeesInPeriod,
@@ -198,6 +220,10 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
     periodDailyEntries,
     periodPersonalSales,
     realTimeStockMap,
+    dateRange.startDate,
+    productionEntries,
+    dailyEntries,
+    personalSales,
   ]);
 
   // Overall totals for the period
@@ -211,6 +237,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
     let netHouse = 0;
     let currentHouse = 0;
     let currentRest = 0;
+    let initialStock = 0;
+    let closingStock = 0;
 
     periodProductStats.forEach((p) => {
       produced += p.producedInPeriod;
@@ -222,6 +250,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       netHouse += p.netHouseFlowInPeriod;
       currentHouse += p.realTimeHouseStock;
       currentRest += p.realTimeTotalRest;
+      initialStock += p.initialStock;
+      closingStock += p.closingStock;
     });
 
     return {
@@ -236,6 +266,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       currentHouse,
       currentRest,
       currentTotal: currentHouse,
+      initialStock,
+      closingStock,
     };
   }, [periodProductStats]);
 
@@ -393,14 +425,26 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
-            aria-label="Fermer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setIsMonthlyClosureModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-teal-500/20 text-teal-300 hover:bg-teal-500/30 border border-teal-500/40 text-xs font-bold transition-all shrink-0"
+            >
+              <CalendarCheck className="w-3.5 h-3.5 text-teal-400" />
+              <span className="hidden sm:inline">Clôtures mensuelles</span>
+              <span className="sm:hidden">Clôtures</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-9 h-9 rounded-full bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-colors shrink-0"
+              aria-label="Fermer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Filters bar: Period and Product selector */}
