@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Warehouse,
@@ -29,6 +29,7 @@ import {
   calculateProductStock,
   calculateProductStockBeforeDate,
   calculateMonthlyStockClosures,
+  getMonthDateRange,
 } from '../../utils/stockCalculator';
 import { MonthlyStockClosureModal } from '../daily/MonthlyStockClosureModal';
 import type {
@@ -77,6 +78,15 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   const [selectedProductId, setSelectedProductId] = useState<string>(initialProductId);
   const [activeTab, setActiveTab] = useState<'products' | 'employees' | 'movements'>('products');
   const [isMonthlyClosureModalOpen, setIsMonthlyClosureModalOpen] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      if (initialProductId) setSelectedProductId(initialProductId);
+      if (initialPeriodType) setPeriodType(initialPeriodType);
+      if (initialCustomStart) setCustomStart(initialCustomStart);
+      if (initialCustomEnd) setCustomEnd(initialCustomEnd);
+    }
+  }, [isOpen, initialProductId, initialPeriodType, initialCustomStart, initialCustomEnd]);
 
   const monthlyStockClosures = useMemo(() => {
     return calculateMonthlyStockClosures(products, productionEntries, dailyEntries, personalSales);
@@ -1044,6 +1054,13 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         onClose={() => setIsMonthlyClosureModalOpen(false)}
         closures={monthlyStockClosures}
         currency={currency}
+        onSelectMonth={(month) => {
+          const range = getMonthDateRange(month);
+          setPeriodType('custom');
+          setCustomStart(range.startDate);
+          setCustomEnd(range.endDate);
+          setIsMonthlyClosureModalOpen(false);
+        }}
       />
     </div>
   );

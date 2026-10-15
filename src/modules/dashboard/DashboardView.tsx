@@ -50,6 +50,7 @@ import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserv
 import {
   calculateAllProductsStock,
   calculateMonthlyStockClosures,
+  getMonthDateRange,
 } from '../../utils/stockCalculator';
 import { StockDetailModal } from './StockDetailModal';
 import { MonthlyStockClosureModal } from '../daily/MonthlyStockClosureModal';
@@ -1924,6 +1925,15 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         onClose={() => setIsMonthlyClosureModalOpen(false)}
         closures={monthlyStockClosures}
         currency={currency}
+        onSelectMonth={(month) => {
+          const range = getMonthDateRange(month);
+          setPeriodType('custom');
+          setCustomStart(range.startDate);
+          setCustomEnd(range.endDate);
+          setSelectedStockProductModalId('all');
+          setIsMonthlyClosureModalOpen(false);
+          setIsStockModalOpen(true);
+        }}
       />
     </div>
   );
