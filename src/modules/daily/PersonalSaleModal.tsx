@@ -32,6 +32,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   onSaved,
   onOpenCalculator,
 }) => {
+  const [kind, setKind] = useState<'vente' | 'consommation'>('vente');
   const [date, setDate] = useState(toISODate(new Date()));
   const [commissionRateStr, setCommissionRateStr] = useState('0');
   const [productRows, setProductRows] = useState<ProductSaleRow[]>([]);
@@ -50,6 +51,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
     setErrorMsg('');
 
     if (saleToEdit) {
+      setKind(saleToEdit.kind || 'vente');
       setDate(saleToEdit.date);
       setCommissionRateStr(formatNumber(saleToEdit.ownerCommissionRate));
       setNotes(saleToEdit.notes || '');
@@ -65,6 +67,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       });
       setProductRows(rows);
     } else {
+      setKind('vente');
       setDate(toISODate(new Date()));
       setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
       setNotes('');
@@ -120,6 +123,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
     }
   }
 
+  const consumptionValueFC = totalSalesFC; // somme (quantité × prix unitaire)
+
   const commissionRateNum = parseLocaleNumber(commissionRateStr);
   const ownerCommissionFC = Math.round((totalSalesFC * commissionRateNum) / 100);
   const expenseReserveFC = Math.round((totalSalesFC * reserveRate) / 100);
@@ -135,15 +140,17 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       return;
     }
 
-    if (isNaN(commissionRateNum) || commissionRateNum < 0 || commissionRateNum > (100 - reserveRate)) {
-      setErrorMsg(
-        `La commission (%) doit être comprise entre 0 et ${100 - reserveRate} % (pour laisser la réserve de ${reserveRate} %).`
-      );
-      return;
+    if (kind === 'vente') {
+      if (isNaN(commissionRateNum) || commissionRateNum < 0 || commissionRateNum > (100 - reserveRate)) {
+        setErrorMsg(
+          `La commission (%) doit être comprise entre 0 et ${100 - reserveRate} % (pour laisser la réserve de ${reserveRate} %).`
+        );
+        return;
+      }
     }
 
     if (itemsWithQty.length === 0) {
-      setErrorMsg('Veuillez renseigner au moins une quantité vendue supérieure à 0.');
+      setErrorMsg('Veuillez renseigner au moins une quantité supérieure à 0.');
       return;
     }
 
@@ -161,17 +168,21 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         soldQty: item.soldQty,
       }));
 
+      const isConsommation = kind === 'consommation';
+
       const personalSaleData: PersonalSale = {
         id: saleToEdit ? saleToEdit.id : crypto.randomUUID(),
         date: date.trim(),
         items: saleItems,
-        totalSalesFC,
-        ownerCommissionRate: commissionRateNum,
-        ownerCommissionFC,
-        expenseReserveRate: reserveRate,
-        expenseReserveFC,
-        ownerShareRate,
-        ownerShareFC,
+        totalSalesFC: isConsommation ? 0 : totalSalesFC,
+        ownerCommissionRate: isConsommation ? 0 : commissionRateNum,
+        ownerCommissionFC: isConsommation ? 0 : ownerCommissionFC,
+        expenseReserveRate: isConsommation ? 0 : reserveRate,
+        expenseReserveFC: isConsommation ? 0 : expenseReserveFC,
+        ownerShareRate: isConsommation ? 0 : ownerShareRate,
+        ownerShareFC: isConsommation ? 0 : ownerShareFC,
+        kind,
+        consumptionValueFC: isConsommation ? consumptionValueFC : 0,
         notes: notes.trim() || undefined,
         createdAt: saleToEdit ? saleToEdit.createdAt : Date.now(),
       };
@@ -191,15 +202,25 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center">
-              <UserCheck className="w-5 h-5" />
+            <div className={`w-10 h-10 rounded-2xl flex items-center justify-center ${
+              kind === 'consommation' ? 'bg-amber-100 text-amber-800' : 'bg-teal-50 text-teal-700'
+            }`}>
+              {kind === 'consommation' ? (
+                <span className="text-lg">🍽</span>
+              ) : (
+                <UserCheck className="w-5 h-5" />
+              )}
             </div>
             <div>
               <h3 className="text-base font-extrabold text-slate-900 tracking-tight">
-                {saleToEdit ? 'Modifier la vente personnelle' : 'Nouvelle vente personnelle'}
+                {kind === 'consommation'
+                  ? (saleToEdit ? 'Modifier la consommation' : 'Nouvelle consommation personnelle')
+                  : (saleToEdit ? 'Modifier la vente personnelle' : 'Nouvelle vente personnelle')}
               </h3>
               <p className="text-xs text-slate-500">
-                Vente directe du gérant (sans vendeur/se)
+                {kind === 'consommation'
+                  ? 'Sortie de yaourts pour ma consommation (payée par mes bénéfices)'
+                  : 'Vente directe du gérant (sans vendeur/se)'}
               </p>
             </div>
           </div>
@@ -228,6 +249,39 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
 
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
+          {/* Choix à deux boutons : Vente à un client vs Pour ma consommation */}
+          <div className="flex items-center p-1 bg-slate-100 rounded-2xl gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setKind('vente');
+                setErrorMsg('');
+              }}
+              className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all min-h-[38px] flex items-center justify-center gap-1.5 ${
+                kind === 'vente'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <UserCheck className="w-3.5 h-3.5" />
+              <span>Vente à un client</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setKind('consommation');
+                setErrorMsg('');
+              }}
+              className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all min-h-[38px] flex items-center justify-center gap-1.5 ${
+                kind === 'consommation'
+                  ? 'bg-white text-amber-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>🍽 Pour ma consommation</span>
+            </button>
+          </div>
+
           {errorMsg && (
             <div className="p-3 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-xs font-semibold flex items-center gap-2">
               <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
@@ -248,7 +302,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                   Attention : quantité supérieure au stock maison disponible !
                 </p>
                 <p className="text-[11px] font-normal leading-relaxed">
-                  Certaines quantités vendues dépassent le stock actuellement disponible à la maison. Vous pouvez tout de même enregistrer si vous avez produit ou vendu en direct.
+                  Certaines quantités dépassent le stock actuellement disponible à la maison. Vous pouvez tout de même enregistrer si vous avez produit ou vendu en direct.
                 </p>
                 {stockWarningAcknowledged && (
                   <p className="text-[11px] font-extrabold text-amber-900 pt-1">
@@ -259,8 +313,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
             </div>
           )}
 
-          {/* Date & Commission % */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Date & Commission % (masquée en mode consommation) */}
+          {kind === 'consommation' ? (
             <div>
               <label className="block text-xs font-bold text-slate-700 mb-1">
                 Date *
@@ -273,34 +327,51 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                 className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
               />
             </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Ma commission (%)
-              </label>
-              <div className="relative">
+          ) : (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Date *
+                </label>
                 <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="0"
-                  value={commissionRateStr}
-                  onChange={(e) => setCommissionRateStr(e.target.value.replace(/[^0-9.,]/g, ''))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                  type="date"
+                  required
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
                 />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                  %
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Ma commission (%)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={commissionRateStr}
+                    onChange={(e) => setCommissionRateStr(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    %
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400 block mt-0.5">
+                  Modifiable pour cette vente
                 </span>
               </div>
-              <span className="text-[10px] text-slate-400 block mt-0.5">
-                Modifiable pour cette vente
-              </span>
             </div>
-          </div>
+          )}
 
           {/* Product Rows */}
           <div className="space-y-2.5">
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
-              Quantités vendues par produit *
+              {kind === 'consommation'
+                ? 'Quantités consommées par produit *'
+                : 'Quantités vendues par produit *'}
             </label>
 
             {activeProducts.length === 0 ? (
@@ -320,7 +391,9 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                         isOverStock
                           ? 'bg-amber-50/60 border-amber-300'
                           : qtyNum > 0
-                          ? 'bg-teal-50/40 border-teal-200'
+                          ? kind === 'consommation'
+                            ? 'bg-amber-50/40 border-amber-200'
+                            : 'bg-teal-50/40 border-teal-200'
                           : 'bg-slate-50 border-slate-200'
                       }`}
                     >
@@ -346,7 +419,11 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                           <input
                             type="text"
                             inputMode="decimal"
-                            placeholder="Quantité vendue (ex : 15 ou 2,5)"
+                            placeholder={
+                              kind === 'consommation'
+                                ? 'Quantité consommée (ex : 2)'
+                                : 'Quantité vendue (ex : 15 ou 2,5)'
+                            }
                             value={row.soldQtyStr}
                             onChange={(e) => handleRowChange(row.productId, e.target.value)}
                             className={`w-full px-3 py-2 rounded-xl border text-xs font-bold text-slate-900 bg-white ${
@@ -356,7 +433,9 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                         </div>
 
                         {qtyNum > 0 && (
-                          <div className="text-right min-w-[90px] font-mono text-xs font-black text-teal-800">
+                          <div className={`text-right min-w-[90px] font-mono text-xs font-black ${
+                            kind === 'consommation' ? 'text-amber-900' : 'text-teal-800'
+                          }`}>
                             = {formatFC(qtyNum * row.unitPrice, currency)}
                           </div>
                         )}
@@ -376,54 +455,65 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
           </div>
 
           {/* Live Calculations Breakdown */}
-          <div className="bg-slate-50 rounded-2xl border border-slate-200/80 p-3.5 space-y-2.5">
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 block">
-              Calculs en direct
-            </span>
-
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-slate-500 block font-semibold">Total des ventes</span>
-                <span className="text-sm font-extrabold text-slate-900 font-mono">
-                  {formatFC(totalSalesFC, currency)}
-                </span>
-              </div>
-
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-teal-700 block font-semibold">
-                  Part Caisse ({reserveRate} %)
-                </span>
-                <span className="text-sm font-extrabold text-teal-800 font-mono">
-                  {formatFC(expenseReserveFC, currency)}
-                </span>
-              </div>
-
-              <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                <span className="text-[10px] text-indigo-700 block font-semibold">
-                  Ma commission vendeur ({formatNumber(commissionRateNum)} %)
-                </span>
-                <span className="text-sm font-extrabold text-indigo-800 font-mono">
-                  {formatFC(ownerCommissionFC, currency)}
-                </span>
-              </div>
-
-              <div className="bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200">
-                <span className="text-[10px] text-emerald-800 block font-semibold">
-                  Ma part gérant ({formatNumber(ownerShareRate)} %)
-                </span>
-                <span className="text-sm font-extrabold text-emerald-900 font-mono">
-                  {formatFC(ownerShareFC, currency)}
-                </span>
-              </div>
-            </div>
-
-            <div className="pt-1 border-t border-slate-200/60 flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-700">Mon gain total direct :</span>
-              <span className="font-extrabold font-mono text-emerald-800 text-sm">
-                {formatFC(ownerCommissionFC + ownerShareFC, currency)}
+          {kind === 'consommation' ? (
+            <div className="bg-amber-50/80 rounded-2xl border border-amber-200/90 p-4 space-y-1">
+              <span className="text-xs font-bold text-amber-950 block">
+                Valeur : <strong className="font-mono text-sm text-amber-950 font-black">{formatFC(consumptionValueFC, currency)}</strong>, payée par mes bénéfices
               </span>
+              <p className="text-[11px] text-amber-800 leading-relaxed">
+                Cette valeur sera déduite de votre Caisse Bénéfices personnels et créditée à la Caisse Réserve.
+              </p>
             </div>
-          </div>
+          ) : (
+            <div className="bg-slate-50 rounded-2xl border border-slate-200/80 p-3.5 space-y-2.5">
+              <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-500 block">
+                Calculs en direct
+              </span>
+
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-slate-500 block font-semibold">Total des ventes</span>
+                  <span className="text-sm font-extrabold text-slate-900 font-mono">
+                    {formatFC(totalSalesFC, currency)}
+                  </span>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-teal-700 block font-semibold">
+                    Part Caisse ({reserveRate} %)
+                  </span>
+                  <span className="text-sm font-extrabold text-teal-800 font-mono">
+                    {formatFC(expenseReserveFC, currency)}
+                  </span>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                  <span className="text-[10px] text-indigo-700 block font-semibold">
+                    Ma commission vendeur ({formatNumber(commissionRateNum)} %)
+                  </span>
+                  <span className="text-sm font-extrabold text-indigo-800 font-mono">
+                    {formatFC(ownerCommissionFC, currency)}
+                  </span>
+                </div>
+
+                <div className="bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200">
+                  <span className="text-[10px] text-emerald-800 block font-semibold">
+                    Ma part gérant ({formatNumber(ownerShareRate)} %)
+                  </span>
+                  <span className="text-sm font-extrabold text-emerald-900 font-mono">
+                    {formatFC(ownerShareFC, currency)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="pt-1 border-t border-slate-200/60 flex items-center justify-between text-xs">
+                <span className="font-bold text-slate-700">Mon gain total direct :</span>
+                <span className="font-extrabold font-mono text-emerald-800 text-sm">
+                  {formatFC(ownerCommissionFC + ownerShareFC, currency)}
+                </span>
+              </div>
+            </div>
+          )}
 
           {/* Notes facultatives */}
           <div>
@@ -432,7 +522,11 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="Ex : Vente au marché, client particulier..."
+              placeholder={
+                kind === 'consommation'
+                  ? 'Ex : Goûter maison, dégustation, famille...'
+                  : 'Ex : Vente au marché, client particulier...'
+              }
               value={notes}
               onChange={(e) => setNotes(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-900 bg-white"
@@ -446,6 +540,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
               className={`w-full py-3 px-4 rounded-xl text-white text-xs font-extrabold shadow-xs active:scale-95 transition-all min-h-[46px] flex items-center justify-center gap-2 ${
                 stockWarningAcknowledged
                   ? 'bg-amber-600 hover:bg-amber-700'
+                  : kind === 'consommation'
+                  ? 'bg-amber-700 hover:bg-amber-800'
                   : 'bg-teal-700 hover:bg-teal-800'
               }`}
             >
@@ -453,6 +549,10 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
               <span>
                 {stockWarningAcknowledged
                   ? 'Confirmer et enregistrer malgré le stock'
+                  : kind === 'consommation'
+                  ? saleToEdit
+                    ? 'Mettre à jour la consommation'
+                    : 'Enregistrer la consommation'
                   : saleToEdit
                   ? 'Mettre à jour la vente personnelle'
                   : 'Enregistrer la vente personnelle'}

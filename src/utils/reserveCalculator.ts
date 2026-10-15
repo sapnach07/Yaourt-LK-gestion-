@@ -61,9 +61,10 @@ export interface ReserveDetails {
   manqueFC: number; // max(0, -soldeReserveFC)
 
   // 2. Caisse Bénéfices personnels
-  soldeBeneficesFC: number; // somme(ownerShareFC) + somme(ownerCommissionFC + ownerShareFC ventes perso) − retraits bénéfices − transferts vers réserve
+  soldeBeneficesFC: number; // somme(ownerShareFC) + somme(ownerCommissionFC + ownerShareFC ventes perso) − retraits bénéfices − transferts vers réserve − consommations
   totalBeneficesVendeursFC: number; // somme des ownerShareFC des vendeurs
   totalBeneficesPersoFC: number; // somme des (ownerCommissionFC + ownerShareFC) des ventes personnelles
+  totalConsumptionFC: number; // somme des consommations personnelles
   totalWithdrawalsBeneficesFC: number; // retraits caisse = 'benefices'
   totalTransfersToReserveFC: number; // ajouts réserve de source = 'benefices'
 
@@ -104,6 +105,7 @@ export interface PeriodReserveSummary {
   reserveStartFC: number;
   reserveAdditionsFC: number;
   reserveSalesAddFC: number;
+  reserveConsumptionFC: number;
   reserveWithdrawalsFC: number;
   reserveExpensesFC: number;
   reserveEndFC: number;
@@ -111,6 +113,7 @@ export interface PeriodReserveSummary {
   beneficesStartFC: number;
   beneficesVendeursFC: number;
   beneficesPersoFC: number;
+  beneficesConsumptionFC: number;
   beneficesWithdrawalsFC: number;
   beneficesTransfersFC: number;
   beneficesEndFC: number;
@@ -279,18 +282,24 @@ export function calculateReserveBalance(
     }
   }
 
-  // 3. Ventes personnelles
+  // 3. Ventes personnelles & Consommations personnelles
   let reserveSalesPersoFC = 0;
   let beneficesPersoFC = 0;
+  let totalConsumptionFC = 0;
 
   for (const p of personalSales) {
     if (!isDateIncluded(p.date)) continue;
-    const sales = p.totalSalesFC || 0;
-    allTimeSalesFC += sales;
-    const resPart = p.expenseReserveFC || Math.round((sales * reserveRatePct) / 100);
-    reserveSalesPersoFC += resPart;
-    const ownerPart = (p.ownerShareFC || 0) + (p.ownerCommissionFC || 0);
-    beneficesPersoFC += ownerPart;
+    if (p.kind === 'consommation') {
+      const consumptionVal = p.consumptionValueFC ?? 0;
+      totalConsumptionFC += consumptionVal;
+    } else {
+      const sales = p.totalSalesFC || 0;
+      allTimeSalesFC += sales;
+      const resPart = p.expenseReserveFC || Math.round((sales * reserveRatePct) / 100);
+      reserveSalesPersoFC += resPart;
+      const ownerPart = (p.ownerShareFC || 0) + (p.ownerCommissionFC || 0);
+      beneficesPersoFC += ownerPart;
+    }
   }
 
   const totalSalesReserveFC = reserveSalesVendeursFC + reserveSalesPersoFC;
@@ -345,11 +354,11 @@ export function calculateReserveBalance(
   }
 
   // SOLDES FINAUX
-  // Caisse Réserve = ajouts (toutes sources) − retraits de la Réserve + (réserve % × toutes ventes) − toutes dépenses + départ
-  const soldeReserveFC = startReserveFC + totalAdditionsReserveFC - reserveWithdrawalsFC + totalSalesReserveFC - totalExpensesFC;
+  // Caisse Réserve = ajouts (toutes sources) − retraits de la Réserve + (réserve % × toutes ventes) − toutes dépenses + consommation personnelle (payée par mes bénéfices) + départ
+  const soldeReserveFC = startReserveFC + totalAdditionsReserveFC - reserveWithdrawalsFC + totalSalesReserveFC - totalExpensesFC + totalConsumptionFC;
 
-  // Caisse Bénéfices personnels = départ + somme(ownerShareFC vendeurs) + somme(ownerCommissionFC + ownerShareFC perso) − retraits bénéfices − transferts vers réserve
-  const soldeBeneficesFC = startBeneficesFC + beneficesVendeursFC + beneficesPersoFC - beneficesWithdrawalsFC - beneficesTransfersToReserveFC;
+  // Caisse Bénéfices personnels = départ + somme(ownerShareFC vendeurs) + somme(ownerCommissionFC + ownerShareFC perso) − retraits bénéfices − transferts vers réserve − consommations personnelles
+  const soldeBeneficesFC = startBeneficesFC + beneficesVendeursFC + beneficesPersoFC - beneficesWithdrawalsFC - beneficesTransfersToReserveFC - totalConsumptionFC;
 
   // Caisse Vendeurs = départ + somme(commissions gagnées) − somme(paiements versés)
   // Un solde positif = ce que je dois encore aux vendeur(se)s
@@ -359,7 +368,7 @@ export function calculateReserveBalance(
 
   // 5. Calcul des Provenances
   // Provenance Réserve
-  const reserveTotalEntreesFC = startReserveFC + totalAdditionsReserveFC + totalSalesReserveFC;
+  const reserveTotalEntreesFC = startReserveFC + totalAdditionsReserveFC + totalSalesReserveFC + totalConsumptionFC;
   const reserveEntreesList: ProvenanceItem[] = [];
 
   if (startReserveFC > 0) {
@@ -405,6 +414,15 @@ export function calculateReserveBalance(
       label: 'Transferts depuis mes bénéfices',
       amountFC: reserveAdditionsBeneficesFC,
       pct: reserveTotalEntreesFC > 0 ? (reserveAdditionsBeneficesFC / reserveTotalEntreesFC) * 100 : 0,
+    });
+  }
+
+  // Consommation personnelle payée par les bénéfices
+  if (totalConsumptionFC > 0) {
+    reserveEntreesList.push({
+      label: 'Ma consommation (payée par mes bénéfices)',
+      amountFC: totalConsumptionFC,
+      pct: reserveTotalEntreesFC > 0 ? (totalConsumptionFC / reserveTotalEntreesFC) * 100 : 0,
     });
   }
 
@@ -467,7 +485,7 @@ export function calculateReserveBalance(
     });
   }
 
-  const beneficesTotalSortiesFC = beneficesWithdrawalsFC + beneficesTransfersToReserveFC;
+  const beneficesTotalSortiesFC = beneficesWithdrawalsFC + beneficesTransfersToReserveFC + totalConsumptionFC;
   const beneficesSortiesList: ProvenanceItem[] = [];
 
   if (beneficesWithdrawalsFC > 0) {
@@ -483,6 +501,14 @@ export function calculateReserveBalance(
       label: 'Transferts vers la Réserve',
       amountFC: beneficesTransfersToReserveFC,
       pct: beneficesTotalSortiesFC > 0 ? (beneficesTransfersToReserveFC / beneficesTotalSortiesFC) * 100 : 0,
+    });
+  }
+
+  if (totalConsumptionFC > 0) {
+    beneficesSortiesList.push({
+      label: 'Mes yaourts consommés',
+      amountFC: totalConsumptionFC,
+      pct: beneficesTotalSortiesFC > 0 ? (totalConsumptionFC / beneficesTotalSortiesFC) * 100 : 0,
     });
   }
 
@@ -527,6 +553,7 @@ export function calculateReserveBalance(
     soldeBeneficesFC,
     totalBeneficesVendeursFC: beneficesVendeursFC,
     totalBeneficesPersoFC: beneficesPersoFC,
+    totalConsumptionFC,
     totalWithdrawalsBeneficesFC: beneficesWithdrawalsFC,
     totalTransfersToReserveFC: beneficesTransfersToReserveFC,
 
@@ -628,6 +655,7 @@ export function calculatePeriodReserveSummary(
     reserveStartFC: startDetails.soldeReserveFC,
     reserveAdditionsFC: periodOnlyDetails.totalAdditionsReserveFC,
     reserveSalesAddFC: periodOnlyDetails.totalSalesReserveFC,
+    reserveConsumptionFC: periodOnlyDetails.totalConsumptionFC,
     reserveWithdrawalsFC: periodOnlyDetails.totalWithdrawalsReserveFC,
     reserveExpensesFC: periodOnlyDetails.totalExpensesFC,
     reserveEndFC: endDetails.soldeReserveFC,
@@ -635,6 +663,7 @@ export function calculatePeriodReserveSummary(
     beneficesStartFC: startDetails.soldeBeneficesFC,
     beneficesVendeursFC: periodOnlyDetails.totalBeneficesVendeursFC,
     beneficesPersoFC: periodOnlyDetails.totalBeneficesPersoFC,
+    beneficesConsumptionFC: periodOnlyDetails.totalConsumptionFC,
     beneficesWithdrawalsFC: periodOnlyDetails.totalWithdrawalsBeneficesFC,
     beneficesTransfersFC: periodOnlyDetails.totalTransfersToReserveFC,
     beneficesEndFC: endDetails.soldeBeneficesFC,

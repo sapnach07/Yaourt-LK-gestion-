@@ -390,8 +390,12 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           id: ps.id,
           date: ps.date,
           type: 'personal_sale',
-          title: 'Vente directe par le gérant',
-          subtitle: ps.notes ? `Note : ${ps.notes}` : 'Sortie directe de stock maison',
+          title: ps.kind === 'consommation' ? 'Consommation personnelle' : 'Vente directe par le gérant',
+          subtitle: ps.notes
+            ? `Note : ${ps.notes}`
+            : ps.kind === 'consommation'
+            ? 'Sortie pour consommation personnelle'
+            : 'Sortie directe de stock maison',
           items,
           createdAt: ps.createdAt || 0,
         });

@@ -538,6 +538,12 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                     <span className="font-sans">+ Ajouts / Dépôts :</span>
                     <span className="font-bold">+{formatFC(periodSummary.reserveAdditionsFC, currency)}</span>
                   </div>
+                  {periodSummary.reserveConsumptionFC > 0 && (
+                    <div className="flex items-center justify-between text-teal-800">
+                      <span className="font-sans">+ Ma consommation (payée par bénéfices) :</span>
+                      <span className="font-bold">+{formatFC(periodSummary.reserveConsumptionFC, currency)}</span>
+                    </div>
+                  )}
                   <div className="flex items-center justify-between text-rose-700">
                     <span className="font-sans">− Dépenses :</span>
                     <span className="font-bold">−{formatFC(periodSummary.reserveExpensesFC, currency)}</span>
@@ -581,6 +587,12 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                     <span className="font-sans">− Transferts vers la Réserve :</span>
                     <span className="font-bold">−{formatFC(periodSummary.beneficesTransfersFC, currency)}</span>
                   </div>
+                  {periodSummary.beneficesConsumptionFC > 0 && (
+                    <div className="flex items-center justify-between text-slate-600">
+                      <span className="font-sans">− Mes yaourts consommés :</span>
+                      <span className="font-bold">−{formatFC(periodSummary.beneficesConsumptionFC, currency)}</span>
+                    </div>
+                  )}
                   <div className="pt-1 border-t border-emerald-200 flex items-center justify-between font-extrabold text-xs text-emerald-900">
                     <span className="font-sans">= Solde à la fin :</span>
                     <span>{formatFC(periodSummary.beneficesEndFC, currency)}</span>

@@ -193,17 +193,22 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       }
     }
 
-    // Traitement des ventes personnelles du gérant
+    // Traitement des ventes personnelles du gérant et consommations
     let personalSalesTotalFC = 0;
     let personalCommissionFC = 0;
     let personalOwnerShareFC = 0;
     let personalCaisseFC = 0;
+    let totalConsumptionFC = 0;
 
     for (const p of periodPersonalSales) {
-      personalSalesTotalFC += p.totalSalesFC || 0;
-      personalCommissionFC += p.ownerCommissionFC || 0;
-      personalOwnerShareFC += p.ownerShareFC || 0;
-      personalCaisseFC += p.expenseReserveFC || 0;
+      if (p.kind === 'consommation') {
+        totalConsumptionFC += p.consumptionValueFC || 0;
+      } else {
+        personalSalesTotalFC += p.totalSalesFC || 0;
+        personalCommissionFC += p.ownerCommissionFC || 0;
+        personalOwnerShareFC += p.ownerShareFC || 0;
+        personalCaisseFC += p.expenseReserveFC || 0;
+      }
     }
 
     totalSalesFC += personalSalesTotalFC;
@@ -250,7 +255,9 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       }
     }
 
-    const totalOwnerShareFC = Math.round(totalOwnerShareGrossFC - periodClosedMonthsCompensationFC);
+    const totalOwnerShareFC = Math.round(
+      totalOwnerShareGrossFC - periodClosedMonthsCompensationFC - totalConsumptionFC
+    );
 
     return {
       totalSalesFC,
@@ -258,6 +265,7 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       totalCaisseShareFC,
       totalOwnerShareGrossFC: Math.round(totalOwnerShareGrossFC),
       periodClosedMonthsCompensationFC,
+      totalConsumptionFC,
       totalOwnerShareFC,
       totalDamagedFC,
       sellerBreakdown,
@@ -433,13 +441,23 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
             </div>
           )}
 
+          {/* Ligne séparée : Mes yaourts consommés */}
+          {profitStats.totalConsumptionFC > 0 && (
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900">
+              <span className="font-bold">− Mes yaourts consommés</span>
+              <span className="font-mono font-extrabold text-amber-950">
+                −{formatFC(profitStats.totalConsumptionFC, currency)}
+              </span>
+            </div>
+          )}
+
           <div className="flex items-center justify-between p-3 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-950 font-bold">
             <div>
               <span className="block text-xs uppercase font-black text-emerald-900">
                 = Mon Bénéfice
               </span>
               <span className="text-[10px] text-emerald-700 font-normal">
-                Ventes − Commissions − Part Réserve
+                Ventes − Commissions − Part Réserve{profitStats.totalConsumptionFC > 0 ? ' − Yaourts consommés' : ''}
               </span>
             </div>
             <span className="text-base font-black font-mono text-emerald-800">

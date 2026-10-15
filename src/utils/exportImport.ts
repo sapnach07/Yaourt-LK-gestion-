@@ -119,7 +119,14 @@ export async function restoreDataFromJSON(
     if (data.expenses?.length) await db.expenses.bulkPut(data.expenses);
     if (data.reserveMovements?.length) await db.reserveMovements.bulkPut(data.reserveMovements);
     if (data.payments?.length) await db.payments.bulkPut(data.payments);
-    if (data.personalSales?.length) await db.personalSales.bulkPut(data.personalSales);
+    if (data.personalSales?.length) {
+      const sanitizedSales = data.personalSales.map((ps: any) => ({
+        ...ps,
+        kind: ps.kind || 'vente',
+        consumptionValueFC: ps.consumptionValueFC ?? 0,
+      }));
+      await db.personalSales.bulkPut(sanitizedSales);
+    }
     if (data.settings) await db.settings.put(data.settings);
 
     return {

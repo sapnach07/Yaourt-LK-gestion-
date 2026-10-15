@@ -154,7 +154,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // Month calculations (information secondaire)
   const monthEntries = dailyEntries.filter((e) => e.date.startsWith(selectedMonth));
-  const monthPersonalSales = personalSales.filter((p) => p.date.startsWith(selectedMonth));
+  const monthPersonalSales = personalSales.filter((p) => p.kind !== 'consommation' && p.date.startsWith(selectedMonth));
   const totalSalesInMonthFC =
     monthEntries.reduce((acc, e) => acc + (e.totalSalesFC || 0), 0) +
     monthPersonalSales.reduce((acc, p) => acc + (p.totalSalesFC || 0), 0);

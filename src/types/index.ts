@@ -114,6 +114,8 @@ export interface PersonalSale {
   expenseReserveFC: number; // part réserve FC
   ownerShareRate: number; // part gérant % (= 100 - réserve - commission)
   ownerShareFC: number; // part gérant FC
+  kind?: 'vente' | 'consommation'; // Défaut 'vente' si absent
+  consumptionValueFC?: number; // Valeur de la consommation (somme des quantité × prix unitaire)
   notes?: string;
   createdAt: number;
 }

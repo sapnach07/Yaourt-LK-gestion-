@@ -291,6 +291,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     // Traitement des ventes personnelles (si aucun filtre vendeur particulier n'est actif)
     if (empFilter === 'all') {
       for (const p of personalList) {
+        if (p.kind === 'consommation') continue; // Les consommations ne comptent pas dans les statistiques de ventes
         let pSalesFC = 0;
         let pSoldQty = 0;
         for (const item of p.items) {

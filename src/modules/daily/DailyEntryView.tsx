@@ -1111,24 +1111,38 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           <span className="text-sm font-extrabold text-slate-900">
                             {formatDate(sale.date)}
                           </span>
-                          <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200/50 flex items-center gap-1">
-                            <UserCheck className="w-3 h-3" />
-                            <span>Vente directe (Moi)</span>
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
-                          <span>{formatNumber(totalSoldQty)} vendus</span>
-                          {sale.ownerCommissionRate > 0 && (
-                            <>
-                              <span>·</span>
-                              <span>Ma comm. : {formatNumber(sale.ownerCommissionRate)} %</span>
-                            </>
+                          {sale.kind === 'consommation' ? (
+                            <span className="text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200/50 flex items-center gap-1">
+                              <span>🍽 Consommation</span>
+                            </span>
+                          ) : (
+                            <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200/50 flex items-center gap-1">
+                              <UserCheck className="w-3 h-3" />
+                              <span>Vente directe (Moi)</span>
+                            </span>
                           )}
-                          <span>·</span>
-                          <span className="text-teal-700 font-semibold">
-                            Caisse : {formatNumber(sale.expenseReserveRate)} %
-                          </span>
                         </div>
+                        {sale.kind === 'consommation' ? (
+                          <div className="flex items-center gap-2 mt-1 text-xs text-amber-800 font-mono">
+                            <span>{formatNumber(totalSoldQty)} consommés</span>
+                            <span>·</span>
+                            <span className="font-semibold">Payée par mes bénéfices</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 mt-1 text-xs text-slate-500 font-mono">
+                            <span>{formatNumber(totalSoldQty)} vendus</span>
+                            {sale.ownerCommissionRate > 0 && (
+                              <>
+                                <span>·</span>
+                                <span>Ma comm. : {formatNumber(sale.ownerCommissionRate)} %</span>
+                              </>
+                            )}
+                            <span>·</span>
+                            <span className="text-teal-700 font-semibold">
+                              Caisse : {formatNumber(sale.expenseReserveRate)} %
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                       {/* Actions */}
@@ -1172,39 +1186,50 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                       ))}
                     </div>
 
-                    {/* Financial summary: Total Ventes, Part Caisse, Ma Commission, Part Gérant */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-100 text-center text-xs">
-                      <div className="bg-slate-50 p-2 rounded-xl">
-                        <span className="text-[10px] text-slate-500 block font-semibold">Total Ventes</span>
-                        <span className="text-xs font-extrabold text-slate-900 font-mono">
-                          {formatFC(sale.totalSalesFC, currency)}
+                    {/* Financial summary */}
+                    {sale.kind === 'consommation' ? (
+                      <div className="p-3 bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-between text-xs">
+                        <span className="font-bold text-amber-900">
+                          Valeur payée par mes bénéfices :
+                        </span>
+                        <span className="font-mono font-black text-amber-950 text-sm">
+                          {formatFC(sale.consumptionValueFC || 0, currency)}
                         </span>
                       </div>
-                      <div className="bg-teal-50/70 p-2 rounded-xl">
-                        <span className="text-[10px] text-teal-700 block font-semibold">
-                          Part Caisse ({sale.expenseReserveRate} %)
-                        </span>
-                        <span className="text-xs font-extrabold text-teal-800 font-mono">
-                          {formatFC(sale.expenseReserveFC, currency)}
-                        </span>
+                    ) : (
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-100 text-center text-xs">
+                        <div className="bg-slate-50 p-2 rounded-xl">
+                          <span className="text-[10px] text-slate-500 block font-semibold">Total Ventes</span>
+                          <span className="text-xs font-extrabold text-slate-900 font-mono">
+                            {formatFC(sale.totalSalesFC, currency)}
+                          </span>
+                        </div>
+                        <div className="bg-teal-50/70 p-2 rounded-xl">
+                          <span className="text-[10px] text-teal-700 block font-semibold">
+                            Part Caisse ({sale.expenseReserveRate} %)
+                          </span>
+                          <span className="text-xs font-extrabold text-teal-800 font-mono">
+                            {formatFC(sale.expenseReserveFC, currency)}
+                          </span>
+                        </div>
+                        <div className="bg-indigo-50/70 p-2 rounded-xl">
+                          <span className="text-[10px] text-indigo-700 block font-semibold">
+                            Ma Commission
+                          </span>
+                          <span className="text-xs font-extrabold text-indigo-800 font-mono">
+                            {formatFC(sale.ownerCommissionFC, currency)}
+                          </span>
+                        </div>
+                        <div className="bg-emerald-50/70 p-2 rounded-xl">
+                          <span className="text-[10px] text-emerald-700 block font-semibold">
+                            Part Gérant
+                          </span>
+                          <span className="text-xs font-extrabold text-emerald-800 font-mono">
+                            {formatFC(sale.ownerShareFC, currency)}
+                          </span>
+                        </div>
                       </div>
-                      <div className="bg-indigo-50/70 p-2 rounded-xl">
-                        <span className="text-[10px] text-indigo-700 block font-semibold">
-                          Ma Commission
-                        </span>
-                        <span className="text-xs font-extrabold text-indigo-800 font-mono">
-                          {formatFC(sale.ownerCommissionFC, currency)}
-                        </span>
-                      </div>
-                      <div className="bg-emerald-50/70 p-2 rounded-xl">
-                        <span className="text-[10px] text-emerald-700 block font-semibold">
-                          Part Gérant
-                        </span>
-                        <span className="text-xs font-extrabold text-emerald-800 font-mono">
-                          {formatFC(sale.ownerShareFC, currency)}
-                        </span>
-                      </div>
-                    </div>
+                    )}
 
                     {sale.notes && (
                       <p className="text-xs text-slate-500 italic bg-slate-50 p-2 rounded-lg">
