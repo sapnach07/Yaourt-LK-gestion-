@@ -98,6 +98,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
 
   const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
   const [saleToEdit, setSaleToEdit] = useState<PersonalSale | null>(null);
+  const [personalModalKind, setPersonalModalKind] = useState<'vente' | 'consommation'>('vente');
 
   const [entryToDelete, setEntryToDelete] = useState<DailyEntry | null>(null);
   const [prodToDelete, setProdToDelete] = useState<ProductionEntry | null>(null);
@@ -254,29 +255,59 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             <span>Nouvelle saisie</span>
           </button>
         ) : subTab === 'production' ? (
-          <button
-            type="button"
-            onClick={() => {
-              setProdToEdit(null);
-              setIsProdModalOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Production</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setProdToEdit(null);
+                setIsProdModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Production</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSaleToEdit(null);
+                setPersonalModalKind('consommation');
+                setIsPersonalModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+              title="Sortir des yaourts pour ma consommation personnelle"
+            >
+              <span>🍽</span>
+              <span>Consommation</span>
+            </button>
+          </div>
         ) : (
-          <button
-            type="button"
-            onClick={() => {
-              setSaleToEdit(null);
-              setIsPersonalModalOpen(true);
-            }}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
-          >
-            <Plus className="w-4 h-4" />
-            <span>+ Vente personnelle</span>
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setSaleToEdit(null);
+                setPersonalModalKind('vente');
+                setIsPersonalModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Vente client</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSaleToEdit(null);
+                setPersonalModalKind('consommation');
+                setIsPersonalModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+            >
+              <span>🍽</span>
+              <span>+ Consommation</span>
+            </button>
+          </div>
         )}
       </div>
 
@@ -313,7 +344,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Mes ventes ({personalSales.length})
+          Mes ventes & Conso ({personalSales.length})
         </button>
       </div>
 
@@ -1084,16 +1115,43 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
 
           {/* List of Personal Sales */}
           {filteredPersonalSales.length === 0 ? (
-            <EmptyState
-              icon={<UserCheck className="w-7 h-7 text-teal-700" />}
-              title="Aucune vente personnelle enregistrée"
-              description="Enregistrez vos ventes directes sans passer par un(e) vendeur(se). La réserve de caisse et votre part sont calculées en direct."
-              actionLabel="+ Vente personnelle"
-              onAction={() => {
-                setSaleToEdit(null);
-                setIsPersonalModalOpen(true);
-              }}
-            />
+            <div className="bg-white rounded-2xl border border-slate-200/80 p-6 text-center shadow-xs">
+              <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center mx-auto mb-3">
+                <UserCheck className="w-6 h-6" />
+              </div>
+              <h4 className="text-sm font-bold text-slate-800 mb-1">
+                Aucune vente personnelle ni consommation enregistrée
+              </h4>
+              <p className="text-xs text-slate-500 max-w-sm mx-auto mb-4">
+                Enregistrez vos ventes directes sans passer par un(e) vendeur(se), ou sortez des yaourts pour votre consommation personnelle.
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSaleToEdit(null);
+                    setPersonalModalKind('vente');
+                    setIsPersonalModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[40px]"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>+ Vente client</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSaleToEdit(null);
+                    setPersonalModalKind('consommation');
+                    setIsPersonalModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[40px]"
+                >
+                  <span>🍽</span>
+                  <span>+ Ma consommation</span>
+                </button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
               {filteredPersonalSales.map((sale) => {
@@ -1151,6 +1209,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           type="button"
                           onClick={() => {
                             setSaleToEdit(sale);
+                            setPersonalModalKind(sale.kind || 'vente');
                             setIsPersonalModalOpen(true);
                           }}
                           className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 min-w-[40px] min-h-[40px] flex items-center justify-center"
@@ -1286,6 +1345,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       <PersonalSaleModal
         isOpen={isPersonalModalOpen}
         saleToEdit={saleToEdit}
+        initialKind={personalModalKind}
         products={products}
         settings={settings}
         stockMap={Object.fromEntries(stockData.map((s) => [s.product.id, s.houseStock]))}
@@ -1294,7 +1354,12 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           setSaleToEdit(null);
         }}
         onSaved={async () => {
-          onShowToast('success', 'Vente personnelle enregistrée avec succès.');
+          onShowToast(
+            'success',
+            personalModalKind === 'consommation'
+              ? 'Consommation personnelle enregistrée avec succès.'
+              : 'Vente personnelle enregistrée avec succès.'
+          );
           await loadAllData();
         }}
         onOpenCalculator={onOpenCalculator}

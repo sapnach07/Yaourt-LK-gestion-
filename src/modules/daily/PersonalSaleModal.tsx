@@ -7,6 +7,7 @@ import type { Product, PersonalSale, PersonalSaleItem, AppSettings } from '../..
 interface PersonalSaleModalProps {
   isOpen: boolean;
   saleToEdit?: PersonalSale | null;
+  initialKind?: 'vente' | 'consommation';
   products: Product[];
   settings: AppSettings;
   stockMap: Record<string, number>; // houseStock per productId
@@ -25,6 +26,7 @@ interface ProductSaleRow {
 export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   isOpen,
   saleToEdit,
+  initialKind = 'vente',
   products,
   settings,
   stockMap,
@@ -32,7 +34,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   onSaved,
   onOpenCalculator,
 }) => {
-  const [kind, setKind] = useState<'vente' | 'consommation'>('vente');
+  const [kind, setKind] = useState<'vente' | 'consommation'>(initialKind);
   const [date, setDate] = useState(toISODate(new Date()));
   const [commissionRateStr, setCommissionRateStr] = useState('0');
   const [productRows, setProductRows] = useState<ProductSaleRow[]>([]);
@@ -67,7 +69,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       });
       setProductRows(rows);
     } else {
-      setKind('vente');
+      setKind(initialKind || 'vente');
       setDate(toISODate(new Date()));
       setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
       setNotes('');
@@ -80,7 +82,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       }));
       setProductRows(rows);
     }
-  }, [isOpen, saleToEdit, products, settings]);
+  }, [isOpen, saleToEdit, initialKind, products, settings]);
 
   if (!isOpen) return null;
 
