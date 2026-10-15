@@ -670,28 +670,22 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2 pt-1">
-              <div className="bg-rose-50/70 p-3 rounded-2xl border border-rose-200/80">
-                <span className="text-[10px] font-bold text-rose-800 uppercase block truncate">
-                  ⚠️ Abîmé / Pertes
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1">
+              <div className="bg-slate-100 p-3 rounded-2xl border border-slate-200">
+                <span className="text-[10px] font-bold text-slate-700 uppercase block truncate">
+                  🏁 Stock Début Période
                 </span>
-                <span className="text-base font-black font-mono text-rose-950 mt-0.5 block">
-                  {formatNumber(periodTotals.damaged)}
+                <span className="text-base font-black font-mono text-slate-900 mt-0.5 block">
+                  {formatNumber(periodTotals.initialStock)}
                 </span>
-                <span className="text-[10px] text-rose-700 font-medium">
-                  Taux :{' '}
-                  {formatPercent(
-                    safePercentage(
-                      periodTotals.damaged,
-                      periodTotals.totalSold + periodTotals.damaged
-                    )
-                  )}
+                <span className="text-[10px] text-slate-500 font-medium truncate block">
+                  Au {formatDate(dateRange.startDate)}
                 </span>
               </div>
 
               <div className="bg-slate-100 p-3 rounded-2xl border border-slate-200">
                 <span className="text-[10px] font-bold text-slate-700 uppercase block truncate">
-                  🔄 Variation Stock Maison
+                  🔄 Variation Nette
                 </span>
                 <span
                   className={`text-base font-black font-mono mt-0.5 block ${
@@ -705,8 +699,44 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
                   {periodTotals.netHouse > 0 ? '+' : ''}
                   {formatNumber(periodTotals.netHouse)}
                 </span>
-                <span className="text-[10px] text-slate-500 font-medium">
-                  Produit − Livré − Vendu par moi
+                <span className="text-[10px] text-slate-500 font-medium truncate block">
+                  Produits + Restes − Sorties
+                </span>
+              </div>
+
+              <div className="bg-rose-50/70 p-3 rounded-2xl border border-rose-200/80">
+                <span className="text-[10px] font-bold text-rose-800 uppercase block truncate">
+                  ⚠️ Abîmé / Pertes
+                </span>
+                <span className="text-base font-black font-mono text-rose-950 mt-0.5 block">
+                  {formatNumber(periodTotals.damaged)}
+                </span>
+                <span className="text-[10px] text-rose-700 font-medium truncate block">
+                  Taux :{' '}
+                  {formatPercent(
+                    safePercentage(
+                      periodTotals.damaged,
+                      periodTotals.totalSold + periodTotals.damaged
+                    )
+                  )}
+                </span>
+              </div>
+
+              <div className="bg-teal-900 text-white p-3 rounded-2xl shadow-xs border border-teal-800">
+                <span className="text-[10px] font-bold text-teal-300 uppercase block truncate">
+                  🔒 Stock Clôturé Fin
+                </span>
+                <span
+                  className={`text-base font-black font-mono mt-0.5 block ${
+                    periodTotals.closingStock < 0
+                      ? 'text-rose-400'
+                      : 'text-white'
+                  }`}
+                >
+                  {formatNumber(periodTotals.closingStock)}
+                </span>
+                <span className="text-[10px] text-teal-200/80 font-medium truncate block">
+                  Au {formatDate(dateRange.endDate)}
                 </span>
               </div>
             </div>
@@ -845,9 +875,15 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
                         </div>
 
                         {/* Secondary stats row */}
-                        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-slate-100 text-slate-600">
+                        <div className="flex items-center justify-between text-[11px] pt-1.5 border-t border-slate-100 text-slate-600 flex-wrap gap-2">
                           <span>
-                            Abîmé en période :{' '}
+                            Stock début :{' '}
+                            <strong className="text-slate-900 font-mono">
+                              {formatNumber(item.initialStock)}
+                            </strong>
+                          </span>
+                          <span>
+                            Abîmé :{' '}
                             <strong className="text-rose-600 font-mono">
                               {formatNumber(item.damagedInPeriod)}
                             </strong>
@@ -855,13 +891,13 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
                           <span>
                             Reste ramené :{' '}
                             <strong className="text-teal-800 font-mono">
-                              {formatNumber(item.realTimeTotalRest)}
+                              +{formatNumber(item.restInPeriod)}
                             </strong>
                           </span>
-                          <span>
-                            Stock global :{' '}
-                            <strong className="text-slate-900 font-mono">
-                              {formatNumber(item.realTimeTotalStock)}
+                          <span className="font-semibold text-teal-900 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200">
+                            Stock clôturé fin :{' '}
+                            <strong className="font-mono">
+                              {formatNumber(item.closingStock)}
                             </strong>
                           </span>
                         </div>
@@ -1001,6 +1037,14 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Monthly Stock Closures Modal */}
+      <MonthlyStockClosureModal
+        isOpen={isMonthlyClosureModalOpen}
+        onClose={() => setIsMonthlyClosureModalOpen(false)}
+        closures={monthlyStockClosures}
+        currency={currency}
+      />
     </div>
   );
 };

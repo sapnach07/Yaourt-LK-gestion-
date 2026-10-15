@@ -23,19 +23,6 @@ export interface ProductPeriodStockResult {
   closingStock: number; // initialStock + netChange (stock à la fin / clôture de la période)
 }
 
-export interface MonthlyStockClosureItem {
-  product: Product;
-  initialStock: number;
-  produced: number;
-  delivered: number;
-  rest: number;
-  soldOwner: number;
-  soldEmployees: number;
-  damaged: number;
-  netChange: number;
-  closingStock: number;
-}
-
 export interface MonthlyStockClosure {
   month: string; // YYYY-MM
   monthLabel: string; // e.g. "Octobre 2026"
@@ -43,7 +30,7 @@ export interface MonthlyStockClosure {
   endDate: string; // YYYY-MM-lastDay
   isCurrentMonth: boolean;
   isClosed: boolean; // true si mois antérieur au mois actuel
-  items: MonthlyStockClosureItem[];
+  items: ProductPeriodStockResult[];
   totals: {
     initialStock: number;
     produced: number;
