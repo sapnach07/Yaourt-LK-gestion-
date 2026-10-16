@@ -305,7 +305,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
             >
               <span>🍽</span>
-              <span>+ Consommation</span>
+              <span>Ma consommation</span>
             </button>
           </div>
         )}
@@ -344,7 +344,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               : 'text-slate-600 hover:text-slate-900'
           }`}
         >
-          Mes ventes & Conso ({personalSales.length})
+          Mes ventes personnelles ({personalSales.length})
         </button>
       </div>
 
@@ -1085,9 +1085,37 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         </div>
       )}
 
-      {/* SUB-TAB 3: MES VENTES (VENTES PERSONNELLES DU GÉRANT) */}
+      {/* SUB-TAB 3: MES VENTES PERSONNELLES (VENTES & CONSOMMATIONS DU GÉRANT) */}
       {subTab === 'personal' && (
         <div className="space-y-3">
+          {/* Boutons d'action : Vente à un client & Ma consommation */}
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setSaleToEdit(null);
+                setPersonalModalKind('vente');
+                setIsPersonalModalOpen(true);
+              }}
+              className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs shadow-xs active:scale-95 transition-all min-h-[46px]"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Vente à un client</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSaleToEdit(null);
+                setPersonalModalKind('consommation');
+                setIsPersonalModalOpen(true);
+              }}
+              className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs active:scale-95 transition-all min-h-[46px]"
+            >
+              <span className="text-base">🍽</span>
+              <span>Ma consommation</span>
+            </button>
+          </div>
+
           {/* Filter Bar */}
           <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-2">
             <div className="flex-1 min-w-[140px]">
@@ -1148,7 +1176,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                   className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[40px]"
                 >
                   <span>🍽</span>
-                  <span>+ Ma consommation</span>
+                  <span>Ma consommation</span>
                 </button>
               </div>
             </div>

@@ -280,7 +280,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                   : 'text-slate-600 hover:text-slate-900'
               }`}
             >
-              <span>🍽 Pour ma consommation</span>
+              <span>🍽 Ma consommation</span>
             </button>
           </div>
 
