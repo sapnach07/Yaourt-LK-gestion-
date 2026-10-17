@@ -70,7 +70,8 @@ export async function generateEmployeeMonthlyPDF(
 
   // Logo rendering if provided
   let headerStartY = 18;
-  if (payslip.logoBase64) {
+  const effectiveLogo = payslip.logoBase64 || settings?.appLogoBase64;
+  if (effectiveLogo) {
     try {
       const logoW = 28;
       const logoH = 14;
@@ -80,7 +81,7 @@ export async function generateEmployeeMonthlyPDF(
       } else if (payslip.logoPosition === 'right') {
         logoX = 210 - 14 - logoW;
       }
-      doc.addImage(payslip.logoBase64, 'PNG', logoX, 8, logoW, logoH, undefined, 'FAST');
+      doc.addImage(effectiveLogo, 'PNG', logoX, 8, logoW, logoH, undefined, 'FAST');
       if (payslip.logoPosition === 'center') {
         headerStartY = 27;
       }
@@ -430,20 +431,29 @@ export async function generateMonthlyManagementReportPDF(
   const mutedTextColor: [number, number, number] = [100, 116, 139];
 
   // Header
+  let startHeaderX = 14;
+  if (settings.appLogoBase64) {
+    try {
+      doc.addImage(settings.appLogoBase64, 'PNG', 210 - 14 - 24, 10, 24, 24, undefined, 'FAST');
+    } catch (e) {
+      console.warn('Erreur logo rapport PDF:', e);
+    }
+  }
+
   doc.setFontSize(20);
   doc.setTextColor(...primaryColor);
   doc.setFont('helvetica', 'bold');
-  doc.text(settings.businessName, 14, 18);
+  doc.text(settings.businessName, startHeaderX, 18);
 
   doc.setFontSize(12);
   doc.setTextColor(...darkTextColor);
   doc.setFont('helvetica', 'bold');
-  doc.text(`RAPPORT DE GESTION MENSUEL - ${monthName.toUpperCase()}`, 14, 26);
+  doc.text(`RAPPORT DE GESTION MENSUEL - ${monthName.toUpperCase()}`, startHeaderX, 26);
 
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
-  doc.text(`Généré le ${formatDate(toISODate(new Date()))} | 100% Hors ligne`, 14, 32);
+  doc.text(`Généré le ${formatDate(toISODate(new Date()))} | 100% Hors ligne`, startHeaderX, 32);
 
   // KPI Grid
   autoTable(doc, {

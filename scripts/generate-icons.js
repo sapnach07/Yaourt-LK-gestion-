@@ -7,89 +7,153 @@ if (!fs.existsSync(publicDir)) {
   fs.mkdirSync(publicDir, { recursive: true });
 }
 
-// 1. Create public/icon.svg
+// 1. Maintain public/icon.svg (the official vector logo)
 const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
-  <defs>
-    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#0f766e" />
-      <stop offset="100%" stop-color="#0d9488" />
-    </linearGradient>
-    <linearGradient id="creamGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="100%" stop-color="#f1f5f9" />
-    </linearGradient>
-    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
-      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#042f2e" flood-opacity="0.35"/>
-    </filter>
-  </defs>
+  <!-- Fond carré 512x512 #0d9488 -->
+  <rect width="512" height="512" fill="#0d9488" rx="96" />
 
-  <!-- Background rounded rectangle -->
-  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
-
-  <!-- Yogurt bottle / jar silhouette -->
-  <g filter="url(#shadow)" transform="translate(0, 0)">
-    <!-- Lid / Cap -->
-    <rect x="206" y="90" width="100" height="28" rx="10" fill="#ffffff" />
-    <rect x="226" y="118" width="60" height="22" rx="4" fill="#e2e8f0" />
+  <!-- Pot de yaourt blanc simple -->
+  <g fill="#ffffff">
+    <!-- Couvercle / Opercule supérieur -->
+    <rect x="176" y="112" width="160" height="24" rx="8" />
     
-    <!-- Bottle body -->
-    <path d="M 216 140 
-             C 170 180, 148 220, 148 290 
-             C 148 375, 185 410, 256 410 
-             C 327 410, 364 375, 364 290 
-             C 364 220, 342 180, 296 140 
-             Z" 
-          fill="url(#creamGrad)" />
+    <!-- Col / Rebord sous le couvercle -->
+    <path d="M 188 136 L 324 136 L 316 160 L 196 160 Z" />
 
-    <!-- Wave / Cream swirl line -->
-    <path d="M 170 290 
-             Q 213 320, 256 290 
-             T 342 290 
-             L 342 340 
-             C 336 385, 305 400, 256 400 
-             C 207 400, 176 385, 170 340 
-             Z" 
-          fill="#14b8a6" 
-          opacity="0.25" />
+    <!-- Corps du pot de yaourt -->
+    <path d="M 192 160 
+             L 320 160 
+             L 300 380 
+             C 298 396, 284 408, 268 408 
+             L 244 408 
+             C 228 408, 214 396, 212 380 
+             Z" />
 
-    <!-- Stylized "Y" Letter in Center -->
-    <path d="M 226 215 L 244 255 L 244 315 L 268 315 L 268 255 L 286 215 L 262 215 L 256 235 L 250 215 Z" 
-          fill="#0f766e" />
+    <!-- Cuillère minimaliste intégrée sur le côté -->
+    <path d="M 336 128 
+             C 346 112, 366 112, 376 128 
+             C 386 144, 376 168, 360 178 
+             L 336 290 
+             L 326 288 
+             L 348 174 
+             C 342 166, 338 152, 336 128 
+             Z" />
   </g>
 </svg>`;
 
 fs.writeFileSync(path.join(publicDir, 'icon.svg'), svgContent, 'utf-8');
 
-// Function to draw pixel-based PNG icon
-function generatePngIcon(size, isMaskable = false) {
+function distToSegment(px, py, x1, y1, x2, y2) {
+  const l2 = (x2 - x1) ** 2 + (y2 - y1) ** 2;
+  if (l2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+}
+
+// Exact point-in-shape tester on 512x512 canvas
+function isInsideYogurt(x, y) {
+  // 1. Lid: rect x=176..336, y=112..136, rx=8
+  if (x >= 176 && x <= 336 && y >= 112 && y <= 136) {
+    const dx = Math.max(0, Math.abs(x - 256) - 72);
+    const dy = Math.max(0, Math.abs(y - 124) - 4);
+    if (dx * dx + dy * dy <= 64) return true;
+  }
+  // 2. Neck: y 136..160
+  if (y >= 136 && y <= 160) {
+    const t = (y - 136) / 24;
+    const halfW = 68 - 8 * t;
+    if (Math.abs(x - 256) <= halfW) return true;
+  }
+  // 3. Pot body: y 160..380
+  if (y > 160 && y <= 380) {
+    const t = (y - 160) / 220;
+    const halfW = 64 - 20 * t;
+    if (Math.abs(x - 256) <= halfW) return true;
+  }
+  // Bottom rounded base: y 380..408
+  if (y > 380 && y <= 408) {
+    if (Math.abs(x - 256) <= 12) return true;
+    if (x < 244) {
+      const dx = (244 - x) / 32;
+      const dy = (y - 380) / 28;
+      if (dx * dx + dy * dy <= 1) return true;
+    } else if (x > 268) {
+      const dx = (x - 268) / 32;
+      const dy = (y - 380) / 28;
+      if (dx * dx + dy * dy <= 1) return true;
+    }
+  }
+  // 4. Spoon head: ellipse around (358, 142)
+  const rad = -15 * Math.PI / 180;
+  const cosA = Math.cos(rad);
+  const sinA = Math.sin(rad);
+  const rx = cosA * (x - 358) - sinA * (y - 142);
+  const ry = sinA * (x - 358) + cosA * (y - 142);
+  if ((rx / 17.5) ** 2 + (ry / 23.5) ** 2 <= 1) return true;
+
+  // Spoon handle: line from (354, 162) to (331, 289), radius ~ 5.2
+  if (distToSegment(x, y, 354, 162, 331, 289) <= 5.2) return true;
+
+  return false;
+}
+
+// Generate PNG with 4x supersampling anti-aliasing
+function generatePngIcon(size, isMaskable = false, roundCorners = true) {
   const png = new PNG({ width: size, height: size });
   const center = size / 2;
-  const radius = isMaskable ? size * 0.45 : size * 0.44;
-  const cornerRadius = isMaskable ? 0 : size * 0.22; // rounded squircle for standard, full bleed for maskable
+  const cornerRadius = (isMaskable || !roundCorners) ? 0 : size * 0.22;
 
-  // Colors
-  const bgR1 = 15, bgG1 = 118, bgB1 = 110; // #0f766e
-  const bgR2 = 13, bgG2 = 148, bgB2 = 136; // #0d9488
-  const creamR = 255, creamG = 255, creamB = 255;
-  const brandDarkR = 15, brandDarkG = 118, brandDarkB = 110;
+  // Colors: Teal #0d9488 and White #ffffff
+  const bgR = 13, bgG = 148, bgB = 136;
+  const fgR = 255, fgG = 255, fgB = 255;
+
+  // Scale factor from 512x512 canvas
+  const contentScale = isMaskable ? 0.82 : 0.92;
+  const scale = (size / 512) * contentScale;
+  const offsetX = (size - 512 * scale) / 2;
+  const offsetY = (size - 512 * scale) / 2;
+
+  // 4x4 supersampling offsets
+  const samples = [
+    [-0.375, -0.375], [-0.125, -0.375], [0.125, -0.375], [0.375, -0.375],
+    [-0.375, -0.125], [-0.125, -0.125], [0.125, -0.125], [0.375, -0.125],
+    [-0.375,  0.125], [-0.125,  0.125], [0.125,  0.125], [0.375,  0.125],
+    [-0.375,  0.375], [-0.125,  0.375], [0.125,  0.375], [0.375,  0.375],
+  ];
 
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       const idx = (size * y + x) << 2;
-      const t = (x + y) / (size * 2);
-      const bgR = Math.round(bgR1 + (bgR2 - bgR1) * t);
-      const bgG = Math.round(bgG1 + (bgG2 - bgG1) * t);
-      const bgB = Math.round(bgB1 + (bgB2 - bgB1) * t);
 
-      let inOuter = true;
-      if (!isMaskable) {
-        // Squircle mask (rounded rect)
-        const dx = Math.max(Math.abs(x - center) - (center - cornerRadius), 0);
-        const dy = Math.max(Math.abs(y - center) - (center - cornerRadius), 0);
-        inOuter = (dx * dx + dy * dy) <= (cornerRadius * cornerRadius);
+      // Outer squircle test
+      let outerSampleCount = 0;
+      let shapeSampleCount = 0;
+
+      for (const [ox, oy] of samples) {
+        const sx = x + ox;
+        const sy = y + oy;
+
+        let inOuter = true;
+        if (cornerRadius > 0) {
+          const cdx = Math.max(Math.abs(sx - center) - (center - cornerRadius), 0);
+          const cdy = Math.max(Math.abs(sy - center) - (center - cornerRadius), 0);
+          inOuter = (cdx * cdx + cdy * cdy) <= (cornerRadius * cornerRadius);
+        }
+
+        if (inOuter) {
+          outerSampleCount++;
+          // Map to 512 coordinate space
+          const canvasX = (sx - offsetX) / scale;
+          const canvasY = (sy - offsetY) / scale;
+          if (isInsideYogurt(canvasX, canvasY)) {
+            shapeSampleCount++;
+          }
+        }
       }
 
-      if (!inOuter) {
+      if (outerSampleCount === 0) {
+        // Transparent outside squircle
         png.data[idx] = 0;
         png.data[idx + 1] = 0;
         png.data[idx + 2] = 0;
@@ -97,75 +161,13 @@ function generatePngIcon(size, isMaskable = false) {
         continue;
       }
 
-      // Default background color
-      let r = bgR;
-      let g = bgG;
-      let b = bgB;
-      let a = 255;
+      const outerAlpha = outerSampleCount / 16;
+      const shapeCoverage = shapeSampleCount / outerSampleCount; // 0 (all teal) to 1 (all white)
 
-      // Coordinate relative to center normalized [-1, 1]
-      const scale = isMaskable ? 0.72 : 0.85; // safe zone padding
-      const nx = (x - center) / (center * scale);
-      const ny = (y - center) / (center * scale);
-
-      // Check Bottle Body:
-      // Cap: ny between -0.65 and -0.54, nx between -0.22 and 0.22
-      const inCap = ny >= -0.65 && ny <= -0.54 && Math.abs(nx) <= 0.22;
-      const inNeck = ny > -0.54 && ny <= -0.45 && Math.abs(nx) <= 0.14;
-
-      // Bottle main body: ny between -0.45 and 0.65
-      // width expands from 0.16 at -0.45 to 0.46 at 0.1, then rounds down at 0.65
-      let inBody = false;
-      if (ny > -0.45 && ny <= 0.65) {
-        const progress = (ny + 0.45) / 1.1; // 0 to 1
-        let maxHalfW = 0.48;
-        if (progress < 0.3) {
-          maxHalfW = 0.16 + (0.48 - 0.16) * (progress / 0.3);
-        } else if (progress > 0.85) {
-          const bottomP = (progress - 0.85) / 0.15;
-          maxHalfW = 0.48 * Math.sqrt(Math.max(0, 1 - bottomP * bottomP));
-        }
-        if (Math.abs(nx) <= maxHalfW) {
-          inBody = true;
-        }
-      }
-
-      if (inCap || inNeck || inBody) {
-        r = creamR;
-        g = creamG;
-        b = creamB;
-
-        // Wave decoration in bottom half
-        if (inBody && ny > 0.05 && ny < 0.62) {
-          const wave = 0.06 * Math.sin(nx * 10);
-          if (ny > 0.15 + wave) {
-            // soft teal milk tint
-            r = 204;
-            g = 251;
-            b = 241;
-          }
-        }
-
-        // Draw letter "Y" inside the bottle
-        // Upper arms: from (-0.12, -0.18) to (0, 0), and (0.12, -0.18) to (0, 0)
-        // Lower stem: from (0, 0) to (0, 0.28)
-        const stemW = 0.045;
-        const inStem = Math.abs(nx) <= stemW && ny >= 0.0 && ny <= 0.26;
-        let inArms = false;
-        if (ny >= -0.20 && ny < 0.05) {
-          const targetX = Math.abs(nx);
-          const expectedX = -ny * 0.8;
-          if (Math.abs(targetX - expectedX) <= stemW * 1.1) {
-            inArms = true;
-          }
-        }
-
-        if (inStem || inArms) {
-          r = brandDarkR;
-          g = brandDarkG;
-          b = brandDarkB;
-        }
-      }
+      const r = Math.round(bgR + (fgR - bgR) * shapeCoverage);
+      const g = Math.round(bgG + (fgG - bgG) * shapeCoverage);
+      const b = Math.round(bgB + (fgB - bgB) * shapeCoverage);
+      const a = Math.round(255 * outerAlpha);
 
       png.data[idx] = r;
       png.data[idx + 1] = g;
@@ -177,21 +179,22 @@ function generatePngIcon(size, isMaskable = false) {
   return PNG.sync.write(png);
 }
 
-// Generate PNG files
-console.log('Generating PNG icons...');
-const icon192 = generatePngIcon(192, false);
+console.log('Generating pixel-perfect PNG icons for PWA & APK...');
+
+const icon192 = generatePngIcon(192, false, true);
 fs.writeFileSync(path.join(publicDir, 'pwa-192x192.png'), icon192);
 
-const icon512 = generatePngIcon(512, false);
+const icon512 = generatePngIcon(512, false, true);
 fs.writeFileSync(path.join(publicDir, 'pwa-512x512.png'), icon512);
 
-const iconMaskable512 = generatePngIcon(512, true);
+// Maskable icon has full bleed background (no outer transparent corners) as required by Android APK
+const iconMaskable512 = generatePngIcon(512, true, false);
 fs.writeFileSync(path.join(publicDir, 'pwa-maskable-512x512.png'), iconMaskable512);
 
-const iconApple = generatePngIcon(180, false);
+const iconApple = generatePngIcon(180, false, true);
 fs.writeFileSync(path.join(publicDir, 'apple-touch-icon.png'), iconApple);
 
-// Favicon copy
-fs.writeFileSync(path.join(publicDir, 'favicon.ico'), generatePngIcon(64, false));
+const iconFavicon = generatePngIcon(64, false, false);
+fs.writeFileSync(path.join(publicDir, 'favicon.ico'), iconFavicon);
 
-console.log('Successfully generated all PWA icons in /public!');
+console.log('All icons generated successfully with official yogurt logo!');
