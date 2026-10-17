@@ -8,24 +8,44 @@ interface HeaderProps {
   hasPin: boolean;
   onLockNow?: () => void;
   openCalculator?: () => void;
+  logoBase64?: string;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   businessName,
   hasPin,
   onLockNow,
+  logoBase64,
 }) => {
   const todayStr = formatDate(toISODate(new Date()));
 
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur-md border-b border-slate-200/80 px-4 py-2.5 flex items-center justify-between shadow-xs">
       {/* Zone 1: Brand Title */}
-      <div className="flex items-center gap-2.5">
-        <div className="w-8 h-8 rounded-xl bg-teal-700 text-white flex items-center justify-center font-bold text-sm shadow-xs">
-          Y
-        </div>
-        <div>
-          <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-none">
+      <div className="flex items-center gap-2.5 min-w-0">
+        {logoBase64 ? (
+          <div className="w-8 h-8 rounded-xl bg-white border border-slate-200/80 overflow-hidden flex items-center justify-center shadow-xs shrink-0 p-0.5">
+            <img
+              src={logoBase64}
+              alt={businessName || 'Logo'}
+              className="w-full h-full object-contain rounded-lg"
+            />
+          </div>
+        ) : (
+          <div className="w-8 h-8 rounded-xl bg-teal-700 text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0 overflow-hidden">
+            <img
+              src="/icon.svg"
+              alt="Logo"
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                // If icon fails to load, fallback to styled text 'Y'
+                (e.currentTarget as HTMLElement).style.display = 'none';
+              }}
+            />
+          </div>
+        )}
+        <div className="min-w-0">
+          <h1 className="text-base font-extrabold tracking-tight text-slate-900 leading-none truncate">
             {businessName || 'Yaourt Gestion'}
           </h1>
           <div className="flex items-center gap-1.5 text-[11px] text-slate-500 font-medium mt-0.5">

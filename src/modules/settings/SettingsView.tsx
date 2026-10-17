@@ -47,6 +47,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 }) => {
   // Local settings form state
   const [businessName, setBusinessName] = useState(settings.businessName || 'Yaourt Gestion');
+  const [appLogoBase64, setAppLogoBase64] = useState<string | undefined>(settings.appLogoBase64);
+  const appLogoInputRef = useRef<HTMLInputElement | null>(null);
   const [currency, setCurrency] = useState(settings.currency || 'FC');
   const [expenseReservePct, setExpenseReservePct] = useState(formatNumber(settings.expenseReservePct));
   const [monthlySalesTargetFC, setMonthlySalesTargetFC] = useState(
@@ -55,6 +57,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [lossAlertThresholdPct, setLossAlertThresholdPct] = useState(
     formatNumber(settings.lossAlertThresholdPct)
   );
+
+  useEffect(() => {
+    setAppLogoBase64(settings.appLogoBase64);
+  }, [settings.appLogoBase64]);
 
   // Products state
   const [products, setProducts] = useState<Product[]>([]);
@@ -166,11 +172,69 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       monthlySalesTargetFC: isNaN(targetNum) ? 1000000 : targetNum,
       lossAlertThresholdPct: isNaN(lossThresholdNum) ? 5.0 : lossThresholdNum,
       expenseCategories: categories,
+      appLogoBase64: appLogoBase64,
     };
 
     await db.settings.put(updated);
     onSettingsUpdated(updated);
     onShowToast('success', 'Paramètres généraux enregistrés.');
+  };
+
+  const handleAppLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const reader = new FileReader();
+      reader.onload = (uploadEvt) => {
+        const img = new Image();
+        img.onload = async () => {
+          const maxDim = 400;
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(img, 0, 0, width, height);
+          const mime = file.type === 'image/png' ? 'image/png' : 'image/jpeg';
+          const resized = canvas.toDataURL(mime, 0.85);
+
+          setAppLogoBase64(resized);
+          const updated: AppSettings = {
+            ...settings,
+            appLogoBase64: resized,
+          };
+          await db.settings.put(updated);
+          onSettingsUpdated(updated);
+          onShowToast('success', 'Logo de l’application mis à jour avec succès.');
+        };
+        img.src = uploadEvt.target?.result as string;
+      };
+      reader.readAsDataURL(file);
+    } catch (err: any) {
+      onShowToast('error', 'Erreur chargement logo : ' + err.message);
+    }
+  };
+
+  const handleRemoveAppLogo = async () => {
+    setAppLogoBase64(undefined);
+    const updated: AppSettings = {
+      ...settings,
+      appLogoBase64: undefined,
+    };
+    await db.settings.put(updated);
+    onSettingsUpdated(updated);
+    onShowToast('info', 'Logo personnalisé supprimé (icône par défaut rétablie).');
   };
 
   const handleSaveCaisseStartingPoint = async (e: React.FormEvent) => {
@@ -454,6 +518,69 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               onChange={(e) => setBusinessName(e.target.value)}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
             />
+          </div>
+
+          {/* Logo de l'application */}
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="block text-xs font-bold text-slate-800">
+                  Logo de l'application
+                </label>
+                <p className="text-[11px] text-slate-500">
+                  Affiché dans l'en-tête, sur l'écran de verrouillage et au chargement.
+                </p>
+              </div>
+              {appLogoBase64 && (
+                <button
+                  type="button"
+                  onClick={handleRemoveAppLogo}
+                  className="text-[11px] text-rose-600 hover:text-rose-700 font-semibold inline-flex items-center gap-1"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Supprimer
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200/90 shadow-xs flex items-center justify-center p-1 overflow-hidden shrink-0">
+                {appLogoBase64 ? (
+                  <img
+                    src={appLogoBase64}
+                    alt="Logo actuel"
+                    className="w-full h-full object-contain rounded-xl"
+                  />
+                ) : (
+                  <img
+                    src="/icon.svg"
+                    alt="Logo par défaut"
+                    className="w-full h-full object-cover rounded-xl"
+                  />
+                )}
+              </div>
+
+              <div className="flex-1 space-y-1">
+                <input
+                  type="file"
+                  ref={appLogoInputRef}
+                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                  onChange={handleAppLogoUpload}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => appLogoInputRef.current?.click()}
+                  className="w-full py-2 px-3 rounded-xl bg-white border border-slate-300 hover:border-teal-600 text-slate-800 hover:text-teal-700 text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
+                >
+                  <Upload className="w-3.5 h-3.5 text-teal-700" />
+                  <span>{appLogoBase64 ? 'Remplacer le logo' : 'Choisir un logo dans le téléphone'}</span>
+                </button>
+                <span className="text-[10px] text-slate-400 block text-center">
+                  PNG, JPG, WebP ou SVG (taille optimisée automatiquement)
+                </span>
+              </div>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-2.5">

@@ -5,12 +5,16 @@ interface PinLockScreenProps {
   correctPin: string;
   onUnlocked: () => void;
   onResetPinRequest?: () => void;
+  businessName?: string;
+  logoBase64?: string;
 }
 
 export const PinLockScreen: React.FC<PinLockScreenProps> = ({
   correctPin,
   onUnlocked,
   onResetPinRequest,
+  businessName,
+  logoBase64,
 }) => {
   const [enteredPin, setEnteredPin] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -47,10 +51,23 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
     <div className="fixed inset-0 z-50 bg-slate-900 text-white flex flex-col justify-between p-6 select-none animate-in fade-in duration-300">
       {/* Top Branding */}
       <div className="flex flex-col items-center pt-8 text-center">
-        <div className="w-16 h-16 rounded-3xl bg-teal-500/20 text-teal-400 flex items-center justify-center mb-4 border border-teal-500/30 shadow-lg shadow-teal-500/10">
-          <Lock className="w-8 h-8" />
-        </div>
-        <h1 className="text-2xl font-bold tracking-tight text-white">Yaourt Gestion</h1>
+        {logoBase64 ? (
+          <div className="w-16 h-16 rounded-3xl bg-white/10 p-2.5 border border-white/20 shadow-lg shadow-teal-500/10 flex items-center justify-center mb-4 overflow-hidden backdrop-blur-sm">
+            <img src={logoBase64} alt="Logo" className="w-full h-full object-contain" />
+          </div>
+        ) : (
+          <div className="w-16 h-16 rounded-3xl bg-teal-500/20 text-teal-400 flex items-center justify-center mb-4 border border-teal-500/30 shadow-lg shadow-teal-500/10 overflow-hidden">
+            <img
+              src="/icon.svg"
+              alt="Logo"
+              className="w-full h-full object-cover"
+              onError={(e) => {
+                (e.currentTarget as HTMLElement).style.display = 'none';
+              }}
+            />
+          </div>
+        )}
+        <h1 className="text-2xl font-bold tracking-tight text-white">{businessName || 'Yaourt Gestion'}</h1>
         <p className="text-sm text-slate-400 mt-1">Application sécurisée par code PIN</p>
 
         {/* 4 PIN Dots */}

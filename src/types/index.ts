@@ -143,6 +143,8 @@ export interface AppSettings {
   ownerCommissionPct?: number;
   // Part payée pour ma consommation (optionnel, égal à expenseReservePct par défaut)
   consumptionPaidPct?: number;
+  // Logo personnalisé de l'application (base64)
+  appLogoBase64?: string;
 }
 
 export interface PayslipSettings {

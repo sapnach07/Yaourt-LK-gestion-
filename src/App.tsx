@@ -97,10 +97,16 @@ export default function App() {
   if (!isDbReady) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-12 h-12 rounded-2xl bg-teal-500/20 text-teal-400 flex items-center justify-center animate-pulse mb-3 font-bold text-xl">
-          Y
-        </div>
-        <h2 className="text-lg font-bold">Yaourt Gestion</h2>
+        {settings.appLogoBase64 ? (
+          <div className="w-14 h-14 rounded-2xl bg-white/10 p-2 border border-white/20 mb-3 shadow-md flex items-center justify-center overflow-hidden">
+            <img src={settings.appLogoBase64} alt="Logo" className="w-full h-full object-contain" />
+          </div>
+        ) : (
+          <div className="w-14 h-14 rounded-2xl overflow-hidden mb-3 shadow-md bg-teal-700 flex items-center justify-center">
+            <img src="/icon.svg" alt="Logo" className="w-full h-full object-cover" />
+          </div>
+        )}
+        <h2 className="text-lg font-bold">{settings.businessName || 'Yaourt Gestion'}</h2>
         <p className="text-xs text-slate-400 mt-1">Chargement de la base de données locale...</p>
       </div>
     );
@@ -114,6 +120,8 @@ export default function App() {
           correctPin={settings.pinCode}
           onUnlocked={() => setIsLocked(false)}
           onResetPinRequest={() => setIsResetPinModalOpen(true)}
+          businessName={settings.businessName}
+          logoBase64={settings.appLogoBase64}
         />
 
         <ConfirmModal
@@ -141,6 +149,7 @@ export default function App() {
         hasPin={Boolean(settings.pinCode)}
         onLockNow={() => setIsLocked(true)}
         openCalculator={() => setIsCalculatorOpen(true)}
+        logoBase64={settings.appLogoBase64}
       />
 
       {/* Main Content Area */}
