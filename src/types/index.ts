@@ -115,7 +115,8 @@ export interface PersonalSale {
   ownerShareRate: number; // part gérant % (= 100 - réserve - commission)
   ownerShareFC: number; // part gérant FC
   kind?: 'vente' | 'consommation'; // Défaut 'vente' si absent
-  consumptionValueFC?: number; // Valeur de la consommation (somme des quantité × prix unitaire)
+  consumptionValueFC?: number; // Valeur de la consommation au prix complet (somme des quantité × prix unitaire)
+  consumptionPaidFC?: number; // Montant payé par mes bénéfices (et reçu par la Caisse Réserve)
   notes?: string;
   createdAt: number;
 }
@@ -140,6 +141,8 @@ export interface AppSettings {
   caisseStartCapitalFC?: number; // Rétro-compatibilité
   // Commission sur ventes personnelles (optionnel, 0 par défaut)
   ownerCommissionPct?: number;
+  // Part payée pour ma consommation (optionnel, égal à expenseReservePct par défaut)
+  consumptionPaidPct?: number;
 }
 
 export interface PayslipSettings {

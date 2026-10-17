@@ -124,6 +124,7 @@ export async function restoreDataFromJSON(
         ...ps,
         kind: ps.kind || 'vente',
         consumptionValueFC: ps.consumptionValueFC ?? 0,
+        consumptionPaidFC: ps.consumptionPaidFC,
       }));
       await db.personalSales.bulkPut(sanitizedSales);
     }

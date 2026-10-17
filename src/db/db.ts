@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   expenseCategories: DEFAULT_EXPENSE_CATEGORIES,
   lastBackupDate: null,
   ownerCommissionPct: 0,
+  consumptionPaidPct: 50,
 };
 
 export class YaourtDatabase extends Dexie {

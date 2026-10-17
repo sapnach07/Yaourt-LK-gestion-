@@ -290,7 +290,8 @@ export function calculateReserveBalance(
   for (const p of personalSales) {
     if (!isDateIncluded(p.date)) continue;
     if (p.kind === 'consommation') {
-      const consumptionVal = p.consumptionValueFC ?? 0;
+      const consumptionVal =
+        p.consumptionPaidFC !== undefined ? p.consumptionPaidFC : (p.consumptionValueFC ?? 0);
       totalConsumptionFC += consumptionVal;
     } else {
       const sales = p.totalSalesFC || 0;

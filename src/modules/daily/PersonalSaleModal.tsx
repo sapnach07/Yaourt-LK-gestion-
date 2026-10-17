@@ -37,6 +37,13 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   const [kind, setKind] = useState<'vente' | 'consommation'>(initialKind);
   const [date, setDate] = useState(toISODate(new Date()));
   const [commissionRateStr, setCommissionRateStr] = useState('0');
+  const defaultConsumptionPaidPct =
+    settings.consumptionPaidPct !== undefined
+      ? settings.consumptionPaidPct
+      : (settings.expenseReservePct ?? 50);
+  const [consumptionPaidPctStr, setConsumptionPaidPctStr] = useState(
+    formatNumber(defaultConsumptionPaidPct)
+  );
   const [productRows, setProductRows] = useState<ProductSaleRow[]>([]);
   const [notes, setNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -54,6 +61,9 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
       }
     }
+    if (newKind === 'consommation' && (!consumptionPaidPctStr.trim() || parseLocaleNumber(consumptionPaidPctStr) === 0)) {
+      setConsumptionPaidPctStr(formatNumber(defaultConsumptionPaidPct));
+    }
   };
 
   useEffect(() => {
@@ -67,6 +77,22 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       setDate(saleToEdit.date);
       setCommissionRateStr(formatNumber(saleToEdit.ownerCommissionRate));
       setNotes(saleToEdit.notes || '');
+
+      if (
+        saleToEdit.consumptionPaidFC !== undefined &&
+        saleToEdit.consumptionValueFC &&
+        saleToEdit.consumptionValueFC > 0
+      ) {
+        setConsumptionPaidPctStr(
+          formatNumber(
+            Math.round(
+              (saleToEdit.consumptionPaidFC * 100) / saleToEdit.consumptionValueFC
+            )
+          )
+        );
+      } else {
+        setConsumptionPaidPctStr(formatNumber(defaultConsumptionPaidPct));
+      }
 
       const rows: ProductSaleRow[] = activeProducts.map((p) => {
         const existing = saleToEdit.items.find((it) => it.productId === p.id);
@@ -82,6 +108,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       setKind(initialKind || 'vente');
       setDate(toISODate(new Date()));
       setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
+      setConsumptionPaidPctStr(formatNumber(defaultConsumptionPaidPct));
       setNotes('');
 
       const rows: ProductSaleRow[] = activeProducts.map((p) => ({
@@ -92,7 +119,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       }));
       setProductRows(rows);
     }
-  }, [isOpen, saleToEdit, initialKind, products, settings]);
+  }, [isOpen, saleToEdit, initialKind, products, settings, defaultConsumptionPaidPct]);
 
   if (!isOpen) return null;
 
@@ -136,6 +163,11 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   }
 
   const consumptionValueFC = totalSalesFC; // somme (quantité × prix unitaire)
+  const consumptionPaidPctNum = parseLocaleNumber(consumptionPaidPctStr);
+  const validConsumptionPaidPct = isNaN(consumptionPaidPctNum)
+    ? 0
+    : Math.max(0, Math.min(100, consumptionPaidPctNum));
+  const consumptionPaidFC = Math.round((consumptionValueFC * validConsumptionPaidPct) / 100);
 
   const commissionRateNum = parseLocaleNumber(commissionRateStr);
   const ownerCommissionFC = Math.round((totalSalesFC * commissionRateNum) / 100);
@@ -157,6 +189,11 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         setErrorMsg(
           `La commission (%) doit être comprise entre 0 et ${100 - reserveRate} % (pour laisser la réserve de ${reserveRate} %).`
         );
+        return;
+      }
+    } else {
+      if (isNaN(consumptionPaidPctNum) || consumptionPaidPctNum < 0 || consumptionPaidPctNum > 100) {
+        setErrorMsg('La part payée (%) doit être comprise entre 0 et 100 %.');
         return;
       }
     }
@@ -195,6 +232,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         ownerShareFC: isConsommation ? 0 : ownerShareFC,
         kind,
         consumptionValueFC: isConsommation ? consumptionValueFC : 0,
+        consumptionPaidFC: isConsommation ? consumptionPaidFC : 0,
         notes: notes.trim() || undefined,
         createdAt: saleToEdit ? saleToEdit.createdAt : Date.now(),
       };
@@ -310,7 +348,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                     <div className="leading-snug">
                       <span className="font-bold">Enregistré comme consommation : </span>
                       <span>
-                        payée par vos bénéfices ({formatFC(consumptionValueFC, currency)}), déduite de vos bénéfices et versée à la réserve, sans commission.
+                        payée par vos bénéfices ({formatFC(consumptionPaidFC, currency)}), déduite de vos bénéfices et versée à la réserve, sans commission.
                       </span>
                     </div>
                   </>
@@ -503,13 +541,58 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
 
           {/* Live Calculations Breakdown */}
           {kind === 'consommation' ? (
-            <div className="bg-amber-50/80 rounded-2xl border border-amber-200/90 p-4 space-y-1">
-              <span className="text-xs font-bold text-amber-950 block">
-                Valeur : <strong className="font-mono text-sm text-amber-950 font-black">{formatFC(consumptionValueFC, currency)}</strong>, payée par mes bénéfices
-              </span>
-              <p className="text-[11px] text-amber-800 leading-relaxed">
-                Cette valeur sera déduite de votre Caisse Bénéfices personnels et créditée à la Caisse Réserve.
-              </p>
+            <div className="bg-amber-50/90 rounded-2xl border border-amber-200 p-4 space-y-3">
+              <div className="flex items-center justify-between text-xs font-bold text-amber-950 pb-2 border-b border-amber-200/80">
+                <span>Valeur au prix complet :</span>
+                <span className="font-mono text-sm font-black text-amber-950">
+                  {formatFC(consumptionValueFC, currency)}
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-amber-900 mb-1">
+                  Part payée (%)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={consumptionPaidPctStr}
+                    onChange={(e) => {
+                      setConsumptionPaidPctStr(e.target.value.replace(/[^0-9.,]/g, ''));
+                      setErrorMsg('');
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-amber-300 text-xs font-bold text-slate-900 bg-white pr-7 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    placeholder="50"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-amber-700">
+                    %
+                  </span>
+                </div>
+                <p className="text-[10px] text-amber-800 mt-1">
+                  Par défaut égale à la part de la Réserve : je ne paie que le coût, pas ma propre marge.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2 text-xs pt-1">
+                <div className="bg-white p-2.5 rounded-xl border border-amber-200 shadow-xs">
+                  <span className="text-[10px] text-amber-800 block font-semibold">
+                    Payé par mes bénéfices :
+                  </span>
+                  <span className="text-sm font-black text-amber-950 font-mono">
+                    {formatFC(consumptionPaidFC, currency)}
+                  </span>
+                </div>
+
+                <div className="bg-white p-2.5 rounded-xl border border-amber-200 shadow-xs">
+                  <span className="text-[10px] text-teal-800 block font-semibold">
+                    Reçu par la Caisse Réserve :
+                  </span>
+                  <span className="text-sm font-black text-teal-900 font-mono">
+                    {formatFC(consumptionPaidFC, currency)}
+                  </span>
+                </div>
+              </div>
             </div>
           ) : (
             <div className="bg-slate-50 rounded-2xl border border-slate-200/80 p-3.5 space-y-2.5">

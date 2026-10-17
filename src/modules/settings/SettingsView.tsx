@@ -88,9 +88,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   );
   const [suggestedNormaleFC, setSuggestedNormaleFC] = useState<number | null>(null);
 
-  // Ventes personnelles (Ma commission)
+  // Ventes personnelles (Ma commission & Consommation)
   const [ownerCommissionPct, setOwnerCommissionPct] = useState(
     settings.ownerCommissionPct !== undefined ? formatNumber(settings.ownerCommissionPct) : '0'
+  );
+  const [consumptionPaidPct, setConsumptionPaidPct] = useState(
+    settings.consumptionPaidPct !== undefined
+      ? formatNumber(settings.consumptionPaidPct)
+      : formatNumber(settings.expenseReservePct ?? 50)
   );
 
   // Restore file handling
@@ -232,15 +237,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       onShowToast('error', 'Ma commission (%) doit être comprise entre 0 et 100.');
       return;
     }
+    const paidPctNum = parseLocaleNumber(consumptionPaidPct);
+    if (isNaN(paidPctNum) || paidPctNum < 0 || paidPctNum > 100) {
+      onShowToast('error', 'La part payée pour ma consommation (%) doit être comprise entre 0 et 100.');
+      return;
+    }
 
     const updated: AppSettings = {
       ...settings,
       ownerCommissionPct: commNum,
+      consumptionPaidPct: paidPctNum,
     };
 
     await db.settings.put(updated);
     onSettingsUpdated(updated);
-    onShowToast('success', 'Commission sur ventes personnelles enregistrée.');
+    onShowToast('success', 'Paramètres des ventes personnelles enregistrés.');
   };
 
   // Product management
@@ -669,11 +680,32 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </p>
           </div>
 
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Part payée pour ma consommation (%)
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={consumptionPaidPct}
+                onChange={(e) => setConsumptionPaidPct(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+              />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                %
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 mt-1">
+              Par défaut égale à la part de la Réserve : je ne paie que le coût, pas ma propre marge
+            </p>
+          </div>
+
           <button
             type="submit"
             className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
           >
-            Enregistrer ma commission
+            Enregistrer
           </button>
         </form>
       </div>

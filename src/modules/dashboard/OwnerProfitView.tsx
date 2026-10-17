@@ -202,7 +202,8 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
 
     for (const p of periodPersonalSales) {
       if (p.kind === 'consommation') {
-        totalConsumptionFC += p.consumptionValueFC || 0;
+        totalConsumptionFC +=
+          p.consumptionPaidFC !== undefined ? p.consumptionPaidFC : (p.consumptionValueFC || 0);
       } else {
         personalSalesTotalFC += p.totalSalesFC || 0;
         personalCommissionFC += p.ownerCommissionFC || 0;

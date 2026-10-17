@@ -1276,11 +1276,25 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                     {/* Financial summary */}
                     {sale.kind === 'consommation' ? (
                       <div className="p-3 bg-amber-50 rounded-xl border border-amber-200/80 flex items-center justify-between text-xs">
-                        <span className="font-bold text-amber-900">
-                          Valeur payée par mes bénéfices :
-                        </span>
+                        <div>
+                          <span className="font-bold text-amber-900 block">
+                            Valeur payée par mes bénéfices :
+                          </span>
+                          {sale.consumptionPaidFC !== undefined &&
+                            sale.consumptionValueFC !== undefined &&
+                            sale.consumptionPaidFC !== sale.consumptionValueFC && (
+                              <span className="text-[10px] text-amber-800">
+                                Prix complet : {formatFC(sale.consumptionValueFC, currency)}
+                              </span>
+                            )}
+                        </div>
                         <span className="font-mono font-black text-amber-950 text-sm">
-                          {formatFC(sale.consumptionValueFC || 0, currency)}
+                          {formatFC(
+                            sale.consumptionPaidFC !== undefined
+                              ? sale.consumptionPaidFC
+                              : (sale.consumptionValueFC || 0),
+                            currency
+                          )}
                         </span>
                       </div>
                     ) : (
@@ -1434,8 +1448,10 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           saleToDelete?.kind === 'consommation'
             ? `Voulez-vous supprimer la consommation du ${formatDate(
                 saleToDelete?.date
-              )} d'une valeur de ${formatFC(
-                saleToDelete?.consumptionValueFC,
+              )} d'une valeur payée de ${formatFC(
+                saleToDelete?.consumptionPaidFC !== undefined
+                  ? saleToDelete?.consumptionPaidFC
+                  : (saleToDelete?.consumptionValueFC || 0),
                 currency
               )} ? Les stocks et la caisse seront recalculés automatiquement.`
             : `Voulez-vous supprimer la vente directe du ${formatDate(
