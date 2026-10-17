@@ -12,7 +12,7 @@ interface PersonalSaleModalProps {
   settings: AppSettings;
   stockMap: Record<string, number>; // houseStock per productId
   onClose: () => void;
-  onSaved: () => void;
+  onSaved: (savedKind?: 'vente' | 'consommation') => void;
   onOpenCalculator?: () => void;
 }
 
@@ -45,6 +45,16 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   const activeProducts = products.filter((p) => p.isActive);
   const currency = settings.currency || 'FC';
   const reserveRate = settings.expenseReservePct ?? 50;
+
+  const handleKindChange = (newKind: 'vente' | 'consommation') => {
+    setKind(newKind);
+    setErrorMsg('');
+    if (newKind === 'vente' && (parseLocaleNumber(commissionRateStr) === 0 || !commissionRateStr.trim())) {
+      if ((settings.ownerCommissionPct ?? 0) > 0) {
+        setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
+      }
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -190,7 +200,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       };
 
       await db.personalSales.put(personalSaleData);
-      onSaved();
+      onSaved(kind);
       onClose();
     } catch (err: any) {
       console.error('Erreur enregistrement vente personnelle:', err);
@@ -252,36 +262,71 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         {/* Form Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4">
           {/* Choix à deux boutons : Vente à un client vs Pour ma consommation */}
-          <div className="flex items-center p-1 bg-slate-100 rounded-2xl gap-1">
-            <button
-              type="button"
-              onClick={() => {
-                setKind('vente');
-                setErrorMsg('');
-              }}
-              className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all min-h-[38px] flex items-center justify-center gap-1.5 ${
-                kind === 'vente'
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <UserCheck className="w-3.5 h-3.5" />
-              <span>Vente à un client</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setKind('consommation');
-                setErrorMsg('');
-              }}
-              className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all min-h-[38px] flex items-center justify-center gap-1.5 ${
-                kind === 'consommation'
-                  ? 'bg-white text-amber-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>🍽 Ma consommation</span>
-            </button>
+          <div className="space-y-1.5">
+            <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+              {saleToEdit
+                ? 'Type d’enregistrement (laisser en vente ou mettre en consommation)'
+                : 'Type d’enregistrement'}
+            </label>
+            <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl gap-1 border border-slate-200/60">
+              <button
+                type="button"
+                onClick={() => handleKindChange('vente')}
+                className={`py-2.5 px-3 text-xs font-bold rounded-xl transition-all min-h-[42px] flex items-center justify-center gap-1.5 ${
+                  kind === 'vente'
+                    ? 'bg-teal-700 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <UserCheck className="w-4 h-4" />
+                <span>Vente à un client</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleKindChange('consommation')}
+                className={`py-2.5 px-3 text-xs font-bold rounded-xl transition-all min-h-[42px] flex items-center justify-center gap-1.5 ${
+                  kind === 'consommation'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
+                }`}
+              >
+                <span className="text-base">🍽</span>
+                <span>Ma consommation</span>
+              </button>
+            </div>
+
+            {/* Message explicatif en cas de modification */}
+            {saleToEdit && (
+              <div
+                className={`p-2.5 rounded-xl border text-xs flex items-center gap-2 ${
+                  kind === 'consommation'
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : 'bg-teal-50 border-teal-200 text-teal-900'
+                }`}
+              >
+                {kind === 'consommation' ? (
+                  <>
+                    <span className="text-base">🍽</span>
+                    <div className="leading-snug">
+                      <span className="font-bold">Enregistré comme consommation : </span>
+                      <span>
+                        payée par vos bénéfices ({formatFC(consumptionValueFC, currency)}), déduite de vos bénéfices et versée à la réserve, sans commission.
+                      </span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck className="w-4 h-4 text-teal-700 shrink-0" />
+                    <div className="leading-snug">
+                      <span className="font-bold">Enregistré comme vente client : </span>
+                      <span>
+                        vente directe avec calcul de votre commission et part de réserve.
+                      </span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
           </div>
 
           {errorMsg && (
@@ -551,12 +596,16 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
               <span>
                 {stockWarningAcknowledged
                   ? 'Confirmer et enregistrer malgré le stock'
-                  : kind === 'consommation'
-                  ? saleToEdit
-                    ? 'Mettre à jour la consommation'
-                    : 'Enregistrer la consommation'
                   : saleToEdit
-                  ? 'Mettre à jour la vente personnelle'
+                  ? kind === 'consommation'
+                    ? saleToEdit.kind === 'consommation'
+                      ? 'Mettre à jour la consommation'
+                      : 'Enregistrer comme consommation'
+                    : saleToEdit.kind === 'consommation'
+                    ? 'Convertir en vente client'
+                    : 'Mettre à jour la vente client'
+                  : kind === 'consommation'
+                  ? 'Enregistrer la consommation'
                   : 'Enregistrer la vente personnelle'}
               </span>
             </button>

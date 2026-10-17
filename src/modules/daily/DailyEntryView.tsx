@@ -1381,10 +1381,11 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           setIsPersonalModalOpen(false);
           setSaleToEdit(null);
         }}
-        onSaved={async () => {
+        onSaved={async (savedKind) => {
+          const finalKind = savedKind || personalModalKind;
           onShowToast(
             'success',
-            personalModalKind === 'consommation'
+            finalKind === 'consommation'
               ? 'Consommation personnelle enregistrée avec succès.'
               : 'Vente personnelle enregistrée avec succès.'
           );
@@ -1424,10 +1425,26 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       {/* Delete Personal Sale Confirm */}
       <ConfirmModal
         isOpen={Boolean(saleToDelete)}
-        title="Supprimer cette vente personnelle ?"
-        message={`Voulez-vous supprimer la vente directe du ${formatDate(
-          saleToDelete?.date
-        )} d'un montant de ${formatFC(saleToDelete?.totalSalesFC, currency)} ? Les stocks et la caisse seront recalculés automatiquement.`}
+        title={
+          saleToDelete?.kind === 'consommation'
+            ? 'Supprimer cette consommation personnelle ?'
+            : 'Supprimer cette vente personnelle ?'
+        }
+        message={
+          saleToDelete?.kind === 'consommation'
+            ? `Voulez-vous supprimer la consommation du ${formatDate(
+                saleToDelete?.date
+              )} d'une valeur de ${formatFC(
+                saleToDelete?.consumptionValueFC,
+                currency
+              )} ? Les stocks et la caisse seront recalculés automatiquement.`
+            : `Voulez-vous supprimer la vente directe du ${formatDate(
+                saleToDelete?.date
+              )} d'un montant de ${formatFC(
+                saleToDelete?.totalSalesFC,
+                currency
+              )} ? Les stocks et la caisse seront recalculés automatiquement.`
+        }
         confirmLabel="Supprimer"
         cancelLabel="Annuler"
         isDanger={true}
