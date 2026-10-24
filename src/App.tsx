@@ -10,6 +10,7 @@ import { ConfirmModal } from './components/ConfirmModal';
 
 import { DashboardView } from './modules/dashboard/DashboardView';
 import { DailyEntryView } from './modules/daily/DailyEntryView';
+import { DebtsView } from './modules/daily/DebtsView';
 import { EmployeesView } from './modules/employees/EmployeesView';
 import { EmployeeEarningsView } from './modules/employees/EmployeeEarningsView';
 import { ExpensesView } from './modules/expenses/ExpensesView';
@@ -26,8 +27,11 @@ export default function App() {
   const [isReserveOpen, setIsReserveOpen] = useState(false);
   const [isEarningsOpen, setIsEarningsOpen] = useState(false);
   const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
+  const [isDebtsOpen, setIsDebtsOpen] = useState(false);
+  const [debtsInitialCustomerId, setDebtsInitialCustomerId] = useState<string | null>(null);
   const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string; source?: 'personnel' | 'benefices' } | null>(null);
   const [dailyStatusFilter, setDailyStatusFilter] = useState<'all' | 'incomplete' | 'validated'>('all');
+  const [dailySubTab, setDailySubTab] = useState<'sales' | 'production' | 'personal'>('sales');
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
@@ -47,6 +51,8 @@ export default function App() {
     setIsReserveOpen(false);
     setIsEarningsOpen(false);
     setIsOwnerProfitOpen(false);
+    setIsDebtsOpen(false);
+    setDebtsInitialCustomerId(null);
     setReservePrefill(null);
   };
 
@@ -178,6 +184,16 @@ export default function App() {
               setIsReserveOpen(true);
             }}
           />
+        ) : isDebtsOpen ? (
+          <DebtsView
+            settings={settings}
+            onShowToast={showToast}
+            initialCustomerId={debtsInitialCustomerId}
+            onBack={() => {
+              setIsDebtsOpen(false);
+              setDebtsInitialCustomerId(null);
+            }}
+          />
         ) : (
           <>
             {activeTab === 'dashboard' && (
@@ -187,6 +203,7 @@ export default function App() {
                   resetSubViews();
                   if (tab === 'daily' && statusFilter) {
                     setDailyStatusFilter(statusFilter);
+                    setDailySubTab('sales');
                   } else if (tab === 'daily') {
                     setDailyStatusFilter('all');
                   }
@@ -205,6 +222,10 @@ export default function App() {
                   resetSubViews();
                   setIsOwnerProfitOpen(true);
                 }}
+                onOpenDebts={() => {
+                  resetSubViews();
+                  setIsDebtsOpen(true);
+                }}
                 onShowToast={showToast}
               />
             )}
@@ -215,6 +236,12 @@ export default function App() {
                 onShowToast={showToast}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
                 initialStatusFilter={dailyStatusFilter}
+                initialSubTab={dailySubTab}
+                onOpenDebts={(customerId) => {
+                  setDailySubTab('personal');
+                  setDebtsInitialCustomerId(customerId || null);
+                  setIsDebtsOpen(true);
+                }}
               />
             )}
 

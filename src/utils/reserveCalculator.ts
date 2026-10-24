@@ -1,5 +1,6 @@
 import { db } from '../db/db';
-import type { ReserveMovement, DailyEntry, Expense, PersonalSale, Payment, Employee } from '../types';
+import type { ReserveMovement, DailyEntry, Expense, PersonalSale, Payment, Employee, DebtPayment } from '../types';
+import { computeDebtAllocations } from './debtCalculator';
 
 export interface ExpenseBreakdownItem {
   expenseId: string;
@@ -155,10 +156,13 @@ export function calculateReserveBalance(
   asOfDate?: string | null,
   personalSales: PersonalSale[] = [],
   payments: Payment[] = [],
-  employees: Employee[] = []
+  employees: Employee[] = [],
+  debtPayments: DebtPayment[] = [],
+  fromDate?: string | null
 ): ReserveDetails {
   const hasStartingPoint = Boolean(startingPoint && startingPoint.startDate && startingPoint.startDate.trim());
   const startDate = hasStartingPoint ? startingPoint!.startDate!.trim() : '';
+  const filterFromDate = fromDate && fromDate.trim() ? fromDate.trim() : null;
   const filterAsOfDate = asOfDate && asOfDate.trim() ? asOfDate.trim() : null;
 
   // Soldes de départ
@@ -177,10 +181,11 @@ export function calculateReserveBalance(
     startVendeursFC = startingPoint!.startVendeursFC ?? 0;
   }
 
-  // Filtrage des événements (si point de départ : date >= startDate, si asOfDate : date <= asOfDate)
+  // Filtrage des événements (si point de départ : date >= startDate, si fromDate : date >= fromDate, si asOfDate : date <= asOfDate)
   const isDateIncluded = (d?: string) => {
     if (!d) return false;
     if (hasStartingPoint && d < startDate) return false;
+    if (filterFromDate && d < filterFromDate) return false;
     if (filterAsOfDate && d > filterAsOfDate) return false;
     return true;
   };
@@ -282,24 +287,43 @@ export function calculateReserveBalance(
     }
   }
 
-  // 3. Ventes personnelles & Consommations personnelles
+  // 3. Ventes personnelles & Consommations personnelles (+ encaissements des dettes à leur date)
   let reserveSalesPersoFC = 0;
   let beneficesPersoFC = 0;
   let totalConsumptionFC = 0;
 
   for (const p of personalSales) {
-    if (!isDateIncluded(p.date)) continue;
     if (p.kind === 'consommation') {
+      if (!isDateIncluded(p.date)) continue;
       const consumptionVal =
         p.consumptionPaidFC !== undefined ? p.consumptionPaidFC : (p.consumptionValueFC ?? 0);
       totalConsumptionFC += consumptionVal;
+    } else if (p.paymentStatus === 'credit') {
+      // Une vente à crédit n'entre PAS dans les caisses à sa date ; seuls ses paiements y entrent à leur date.
+      if (!p.isOpeningDebt && isDateIncluded(p.date)) {
+        allTimeSalesFC += p.totalSalesFC || 0;
+      }
     } else {
+      if (!isDateIncluded(p.date)) continue;
       const sales = p.totalSalesFC || 0;
       allTimeSalesFC += sales;
       const resPart = p.expenseReserveFC || Math.round((sales * reserveRatePct) / 100);
       reserveSalesPersoFC += resPart;
       const ownerPart = (p.ownerShareFC || 0) + (p.ownerCommissionFC || 0);
       beneficesPersoFC += ownerPart;
+    }
+  }
+
+  if (debtPayments.length > 0) {
+    const { paymentAllocations } = computeDebtAllocations(
+      personalSales,
+      debtPayments,
+      reserveRatePct
+    );
+    for (const alloc of paymentAllocations) {
+      if (!isDateIncluded(alloc.date)) continue;
+      reserveSalesPersoFC += alloc.reserveFC;
+      beneficesPersoFC += alloc.beneficesFC;
     }
   }
 
@@ -599,7 +623,8 @@ export function calculatePeriodReserveSummary(
   startingPoint?: CaisseStartingPoint | null,
   personalSales: PersonalSale[] = [],
   payments: Payment[] = [],
-  employees: Employee[] = []
+  employees: Employee[] = [],
+  debtPayments: DebtPayment[] = []
 ): PeriodReserveSummary {
   // Calculer la veille de startDate pour l'état au début
   const sDate = new Date(startDate);
@@ -615,7 +640,8 @@ export function calculatePeriodReserveSummary(
     dayBefore,
     personalSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 
   const endDetails = calculateReserveBalance(
@@ -627,27 +653,34 @@ export function calculatePeriodReserveSummary(
     endDate,
     personalSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 
-  // Événements stricts de la période [startDate, endDate]
+  // Événements stricts de la période [startDate, endDate] (en respectant aussi startingPoint si défini)
   const periodMovements = movements.filter((m) => m.date && m.date >= startDate && m.date <= endDate);
   const periodEntries = dailyEntries.filter((e) => e.date && e.date >= startDate && e.date <= endDate);
   const periodExpenses = expenses.filter((e) => e.date && e.date >= startDate && e.date <= endDate);
-  const periodPersonalSales = personalSales.filter((p) => p.date && p.date >= startDate && p.date <= endDate);
   const periodPayments = payments.filter((p) => p.date && p.date >= startDate && p.date <= endDate);
 
-  // Calcul sur la période seule (sans startingPoint pour avoir les flux stricts de la période)
+  // Calcul sur la période seule (sans soldes initiaux mais en respectant la date de départ si elle est postérieure à startDate)
+  const effectiveFromDate =
+    startingPoint?.startDate && startingPoint.startDate.trim() > startDate
+      ? startingPoint.startDate.trim()
+      : startDate;
+
   const periodOnlyDetails = calculateReserveBalance(
     periodMovements,
     periodEntries,
     periodExpenses,
     reserveRatePct,
     null,
-    null,
-    periodPersonalSales,
+    endDate,
+    personalSales,
     periodPayments,
-    employees
+    employees,
+    debtPayments,
+    effectiveFromDate
   );
 
   return {
@@ -703,7 +736,8 @@ export function getBeneficesBalanceAtDate(
   startingPoint?: CaisseStartingPoint | null,
   personalSales: PersonalSale[] = [],
   payments: Payment[] = [],
-  employees: Employee[] = []
+  employees: Employee[] = [],
+  debtPayments: DebtPayment[] = []
 ): number {
   const filteredMovements = excludeMovementId
     ? movements.filter((m) => m.id !== excludeMovementId)
@@ -718,7 +752,8 @@ export function getBeneficesBalanceAtDate(
     targetDate,
     personalSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 
   return details.soldeBeneficesFC;
@@ -737,7 +772,8 @@ export function getCapitalBalanceAtDate(
   startingPoint?: CaisseStartingPoint | null,
   personalSales: PersonalSale[] = [],
   payments: Payment[] = [],
-  employees: Employee[] = []
+  employees: Employee[] = [],
+  debtPayments: DebtPayment[] = []
 ): number {
   return getBeneficesBalanceAtDate(
     movements,
@@ -749,7 +785,8 @@ export function getCapitalBalanceAtDate(
     startingPoint,
     personalSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 }
 
@@ -760,13 +797,14 @@ export async function getCumulativeReserveDetails(
   reserveRatePct = 50,
   startingPoint?: CaisseStartingPoint | null
 ): Promise<ReserveDetails> {
-  const [movements, entries, expenses, pSales, payments, employees] = await Promise.all([
+  const [movements, entries, expenses, pSales, payments, employees, debtPayments] = await Promise.all([
     db.reserveMovements.toArray(),
     db.dailyEntries.toArray(),
     db.expenses.toArray(),
     db.personalSales.toArray(),
     db.payments.toArray(),
     db.employees.toArray(),
+    db.debtPayments.toArray(),
   ]);
 
   return calculateReserveBalance(
@@ -778,7 +816,8 @@ export async function getCumulativeReserveDetails(
     null,
     pSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 }
 
@@ -793,7 +832,9 @@ export function calculateMonthResteNormale(
   personalSales: PersonalSale[] = []
 ) {
   const monthEntries = dailyEntries.filter((e) => e.date && e.date.startsWith(monthStr));
-  const monthPersonalSales = personalSales.filter((p) => p.date && p.date.startsWith(monthStr));
+  const monthPersonalSales = personalSales.filter(
+    (p) => p.kind !== 'consommation' && !p.isOpeningDebt && p.date && p.date.startsWith(monthStr)
+  );
   const monthExpenses = expenses.filter((e) => e.date && e.date.startsWith(monthStr));
 
   const ventesDuMois =

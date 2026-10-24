@@ -47,6 +47,7 @@ import type {
   PersonalSale,
   Payment,
   Employee,
+  DebtPayment,
 } from '../../types';
 
 interface ReserveViewProps {
@@ -72,6 +73,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
   const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
 
   // Sub-screen for payments history
   const [isPaymentsHistoryOpen, setIsPaymentsHistoryOpen] = useState(false);
@@ -133,13 +135,14 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
 
   const loadData = async () => {
     try {
-      const [movs, entries, exps, pSales, pays, emps] = await Promise.all([
+      const [movs, entries, exps, pSales, pays, emps, dPays] = await Promise.all([
         db.reserveMovements.orderBy('date').reverse().toArray(),
         db.dailyEntries.toArray(),
         db.expenses.toArray(),
         db.personalSales.toArray(),
         db.payments.toArray(),
         db.employees.toArray(),
+        db.debtPayments.toArray(),
       ]);
       setMovements(movs);
       setDailyEntries(entries);
@@ -147,6 +150,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
       setPersonalSales(pSales);
       setPayments(pays);
       setEmployees(emps);
+      setDebtPayments(dPays);
     } catch (e: any) {
       console.error('Erreur chargement caisse:', e);
       onShowToast('error', 'Erreur chargement des données de la caisse');
@@ -176,7 +180,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     isAsOfOtherDate ? viewDate : null,
     personalSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 
   // Period summary calculation
@@ -190,7 +195,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     startingPoint,
     personalSales,
     payments,
-    employees
+    employees,
+    debtPayments
   );
 
   // Rappel de paiement vendeur(se)s (du 25 de chaque mois et pendant les premiers jours du mois suivant)
@@ -327,7 +333,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
         startingPoint,
         personalSales,
         payments,
-        employees
+        employees,
+        debtPayments
       );
 
       if (numAmount > beneficesDispo) {

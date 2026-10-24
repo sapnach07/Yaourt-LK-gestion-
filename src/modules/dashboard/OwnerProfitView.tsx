@@ -21,6 +21,7 @@ import {
   safePercentage,
 } from '../../utils/formatters';
 import { calculateReserveBalance } from '../../utils/reserveCalculator';
+import { computeDebtAllocations } from '../../utils/debtCalculator';
 import type {
   DailyEntry,
   Expense,
@@ -29,6 +30,8 @@ import type {
   AppSettings,
   PeriodFilterType,
   PersonalSale,
+  DebtPayment,
+  Payment,
 } from '../../types';
 
 interface OwnerProfitViewProps {
@@ -52,6 +55,8 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
   const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
+  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
 
   const currency = settings.currency || 'FC';
   const reserveRate = settings.expenseReservePct || 50;
@@ -59,21 +64,25 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
   // Dexie liveQuery: updates automatically after every entry without page reload
   useEffect(() => {
     const subscription = liveQuery(async () => {
-      const [entries, expList, movList, empList, pSalesList] = await Promise.all([
+      const [entries, expList, movList, empList, pSalesList, dPayList, payList] = await Promise.all([
         db.dailyEntries.toArray(),
         db.expenses.toArray(),
         db.reserveMovements.toArray(),
         db.employees.toArray(),
         db.personalSales.toArray(),
+        db.debtPayments.toArray(),
+        db.payments.toArray(),
       ]);
-      return { entries, expList, movList, empList, pSalesList };
+      return { entries, expList, movList, empList, pSalesList, dPayList, payList };
     }).subscribe({
-      next: ({ entries, expList, movList, empList, pSalesList }) => {
+      next: ({ entries, expList, movList, empList, pSalesList, dPayList, payList }) => {
         setDailyEntries(entries);
         setExpenses(expList);
         setReserveMovements(movList);
         setEmployees(empList);
         setPersonalSales(pSalesList);
+        setDebtPayments(dPayList);
+        setPayments(payList);
       },
       error: (err) => {
         console.error('Erreur liveQuery OwnerProfitView:', err);
@@ -124,7 +133,10 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       reserveRate,
       startingPoint,
       null,
-      personalSales
+      personalSales,
+      payments,
+      employees,
+      debtPayments
     );
   }, [
     reserveMovements,
@@ -138,7 +150,22 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     settings.caisseStartNormaleFC,
     settings.caisseStartCapitalFC,
     personalSales,
+    payments,
+    employees,
+    debtPayments,
   ]);
+
+  const debtData = useMemo(
+    () =>
+      computeDebtAllocations(
+        personalSales,
+        debtPayments,
+        reserveRate,
+        [],
+        settings.debtReminderDays ?? 2
+      ),
+    [personalSales, debtPayments, reserveRate, settings.debtReminderDays]
+  );
 
   // Profit calculation for the period
   const profitStats = useMemo(() => {
@@ -193,7 +220,8 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       }
     }
 
-    // Traitement des ventes personnelles du gérant et consommations
+    // Traitement des ventes personnelles encaissées sur la période et consommations
+    const sellerSalesTotalFC = totalSalesFC;
     let personalSalesTotalFC = 0;
     let personalCommissionFC = 0;
     let personalOwnerShareFC = 0;
@@ -204,7 +232,8 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       if (p.kind === 'consommation') {
         totalConsumptionFC +=
           p.consumptionPaidFC !== undefined ? p.consumptionPaidFC : (p.consumptionValueFC || 0);
-      } else {
+      } else if (p.paymentStatus !== 'credit' && !p.isOpeningDebt) {
+        // Vente 'paid' ou sans statut : comportement actuel
         personalSalesTotalFC += p.totalSalesFC || 0;
         personalCommissionFC += p.ownerCommissionFC || 0;
         personalOwnerShareFC += p.ownerShareFC || 0;
@@ -212,12 +241,25 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       }
     }
 
+    // Paiements de dettes encaissés sur la période (affectés FIFO)
+    for (const alloc of debtData.paymentAllocations) {
+      if (alloc.date >= dateRange.startDate && alloc.date <= dateRange.endDate) {
+        personalSalesTotalFC += alloc.totalAmountFC;
+        personalCommissionFC += alloc.ownerCommissionFC;
+        personalOwnerShareFC += alloc.ownerShareFC;
+        personalCaisseFC += alloc.reserveFC;
+      }
+    }
+
+    const pendingDebtFC = debtData.totalRemainingFC;
+
     totalSalesFC += personalSalesTotalFC;
     totalCommissionFC += personalCommissionFC;
     totalOwnerShareGrossFC += personalOwnerShareFC + personalCommissionFC;
 
-    // Compute caisse share on total sales
-    const totalCaisseShareFC = Math.round((totalSalesFC * reserveRate) / 100);
+    // Compute caisse share on total sales (seller part + exact personal caisse part)
+    const totalCaisseShareFC =
+      Math.round((sellerSalesTotalFC * reserveRate) / 100) + personalCaisseFC;
 
     // Compute seller caisse shares
     const sellerBreakdown = Object.values(sellerMap)
@@ -228,9 +270,9 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       .filter((s) => s.salesFC > 0 || !s.employee.isArchived)
       .sort((a, b) => b.ownerShareFC - a.ownerShareFC);
 
-    if (personalSalesTotalFC > 0) {
+    if (personalSalesTotalFC > 0 || pendingDebtFC > 0) {
       sellerBreakdown.unshift({
-        employee: { id: 'owner_direct', name: 'Gérant (Ventes directes)', isArchived: false } as Employee,
+        employee: { id: 'owner_direct', name: 'Mes ventes personnelles', isArchived: false } as Employee,
         salesFC: personalSalesTotalFC,
         commissionFC: personalCommissionFC,
         caisseShareFC: personalCaisseFC,
@@ -244,8 +286,6 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
     let periodClosedMonthsCompensationFC = 0;
     if (settings.caisseStartDate) {
       for (const cm of cumulativeReserve.closedMonths) {
-        // Le mois est dans la période si au moins un jour du mois chevauche la période
-        // ou si la date de début / fin de période inclut ce mois
         const monthStart = `${cm.month}-01`;
         const lastDayObj = new Date(parseInt(cm.month.slice(0, 4), 10), parseInt(cm.month.slice(5, 7), 10), 0);
         const monthEnd = `${cm.month}-${String(lastDayObj.getDate()).padStart(2, '0')}`;
@@ -269,9 +309,19 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
       totalConsumptionFC,
       totalOwnerShareFC,
       totalDamagedFC,
+      pendingDebtFC,
       sellerBreakdown,
     };
-  }, [periodEntries, periodPersonalSales, employees, reserveRate, settings.caisseStartDate, cumulativeReserve.closedMonths, dateRange]);
+  }, [
+    periodEntries,
+    periodPersonalSales,
+    debtData,
+    employees,
+    reserveRate,
+    settings.caisseStartDate,
+    cumulativeReserve.closedMonths,
+    dateRange,
+  ]);
 
   return (
     <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-4">
@@ -535,9 +585,16 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
                   <h4 className="font-extrabold text-slate-900 text-sm">
                     {item.employee.name}
                   </h4>
-                  <span className="text-[10px] text-slate-400">
-                    Ventes : {formatFC(item.salesFC, currency)}
+                  <span className="text-[10px] text-slate-400 block">
+                    {item.employee.id === 'owner_direct'
+                      ? `Encaissé sur la période : ${formatFC(item.salesFC, currency)}`
+                      : `Ventes : ${formatFC(item.salesFC, currency)}`}
                   </span>
+                  {item.employee.id === 'owner_direct' && (
+                    <span className="text-[11px] font-bold text-amber-700 font-mono block mt-0.5">
+                      En attente (dettes) : {formatFC(profitStats.pendingDebtFC, currency)}
+                    </span>
+                  )}
                 </div>
                 <div className="text-right">
                   <span className="text-[10px] uppercase font-bold text-emerald-700 block">

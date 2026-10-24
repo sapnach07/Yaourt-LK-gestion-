@@ -9,6 +9,8 @@ import type {
   Payment,
   AppSettings,
   PersonalSale,
+  Customer,
+  DebtPayment,
 } from '../types';
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   lastBackupDate: null,
   ownerCommissionPct: 0,
   consumptionPaidPct: 50,
+  debtReminderDays: 2,
 };
 
 export class YaourtDatabase extends Dexie {
@@ -48,6 +51,8 @@ export class YaourtDatabase extends Dexie {
   payments!: Table<Payment, string>;
   settings!: Table<AppSettings, string>;
   personalSales!: Table<PersonalSale, string>;
+  customers!: Table<Customer, string>;
+  debtPayments!: Table<DebtPayment, string>;
 
   constructor() {
     super('YaourtGestionDB');
@@ -65,6 +70,11 @@ export class YaourtDatabase extends Dexie {
     });
     this.version(3).stores({
       personalSales: 'id, date, createdAt',
+    });
+    this.version(4).stores({
+      personalSales: 'id, date, customerId, paymentStatus, createdAt',
+      customers: 'id, name, createdAt',
+      debtPayments: 'id, customerId, date, createdAt',
     });
   }
 }

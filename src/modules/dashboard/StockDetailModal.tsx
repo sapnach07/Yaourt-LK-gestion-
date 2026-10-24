@@ -118,7 +118,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
   const periodPersonalSales = useMemo(
     () =>
       personalSales.filter(
-        (ps) => ps.date >= dateRange.startDate && ps.date <= dateRange.endDate
+        (ps) => !ps.isOpeningDebt && ps.date >= dateRange.startDate && ps.date <= dateRange.endDate
       ),
     [personalSales, dateRange]
   );

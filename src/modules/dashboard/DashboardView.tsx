@@ -54,6 +54,7 @@ import {
 } from '../../utils/stockCalculator';
 import { StockDetailModal } from './StockDetailModal';
 import { MonthlyStockClosureModal } from '../daily/MonthlyStockClosureModal';
+import { computeDebtAllocations } from '../../utils/debtCalculator';
 import type {
   DailyEntry,
   Expense,
@@ -65,6 +66,8 @@ import type {
   Payment,
   ReserveMovement,
   PersonalSale,
+  Customer,
+  DebtPayment,
 } from '../../types';
 
 interface DashboardViewProps {
@@ -73,6 +76,7 @@ interface DashboardViewProps {
   onOpenReserve?: (prefill?: { amount: number; reason: string; source?: 'personnel' | 'benefices' }) => void;
   onOpenEarnings?: () => void;
   onOpenOwnerProfit?: () => void;
+  onOpenDebts?: () => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
 }
 
@@ -85,6 +89,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenReserve,
   onOpenEarnings,
   onOpenOwnerProfit,
+  onOpenDebts,
   onShowToast,
 }) => {
   const [periodType, setPeriodType] = useState<PeriodFilterType>('this_month');
@@ -102,6 +107,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [payments, setPayments] = useState<Payment[]>([]);
   const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
   const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
@@ -113,7 +120,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [dList, eList, empList, prodList, pList, payList, movList, psList] = await Promise.all([
+    const [dList, eList, empList, prodList, pList, payList, movList, psList, custList, dpList] = await Promise.all([
       db.dailyEntries.toArray(),
       db.expenses.toArray(),
       db.employees.toArray(),
@@ -122,6 +129,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       db.payments.toArray(),
       db.reserveMovements.toArray(),
       db.personalSales.toArray(),
+      db.customers.toArray(),
+      db.debtPayments.toArray(),
     ]);
 
     setDailyEntries(dList);
@@ -132,6 +141,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setPayments(payList);
     setReserveMovements(movList);
     setPersonalSales(psList);
+    setCustomers(custList);
+    setDebtPayments(dpList);
   };
 
   // Real-time stock calculation across all active products
@@ -218,13 +229,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       settings.expenseReservePct || 50,
       startingPoint,
       null,
-      personalSales
+      personalSales,
+      payments,
+      employees,
+      debtPayments
     );
   }, [
     reserveMovements,
     dailyEntries,
     expenses,
     personalSales,
+    payments,
+    employees,
+    debtPayments,
     settings.expenseReservePct,
     settings.caisseStartDate,
     settings.caisseStartReserveFC,
@@ -233,6 +250,18 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     settings.caisseStartNormaleFC,
     settings.caisseStartCapitalFC,
   ]);
+
+  const debtSummary = useMemo(
+    () =>
+      computeDebtAllocations(
+        personalSales,
+        debtPayments,
+        settings.expenseReservePct || 50,
+        customers,
+        settings.debtReminderDays ?? 2
+      ),
+    [personalSales, debtPayments, customers, settings.expenseReservePct, settings.debtReminderDays]
+  );
 
   // Compute metrics for a set of entries
   const computeMetrics = (
@@ -291,7 +320,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     // Traitement des ventes personnelles (si aucun filtre vendeur particulier n'est actif)
     if (empFilter === 'all') {
       for (const p of personalList) {
-        if (p.kind === 'consommation') continue; // Les consommations ne comptent pas dans les statistiques de ventes
+        if (p.kind === 'consommation' || p.isOpeningDebt) continue; // Les consommations et anciennes dettes ne comptent pas dans les statistiques de ventes
         let pSalesFC = 0;
         let pSoldQty = 0;
         for (const item of p.items) {
@@ -865,6 +894,37 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <span>Voir les saisies</span>
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
+          )}
+        </div>
+      )}
+
+      {/* BANNIÈRE ORANGE : rappel des dettes clients en cours */}
+      {debtSummary.debtorCount > 0 && (
+        <div
+          onClick={onOpenDebts}
+          role={onOpenDebts ? 'button' : undefined}
+          tabIndex={onOpenDebts ? 0 : undefined}
+          className={`p-3.5 rounded-2xl bg-amber-500 text-white shadow-md flex items-center justify-between gap-3 text-xs ${
+            onOpenDebts ? 'cursor-pointer hover:bg-amber-600 active:scale-[0.99] transition-all' : ''
+          }`}
+        >
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Clock className="w-5 h-5 shrink-0 text-white" />
+            <div>
+              <span className="font-extrabold block leading-snug">
+                {debtSummary.debtorCount}{' '}
+                {debtSummary.debtorCount > 1 ? 'personnes te doivent' : 'personne te doit'}{' '}
+                {formatFC(debtSummary.totalRemainingFC, currency)}, dont{' '}
+                {debtSummary.overdueCount} en retard de plus de {settings.debtReminderDays ?? 2}{' '}
+                {(settings.debtReminderDays ?? 2) > 1 ? 'jours' : 'jour'}
+              </span>
+            </div>
+          </div>
+          {onOpenDebts && (
+            <span className="px-3 py-2 rounded-xl bg-white text-amber-800 font-extrabold shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1">
+              <span>Dettes</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </span>
           )}
         </div>
       )}

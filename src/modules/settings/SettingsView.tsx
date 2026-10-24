@@ -94,7 +94,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   );
   const [suggestedNormaleFC, setSuggestedNormaleFC] = useState<number | null>(null);
 
-  // Ventes personnelles (Ma commission & Consommation)
+  // Ventes personnelles (Ma commission, Consommation & Rappel dettes)
   const [ownerCommissionPct, setOwnerCommissionPct] = useState(
     settings.ownerCommissionPct !== undefined ? formatNumber(settings.ownerCommissionPct) : '0'
   );
@@ -102,6 +102,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     settings.consumptionPaidPct !== undefined
       ? formatNumber(settings.consumptionPaidPct)
       : formatNumber(settings.expenseReservePct ?? 50)
+  );
+  const [debtReminderDays, setDebtReminderDays] = useState(
+    settings.debtReminderDays !== undefined ? formatNumber(settings.debtReminderDays) : '2'
   );
 
   // Restore file handling
@@ -307,10 +310,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
+    const reminderDaysNum =
+      debtReminderDays.trim() === '' ? 2 : Math.round(parseLocaleNumber(debtReminderDays));
+    if (isNaN(reminderDaysNum) || reminderDaysNum < 0 || reminderDaysNum > 365) {
+      onShowToast('error', 'Le délai de rappel de dette doit être compris entre 0 et 365 jours.');
+      return;
+    }
+
     const updated: AppSettings = {
       ...settings,
       ownerCommissionPct: commNum,
       consumptionPaidPct: paidPctNum,
+      debtReminderDays: reminderDaysNum,
     };
 
     await db.settings.put(updated);
@@ -825,6 +836,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
             <p className="text-[10px] text-slate-400 mt-1">
               Par défaut égale à la part de la Réserve : je ne paie que le coût, pas ma propre marge
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Délai avant alerte de retard sur une dette (jours)
+            </label>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={debtReminderDays}
+              onChange={(e) => setDebtReminderDays(e.target.value.replace(/[^0-9]/g, ''))}
+              placeholder="2"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+            />
+            <p className="text-[10px] text-slate-400 mt-1">
+              2 jours par défaut. Au-delà de ce délai, la dette est signalée en retard.
             </p>
           </div>
 

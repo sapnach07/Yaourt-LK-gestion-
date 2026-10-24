@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
-import { X, Check, AlertTriangle, Calculator, UserCheck, Package } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Check, AlertTriangle, Calculator, UserCheck, Package, Search, UserPlus, Clock } from 'lucide-react';
 import { db } from '../../db/db';
 import { toISODate, formatFC, parseLocaleNumber, formatNumber } from '../../utils/formatters';
-import type { Product, PersonalSale, PersonalSaleItem, AppSettings } from '../../types';
+import { findCustomerByNormalizedName } from '../../utils/debtCalculator';
+import type { Product, PersonalSale, PersonalSaleItem, AppSettings, Customer } from '../../types';
 
 interface PersonalSaleModalProps {
   isOpen: boolean;
   saleToEdit?: PersonalSale | null;
+  alreadyPaidFC?: number;
   initialKind?: 'vente' | 'consommation';
   products: Product[];
   settings: AppSettings;
@@ -26,6 +28,7 @@ interface ProductSaleRow {
 export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   isOpen,
   saleToEdit,
+  alreadyPaidFC = 0,
   initialKind = 'vente',
   products,
   settings,
@@ -45,17 +48,50 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
     formatNumber(defaultConsumptionPaidPct)
   );
   const [productRows, setProductRows] = useState<ProductSaleRow[]>([]);
+  const [openingDebtAmountStr, setOpeningDebtAmountStr] = useState('');
   const [notes, setNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [stockWarningAcknowledged, setStockWarningAcknowledged] = useState(false);
+
+  // Paiement : 'paid' (par défaut) | 'credit'
+  const [paymentStatus, setPaymentStatus] = useState<'paid' | 'credit'>('paid');
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
+  const [customerSearch, setCustomerSearch] = useState('');
+  const [isCreatingCustomer, setIsCreatingCustomer] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
+
+  const isEditing = Boolean(saleToEdit);
+  const isOpeningDebtEdit = Boolean(saleToEdit?.isOpeningDebt);
 
   const activeProducts = products.filter((p) => p.isActive);
   const currency = settings.currency || 'FC';
   const reserveRate = settings.expenseReservePct ?? 50;
 
   const handleKindChange = (newKind: 'vente' | 'consommation') => {
+    if (newKind === 'consommation') {
+      if (alreadyPaidFC > 0) {
+        setErrorMsg(
+          'Impossible de transformer en consommation une vente qui a déjà reçu des paiements.'
+        );
+        return;
+      }
+      if (isOpeningDebtEdit) {
+        setErrorMsg('Une ancienne dette ne peut pas être transformée en consommation.');
+        return;
+      }
+      if (saleToEdit?.paymentStatus === 'credit') {
+        setErrorMsg('Une vente enregistrée à crédit ne peut pas être transformée en consommation.');
+        return;
+      }
+    }
+
     setKind(newKind);
     setErrorMsg('');
+    if (newKind === 'consommation') {
+      setPaymentStatus('paid');
+    }
     if (newKind === 'vente' && (parseLocaleNumber(commissionRateStr) === 0 || !commissionRateStr.trim())) {
       if ((settings.ownerCommissionPct ?? 0) > 0) {
         setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
@@ -71,12 +107,36 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
 
     setStockWarningAcknowledged(false);
     setErrorMsg('');
+    setCustomerSearch('');
+    setNewCustomerName('');
+    setNewCustomerPhone('');
+
+    db.customers
+      .toArray()
+      .then((list) => {
+        const sorted = [...list].sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+        setCustomers(sorted);
+        if (!saleToEdit && sorted.length === 0) {
+          setIsCreatingCustomer(true);
+        }
+      })
+      .catch((err) => console.error('Erreur chargement clients:', err));
 
     if (saleToEdit) {
       setKind(saleToEdit.kind || 'vente');
       setDate(saleToEdit.date);
       setCommissionRateStr(formatNumber(saleToEdit.ownerCommissionRate));
       setNotes(saleToEdit.notes || '');
+      setPaymentStatus(
+        saleToEdit.kind !== 'consommation' && saleToEdit.paymentStatus === 'credit'
+          ? 'credit'
+          : 'paid'
+      );
+      setSelectedCustomerId(saleToEdit.customerId || '');
+      setIsCreatingCustomer(false);
+      setOpeningDebtAmountStr(
+        saleToEdit.isOpeningDebt ? formatNumber(saleToEdit.totalSalesFC || 0) : ''
+      );
 
       if (
         saleToEdit.consumptionPaidFC !== undefined &&
@@ -110,6 +170,10 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
       setConsumptionPaidPctStr(formatNumber(defaultConsumptionPaidPct));
       setNotes('');
+      setPaymentStatus('paid');
+      setSelectedCustomerId('');
+      setIsCreatingCustomer(false);
+      setOpeningDebtAmountStr('');
 
       const rows: ProductSaleRow[] = activeProducts.map((p) => ({
         productId: p.id,
@@ -120,6 +184,16 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       setProductRows(rows);
     }
   }, [isOpen, saleToEdit, initialKind, products, settings, defaultConsumptionPaidPct]);
+
+  const filteredCustomers = useMemo(() => {
+    const q = customerSearch.trim().toLocaleLowerCase('fr');
+    if (!q) return customers;
+    return customers.filter(
+      (c) =>
+        c.name.toLocaleLowerCase('fr').includes(q) ||
+        (c.phone || '').toLocaleLowerCase('fr').includes(q)
+    );
+  }, [customers, customerSearch]);
 
   if (!isOpen) return null;
 
@@ -139,28 +213,37 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   const itemsWithQty: { row: ProductSaleRow; soldQty: number; lineTotalFC: number; stock: number; exceedsStock: boolean }[] = [];
   let hasAnyExceedingStock = false;
 
-  for (const row of productRows) {
-    const qty = parseLocaleNumber(row.soldQtyStr);
-    if (qty > 0) {
-      const lineTotal = Math.round(qty * row.unitPrice);
-      totalSalesFC += lineTotal;
+  if (isOpeningDebtEdit) {
+    const parsedOd = parseLocaleNumber(openingDebtAmountStr);
+    totalSalesFC = !isNaN(parsedOd) && parsedOd > 0 ? Math.round(parsedOd) : 0;
+  } else {
+    for (const row of productRows) {
+      const qty = parseLocaleNumber(row.soldQtyStr);
+      if (qty > 0) {
+        const lineTotal = Math.round(qty * row.unitPrice);
+        totalSalesFC += lineTotal;
 
-      // Check against house stock
-      // If editing, add back what was originally sold in this entry
-      const originalSold = saleToEdit?.items.find((it) => it.productId === row.productId)?.soldQty || 0;
-      const currentHouseStock = (stockMap[row.productId] ?? 0) + originalSold;
-      const exceeds = qty > currentHouseStock;
-      if (exceeds) hasAnyExceedingStock = true;
+        // Check against house stock
+        // If editing, add back what was originally sold in this entry
+        const originalSold = saleToEdit?.items.find((it) => it.productId === row.productId)?.soldQty || 0;
+        const currentHouseStock = (stockMap[row.productId] ?? 0) + originalSold;
+        const exceeds = qty > currentHouseStock;
+        if (exceeds) hasAnyExceedingStock = true;
 
-      itemsWithQty.push({
-        row,
-        soldQty: qty,
-        lineTotalFC: lineTotal,
-        stock: currentHouseStock,
-        exceedsStock: exceeds,
-      });
+        itemsWithQty.push({
+          row,
+          soldQty: qty,
+          lineTotalFC: lineTotal,
+          stock: currentHouseStock,
+          exceedsStock: exceeds,
+        });
+      }
     }
   }
+
+  const effectiveReserveRate = saleToEdit && !isOpeningDebtEdit
+    ? (saleToEdit.expenseReserveRate ?? reserveRate)
+    : reserveRate;
 
   const consumptionValueFC = totalSalesFC; // somme (quantité × prix unitaire)
   const consumptionPaidPctNum = parseLocaleNumber(consumptionPaidPctStr);
@@ -169,10 +252,10 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
     : Math.max(0, Math.min(100, consumptionPaidPctNum));
   const consumptionPaidFC = Math.round((consumptionValueFC * validConsumptionPaidPct) / 100);
 
-  const commissionRateNum = parseLocaleNumber(commissionRateStr);
+  const commissionRateNum = isOpeningDebtEdit ? 0 : parseLocaleNumber(commissionRateStr);
   const ownerCommissionFC = Math.round((totalSalesFC * commissionRateNum) / 100);
-  const expenseReserveFC = Math.round((totalSalesFC * reserveRate) / 100);
-  const ownerShareRate = Math.max(0, 100 - reserveRate - commissionRateNum);
+  const expenseReserveFC = Math.round((totalSalesFC * effectiveReserveRate) / 100);
+  const ownerShareRate = Math.max(0, 100 - effectiveReserveRate - commissionRateNum);
   const ownerShareFC = Math.round((totalSalesFC * ownerShareRate) / 100);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -184,10 +267,17 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       return;
     }
 
+    if (kind === 'consommation' && (alreadyPaidFC > 0 || saleToEdit?.paymentStatus === 'credit' || isOpeningDebtEdit)) {
+      setErrorMsg(
+        'Impossible de transformer en consommation une vente à crédit ou ayant déjà des paiements.'
+      );
+      return;
+    }
+
     if (kind === 'vente') {
-      if (isNaN(commissionRateNum) || commissionRateNum < 0 || commissionRateNum > (100 - reserveRate)) {
+      if (isNaN(commissionRateNum) || commissionRateNum < 0 || commissionRateNum > (100 - effectiveReserveRate)) {
         setErrorMsg(
-          `La commission (%) doit être comprise entre 0 et ${100 - reserveRate} % (pour laisser la réserve de ${reserveRate} %).`
+          `La commission (%) doit être comprise entre 0 et ${100 - effectiveReserveRate} % (pour laisser la réserve de ${effectiveReserveRate} %).`
         );
         return;
       }
@@ -198,26 +288,102 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       }
     }
 
-    if (itemsWithQty.length === 0) {
+    if (isOpeningDebtEdit) {
+      if (totalSalesFC <= 0) {
+        setErrorMsg('Veuillez entrer un montant supérieur à 0 FC.');
+        return;
+      }
+    } else if (itemsWithQty.length === 0) {
       setErrorMsg('Veuillez renseigner au moins une quantité supérieure à 0.');
       return;
     }
 
+    // Refuser de réduire le total en dessous de ce qui a déjà été payé
+    if (kind === 'vente' && alreadyPaidFC > 0 && totalSalesFC < alreadyPaidFC) {
+      setErrorMsg(
+        `Impossible de réduire le total (${formatFC(totalSalesFC, currency)}) en dessous du montant déjà payé (${formatFC(alreadyPaidFC, currency)}).`
+      );
+      return;
+    }
+
+    const finalPaymentStatus: 'paid' | 'credit' | undefined =
+      kind === 'consommation'
+        ? undefined
+        : saleToEdit
+        ? saleToEdit.paymentStatus === 'credit'
+          ? 'credit'
+          : 'paid'
+        : paymentStatus;
+
+    let finalCustomer: Customer | null = null;
+    let needsCustomerInsert = false;
+
+    if (finalPaymentStatus === 'credit') {
+      if (saleToEdit && alreadyPaidFC > 0 && saleToEdit.customerId) {
+        finalCustomer =
+          customers.find((c) => c.id === saleToEdit.customerId) || {
+            id: saleToEdit.customerId,
+            name: saleToEdit.customerName || 'Client',
+            createdAt: saleToEdit.createdAt || Date.now(),
+          };
+      } else if (isCreatingCustomer) {
+        const cleanName = newCustomerName.trim().replace(/\s+/g, ' ');
+        if (!cleanName) {
+          setErrorMsg('Veuillez saisir le nom du client pour cette vente à crédit.');
+          return;
+        }
+        const duplicate = findCustomerByNormalizedName(customers, cleanName);
+        if (duplicate) {
+          setErrorMsg(
+            `Un client nommé « ${duplicate.name} » existe déjà. Sélectionnez-le dans la liste.`
+          );
+          return;
+        }
+        finalCustomer = {
+          id: crypto.randomUUID(),
+          name: cleanName,
+          phone: newCustomerPhone.trim() || undefined,
+          createdAt: Date.now(),
+        };
+        needsCustomerInsert = true;
+      } else {
+        const found = customers.find((c) => c.id === selectedCustomerId);
+        if (found) {
+          finalCustomer = found;
+        } else if (saleToEdit?.customerId && selectedCustomerId === saleToEdit.customerId) {
+          finalCustomer = {
+            id: saleToEdit.customerId,
+            name: saleToEdit.customerName || 'Client',
+            createdAt: saleToEdit.createdAt || Date.now(),
+          };
+        } else {
+          setErrorMsg('Veuillez sélectionner un client ou créer un « Nouveau client ».');
+          return;
+        }
+      }
+    }
+
     // Avertissement de dépassement de stock (sans bloquer)
-    if (hasAnyExceedingStock && !stockWarningAcknowledged) {
+    if (!isOpeningDebtEdit && hasAnyExceedingStock && !stockWarningAcknowledged) {
       setStockWarningAcknowledged(true);
       return;
     }
 
     try {
-      const saleItems: PersonalSaleItem[] = itemsWithQty.map((item) => ({
-        productId: item.row.productId,
-        productName: item.row.productName,
-        unitPrice: item.row.unitPrice,
-        soldQty: item.soldQty,
-      }));
+      const saleItems: PersonalSaleItem[] = isOpeningDebtEdit
+        ? []
+        : itemsWithQty.map((item) => ({
+            productId: item.row.productId,
+            productName: item.row.productName,
+            unitPrice: item.row.unitPrice,
+            soldQty: item.soldQty,
+          }));
 
       const isConsommation = kind === 'consommation';
+
+      const prevWrittenOff = saleToEdit?.writtenOffFC
+        ? Math.min(Math.max(0, totalSalesFC - alreadyPaidFC), Math.round(saleToEdit.writtenOffFC))
+        : undefined;
 
       const personalSaleData: PersonalSale = {
         id: saleToEdit ? saleToEdit.id : crypto.randomUUID(),
@@ -226,18 +392,30 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         totalSalesFC: isConsommation ? 0 : totalSalesFC,
         ownerCommissionRate: isConsommation ? 0 : commissionRateNum,
         ownerCommissionFC: isConsommation ? 0 : ownerCommissionFC,
-        expenseReserveRate: isConsommation ? 0 : reserveRate,
+        expenseReserveRate: isConsommation ? 0 : effectiveReserveRate,
         expenseReserveFC: isConsommation ? 0 : expenseReserveFC,
         ownerShareRate: isConsommation ? 0 : ownerShareRate,
         ownerShareFC: isConsommation ? 0 : ownerShareFC,
         kind,
         consumptionValueFC: isConsommation ? consumptionValueFC : 0,
         consumptionPaidFC: isConsommation ? consumptionPaidFC : 0,
+        paymentStatus: isConsommation ? undefined : finalPaymentStatus,
+        customerId: !isConsommation && finalPaymentStatus === 'credit' ? finalCustomer?.id : undefined,
+        customerName: !isConsommation && finalPaymentStatus === 'credit' ? finalCustomer?.name : undefined,
+        isOpeningDebt: saleToEdit?.isOpeningDebt || undefined,
+        writtenOffFC: prevWrittenOff && prevWrittenOff > 0 ? prevWrittenOff : undefined,
+        writtenOffAt: prevWrittenOff && prevWrittenOff > 0 ? saleToEdit?.writtenOffAt : undefined,
         notes: notes.trim() || undefined,
         createdAt: saleToEdit ? saleToEdit.createdAt : Date.now(),
       };
 
-      await db.personalSales.put(personalSaleData);
+      await db.transaction('rw', [db.customers, db.personalSales], async () => {
+        if (needsCustomerInsert && finalCustomer) {
+          await db.customers.put(finalCustomer);
+        }
+        await db.personalSales.put(personalSaleData);
+      });
+
       onSaved(kind);
       onClose();
     } catch (err: any) {
@@ -321,8 +499,9 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
               </button>
               <button
                 type="button"
+                disabled={alreadyPaidFC > 0 || saleToEdit?.paymentStatus === 'credit' || isOpeningDebtEdit}
                 onClick={() => handleKindChange('consommation')}
-                className={`py-2.5 px-3 text-xs font-bold rounded-xl transition-all min-h-[42px] flex items-center justify-center gap-1.5 ${
+                className={`py-2.5 px-3 text-xs font-bold rounded-xl transition-all min-h-[42px] flex items-center justify-center gap-1.5 disabled:opacity-45 disabled:cursor-not-allowed ${
                   kind === 'consommation'
                     ? 'bg-amber-600 text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900 hover:bg-slate-200/60'
@@ -413,45 +592,231 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
               />
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Date *
+            <div className="space-y-3">
+              {/* Choix du mode de paiement : Payé maintenant vs À crédit */}
+              <div className="space-y-1.5">
+                <label className="block text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                  Mode de règlement
                 </label>
-                <input
-                  type="date"
-                  required
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-                />
+                <div className="grid grid-cols-2 p-1 bg-slate-100 rounded-2xl gap-1 border border-slate-200/60">
+                  <button
+                    type="button"
+                    disabled={isEditing}
+                    onClick={() => {
+                      if (!isEditing) {
+                        setPaymentStatus('paid');
+                        setErrorMsg('');
+                      }
+                    }}
+                    className={`py-2 px-3 text-xs font-bold rounded-xl transition-all min-h-[40px] flex items-center justify-center gap-1.5 disabled:cursor-not-allowed ${
+                      paymentStatus === 'paid'
+                        ? 'bg-emerald-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 disabled:opacity-50'
+                    }`}
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    <span>Payé maintenant</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isEditing}
+                    onClick={() => {
+                      if (!isEditing) {
+                        setPaymentStatus('credit');
+                        if (customers.length === 0) setIsCreatingCustomer(true);
+                        setErrorMsg('');
+                      }
+                    }}
+                    className={`py-2 px-3 text-xs font-bold rounded-xl transition-all min-h-[40px] flex items-center justify-center gap-1.5 disabled:cursor-not-allowed ${
+                      paymentStatus === 'credit'
+                        ? 'bg-amber-600 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900 disabled:opacity-50'
+                    }`}
+                  >
+                    <Clock className="w-3.5 h-3.5" />
+                    <span>À crédit</span>
+                  </button>
+                </div>
+
+                {isEditing && (
+                  <p className="text-[11px] text-slate-500">
+                    Le mode de paiement ne peut pas être modifié ici (passez par l'écran Dettes pour les paiements).
+                    {alreadyPaidFC > 0 && (
+                      <span className="font-bold text-emerald-700">
+                        {' '}Déjà payé : {formatFC(alreadyPaidFC, currency)}.
+                      </span>
+                    )}
+                  </p>
+                )}
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Ma commission (%)
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={commissionRateStr}
-                    onChange={(e) => setCommissionRateStr(e.target.value.replace(/[^0-9.,]/g, ''))}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
-                  />
-                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                    %
-                  </span>
+              {/* Sélection / création du client si À crédit */}
+              {paymentStatus === 'credit' && (
+                <div className="p-3 rounded-2xl bg-amber-50/60 border border-amber-200 space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-extrabold text-amber-950">
+                      Client à crédit *
+                    </label>
+                    {!(isEditing && alreadyPaidFC > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsCreatingCustomer((prev) => !prev);
+                          setErrorMsg('');
+                        }}
+                        className="text-xs font-bold text-teal-800 hover:text-teal-950 inline-flex items-center gap-1"
+                      >
+                        <UserPlus className="w-3.5 h-3.5" />
+                        <span>
+                          {isCreatingCustomer ? 'Choisir dans la liste' : '+ Nouveau client'}
+                        </span>
+                      </button>
+                    )}
+                  </div>
+
+                  {isEditing && alreadyPaidFC > 0 ? (
+                    <div className="p-2.5 rounded-xl bg-white border border-amber-200 text-xs font-bold text-slate-800">
+                      Client : {saleToEdit?.customerName || 'Client'} (verrouillé car un paiement a déjà été reçu)
+                    </div>
+                  ) : isCreatingCustomer ? (
+                    <div className="space-y-2 bg-white p-2.5 rounded-xl border border-amber-200">
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Nom du client *
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="Ex : Papa Jean"
+                          value={newCustomerName}
+                          onChange={(e) => {
+                            setNewCustomerName(e.target.value);
+                            setErrorMsg('');
+                          }}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                          Téléphone (facultatif)
+                        </label>
+                        <input
+                          type="tel"
+                          placeholder="Ex : 081..."
+                          value={newCustomerPhone}
+                          onChange={(e) => setNewCustomerPhone(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-900 bg-white"
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <div className="relative">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          placeholder="Rechercher un client..."
+                          value={customerSearch}
+                          onChange={(e) => setCustomerSearch(e.target.value)}
+                          className="w-full pl-8 pr-3 py-2 rounded-xl border border-amber-200 text-xs font-semibold text-slate-900 bg-white"
+                        />
+                      </div>
+                      <div className="max-h-36 overflow-y-auto rounded-xl border border-amber-200/80 divide-y divide-slate-100 bg-white">
+                        {filteredCustomers.length === 0 ? (
+                          <div className="p-2.5 text-center text-xs text-slate-400">
+                            Aucun client trouvé. Cliquez sur « + Nouveau client ».
+                          </div>
+                        ) : (
+                          filteredCustomers.map((c) => {
+                            const isSelected = c.id === selectedCustomerId;
+                            return (
+                              <button
+                                key={c.id}
+                                type="button"
+                                onClick={() => {
+                                  setSelectedCustomerId(c.id);
+                                  setErrorMsg('');
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between transition-colors ${
+                                  isSelected
+                                    ? 'bg-teal-50 text-teal-900 font-extrabold'
+                                    : 'hover:bg-slate-50 text-slate-800 font-semibold'
+                                }`}
+                              >
+                                <span>
+                                  {c.name}
+                                  {c.phone ? ` · ${c.phone}` : ''}
+                                </span>
+                                {isSelected && <Check className="w-4 h-4 text-teal-700" />}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  <p className="text-[10px] text-amber-900 leading-snug">
+                    Le stock baisse immédiatement. L'argent n'entrera dans les caisses qu'au fur et à mesure des paiements du client.
+                  </p>
                 </div>
-                <span className="text-[10px] text-slate-400 block mt-0.5">
-                  Modifiable pour cette vente
-                </span>
+              )}
+
+              <div className={isOpeningDebtEdit ? '' : 'grid grid-cols-2 gap-3'}>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Date *
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                  />
+                </div>
+
+                {!isOpeningDebtEdit && (
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Ma commission (%)
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0"
+                        value={commissionRateStr}
+                        onChange={(e) => setCommissionRateStr(e.target.value.replace(/[^0-9.,]/g, ''))}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                      />
+                      <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                        %
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      Modifiable pour cette vente
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           )}
 
-          {/* Product Rows */}
+          {/* Product Rows or Opening Debt Amount */}
+          {isOpeningDebtEdit ? (
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Montant de l'ancienne dette ({currency}) *
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={openingDebtAmountStr}
+                onChange={(e) => setOpeningDebtAmountStr(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-sm font-extrabold font-mono text-slate-900 bg-white"
+              />
+            </div>
+          ) : (
           <div className="space-y-2.5">
             <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider">
               {kind === 'consommation'
@@ -538,6 +903,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
               </div>
             )}
           </div>
+          )}
 
           {/* Live Calculations Breakdown */}
           {kind === 'consommation' ? (

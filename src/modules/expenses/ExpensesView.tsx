@@ -27,7 +27,16 @@ import {
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
 import { calculateReserveBalance, type ReserveDetails } from '../../utils/reserveCalculator';
-import type { Expense, DailyEntry, ReserveMovement, AppSettings, PersonalSale } from '../../types';
+import type {
+  Expense,
+  DailyEntry,
+  ReserveMovement,
+  AppSettings,
+  PersonalSale,
+  DebtPayment,
+  Payment,
+  Employee,
+} from '../../types';
 
 interface ExpensesViewProps {
   settings: AppSettings;
@@ -46,6 +55,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>([]);
   const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
   const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
+  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<string>(toISOMonth(new Date()));
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
 
@@ -67,16 +79,22 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [exps, entries, movs, pSales] = await Promise.all([
+    const [exps, entries, movs, pSales, dPays, pays, emps] = await Promise.all([
       db.expenses.orderBy('date').reverse().toArray(),
       db.dailyEntries.toArray(),
       db.reserveMovements.toArray(),
       db.personalSales.toArray(),
+      db.debtPayments.toArray(),
+      db.payments.toArray(),
+      db.employees.toArray(),
     ]);
     setExpenses(exps);
     setDailyEntries(entries);
     setReserveMovements(movs);
     setPersonalSales(pSales);
+    setDebtPayments(dPays);
+    setPayments(pays);
+    setEmployees(emps);
   };
 
   const handleOpenAdd = () => {
@@ -154,7 +172,9 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // Month calculations (information secondaire)
   const monthEntries = dailyEntries.filter((e) => e.date.startsWith(selectedMonth));
-  const monthPersonalSales = personalSales.filter((p) => p.kind !== 'consommation' && p.date.startsWith(selectedMonth));
+  const monthPersonalSales = personalSales.filter(
+    (p) => p.kind !== 'consommation' && !p.isOpeningDebt && p.date.startsWith(selectedMonth)
+  );
   const totalSalesInMonthFC =
     monthEntries.reduce((acc, e) => acc + (e.totalSalesFC || 0), 0) +
     monthPersonalSales.reduce((acc, p) => acc + (p.totalSalesFC || 0), 0);
@@ -190,7 +210,10 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     reserveRate,
     startingPoint,
     null,
-    personalSales
+    personalSales,
+    payments,
+    employees,
+    debtPayments
   );
   const isCumulativeNegative = cumulativeDetails.soldeReserveFC < 0;
 

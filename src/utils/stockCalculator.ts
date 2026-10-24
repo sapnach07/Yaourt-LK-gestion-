@@ -84,6 +84,7 @@ export function calculateProductStock(
 
   let totalSoldByOwner = 0;
   for (const ps of personalSales) {
+    if (ps.isOpeningDebt) continue;
     const item = ps.items.find((i) => i.productId === productId);
     if (item) totalSoldByOwner += item.soldQty || 0;
   }
@@ -152,6 +153,7 @@ export function calculateProductStockBeforeDate(
 
   let soldBefore = 0;
   for (const ps of personalSales) {
+    if (ps.isOpeningDebt) continue;
     if (ps.date < targetDate) {
       const item = ps.items.find((i) => i.productId === productId);
       if (item) soldBefore += item.soldQty || 0;
@@ -213,6 +215,7 @@ export function calculateProductStockForPeriod(
 
   let soldByOwnerInPeriod = 0;
   for (const ps of personalSales) {
+    if (ps.isOpeningDebt) continue;
     if (ps.date >= startDate && ps.date <= endDate) {
       const item = ps.items.find((i) => i.productId === product.id);
       if (item) soldByOwnerInPeriod += item.soldQty || 0;
@@ -295,6 +298,7 @@ export function getAllActivityMonths(
     if (d.date && d.date.length >= 7) monthsSet.add(d.date.substring(0, 7));
   }
   for (const ps of personalSales) {
+    if (ps.isOpeningDebt) continue;
     if (ps.date && ps.date.length >= 7) monthsSet.add(ps.date.substring(0, 7));
   }
 

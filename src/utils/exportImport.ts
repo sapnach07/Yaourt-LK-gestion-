@@ -1,6 +1,7 @@
 import { db } from '../db/db';
 import { formatDate, formatFC, toISODate } from './formatters';
-import type { AppSettings } from '../types';
+import { normalizeCustomerName } from './debtCalculator';
+import type { AppSettings, Customer } from '../types';
 
 export interface BackupData {
   version: number;
@@ -14,6 +15,8 @@ export interface BackupData {
   reserveMovements?: any[];
   payments: any[];
   personalSales?: any[];
+  customers?: any[];
+  debtPayments?: any[];
   settings: AppSettings;
 }
 
@@ -31,6 +34,8 @@ export async function exportAllDataToJSON(): Promise<void> {
     reserveMovements,
     payments,
     personalSales,
+    customers,
+    debtPayments,
     settingsList,
   ] = await Promise.all([
     db.employees.toArray(),
@@ -41,6 +46,8 @@ export async function exportAllDataToJSON(): Promise<void> {
     db.reserveMovements.toArray(),
     db.payments.toArray(),
     db.personalSales.toArray(),
+    db.customers.toArray(),
+    db.debtPayments.toArray(),
     db.settings.toArray(),
   ]);
 
@@ -49,7 +56,7 @@ export async function exportAllDataToJSON(): Promise<void> {
   const dateStr = toISODate(now);
 
   const backup: BackupData = {
-    version: 3,
+    version: 4,
     exportDate: now.toISOString(),
     businessName: currentSettings?.businessName || 'Yaourt Gestion',
     employees,
@@ -60,8 +67,11 @@ export async function exportAllDataToJSON(): Promise<void> {
     reserveMovements,
     payments,
     personalSales,
+    customers,
+    debtPayments,
     settings: {
       ...currentSettings,
+      debtReminderDays: currentSettings?.debtReminderDays ?? 2,
       lastBackupDate: dateStr,
     },
   };
@@ -109,7 +119,51 @@ export async function restoreDataFromJSON(
         db.reserveMovements.clear(),
         db.payments.clear(),
         db.personalSales.clear(),
+        db.customers.clear(),
+        db.debtPayments.clear(),
       ]);
+    }
+
+    // Dédoublonnage insensible à la casse des clients lors d'une fusion (ou d'un import)
+    const existingCustomers: Customer[] = mode === 'merge' ? await db.customers.toArray() : [];
+    const byNormalizedName = new Map<string, Customer>();
+    for (const c of existingCustomers) {
+      byNormalizedName.set(normalizeCustomerName(c.name), c);
+    }
+
+    const customerIdRemap = new Map<string, string>();
+    if (Array.isArray(data.customers) && data.customers.length > 0) {
+      const customersToPut: Customer[] = [];
+      for (const rawC of data.customers) {
+        if (!rawC || !rawC.id || !rawC.name) continue;
+        const norm = normalizeCustomerName(String(rawC.name));
+        if (!norm) continue;
+        const already = byNormalizedName.get(norm);
+        if (already && already.id !== rawC.id) {
+          // Même nom (insensible à la casse) mais ID différent : conserver le client existant et remapper l'ID
+          customerIdRemap.set(rawC.id, already.id);
+          const merged: Customer = {
+            ...already,
+            phone: already.phone || rawC.phone || undefined,
+            note: already.note || rawC.note || undefined,
+          };
+          byNormalizedName.set(norm, merged);
+          customersToPut.push(merged);
+        } else {
+          const cleanC: Customer = {
+            id: String(rawC.id),
+            name: String(rawC.name).trim(),
+            phone: rawC.phone ? String(rawC.phone).trim() : undefined,
+            note: rawC.note ? String(rawC.note).trim() : undefined,
+            createdAt: Number(rawC.createdAt) || Date.now(),
+          };
+          byNormalizedName.set(norm, cleanC);
+          customersToPut.push(cleanC);
+        }
+      }
+      if (customersToPut.length > 0) {
+        await db.customers.bulkPut(customersToPut);
+      }
     }
 
     if (data.employees?.length) await db.employees.bulkPut(data.employees);
@@ -120,15 +174,58 @@ export async function restoreDataFromJSON(
     if (data.reserveMovements?.length) await db.reserveMovements.bulkPut(data.reserveMovements);
     if (data.payments?.length) await db.payments.bulkPut(data.payments);
     if (data.personalSales?.length) {
-      const sanitizedSales = data.personalSales.map((ps: any) => ({
-        ...ps,
-        kind: ps.kind || 'vente',
-        consumptionValueFC: ps.consumptionValueFC ?? 0,
-        consumptionPaidFC: ps.consumptionPaidFC,
-      }));
+      const sanitizedSales = data.personalSales.map((ps: any) => {
+        const kind = ps.kind || 'vente';
+        const isConsommation = kind === 'consommation';
+        const remappedCustomerId = ps.customerId
+          ? customerIdRemap.get(ps.customerId) || ps.customerId
+          : undefined;
+        return {
+          ...ps,
+          kind,
+          consumptionValueFC: ps.consumptionValueFC ?? 0,
+          consumptionPaidFC: ps.consumptionPaidFC,
+          // Une consommation ne peut jamais être à crédit ; une vente existante sans statut reste payée
+          paymentStatus: isConsommation
+            ? undefined
+            : ps.paymentStatus === 'credit'
+            ? 'credit'
+            : ps.paymentStatus === 'paid'
+            ? 'paid'
+            : undefined,
+          customerId: isConsommation ? undefined : remappedCustomerId,
+          customerName: isConsommation ? undefined : ps.customerName,
+          isOpeningDebt: isConsommation ? undefined : Boolean(ps.isOpeningDebt) || undefined,
+          writtenOffFC:
+            !isConsommation && ps.writtenOffFC !== undefined ? Number(ps.writtenOffFC) : undefined,
+          writtenOffAt:
+            !isConsommation && ps.writtenOffAt !== undefined ? Number(ps.writtenOffAt) : undefined,
+        };
+      });
       await db.personalSales.bulkPut(sanitizedSales);
     }
-    if (data.settings) await db.settings.put(data.settings);
+    if (Array.isArray(data.debtPayments) && data.debtPayments.length > 0) {
+      const sanitizedDebtPayments = data.debtPayments
+        .filter((dp: any) => dp && dp.id && dp.customerId && dp.date)
+        .map((dp: any) => ({
+          id: String(dp.id),
+          customerId: customerIdRemap.get(String(dp.customerId)) || String(dp.customerId),
+          date: String(dp.date),
+          amountFC: Math.max(0, Math.round(Number(dp.amountFC) || 0)),
+          note: dp.note ? String(dp.note).trim() : undefined,
+          createdAt: Number(dp.createdAt) || Date.now(),
+        }));
+      if (sanitizedDebtPayments.length > 0) {
+        await db.debtPayments.bulkPut(sanitizedDebtPayments);
+      }
+    }
+    if (data.settings) {
+      await db.settings.put({
+        ...data.settings,
+        debtReminderDays:
+          data.settings.debtReminderDays !== undefined ? data.settings.debtReminderDays : 2,
+      });
+    }
 
     return {
       success: true,

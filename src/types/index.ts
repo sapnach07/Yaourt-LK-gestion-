@@ -103,6 +103,23 @@ export interface PersonalSaleItem {
   soldQty: number;
 }
 
+export interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  note?: string;
+  createdAt: number;
+}
+
+export interface DebtPayment {
+  id: string;
+  customerId: string;
+  date: string; // YYYY-MM-DD
+  amountFC: number;
+  note?: string;
+  createdAt: number;
+}
+
 export interface PersonalSale {
   id: string;
   date: string; // YYYY-MM-DD
@@ -117,6 +134,12 @@ export interface PersonalSale {
   kind?: 'vente' | 'consommation'; // Défaut 'vente' si absent
   consumptionValueFC?: number; // Valeur de la consommation au prix complet (somme des quantité × prix unitaire)
   consumptionPaidFC?: number; // Montant payé par mes bénéfices (et reçu par la Caisse Réserve)
+  paymentStatus?: 'paid' | 'credit'; // absent = 'paid' (jamais 'credit' pour une consommation)
+  customerId?: string;
+  customerName?: string;
+  isOpeningDebt?: boolean;
+  writtenOffFC?: number; // reste abandonné
+  writtenOffAt?: number;
   notes?: string;
   createdAt: number;
 }
@@ -143,6 +166,8 @@ export interface AppSettings {
   ownerCommissionPct?: number;
   // Part payée pour ma consommation (optionnel, égal à expenseReservePct par défaut)
   consumptionPaidPct?: number;
+  // Délai avant rappel de dette en jours (par défaut 2)
+  debtReminderDays?: number;
   // Logo personnalisé de l'application (base64)
   appLogoBase64?: string;
 }
