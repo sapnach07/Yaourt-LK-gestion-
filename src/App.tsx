@@ -102,8 +102,8 @@ export default function App() {
             <img src={settings.appLogoBase64} alt="Logo" className="w-full h-full object-contain" />
           </div>
         ) : (
-          <div className="w-14 h-14 rounded-2xl overflow-hidden mb-3 shadow-md bg-teal-700 flex items-center justify-center">
-            <img src="/icon.svg" alt="Logo" className="w-full h-full object-cover" />
+          <div className="w-14 h-14 rounded-2xl bg-white/10 p-1.5 border border-white/20 mb-3 shadow-md flex items-center justify-center overflow-hidden">
+            <img src="/pwa-192x192.png" alt="Logo" className="w-full h-full object-contain" />
           </div>
         )}
         <h2 className="text-lg font-bold">{settings.businessName || 'Yaourt Gestion'}</h2>

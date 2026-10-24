@@ -496,7 +496,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           Yaourt Gestion est configurée pour fonctionner à 100 % hors ligne avec mise en cache locale intégrale de tous les fichiers.
         </p>
         <div className="pt-1">
-          <PWAInstallButton variant="full" />
+          <PWAInstallButton variant="full" logoBase64={settings.appLogoBase64} />
         </div>
       </div>
 
@@ -553,9 +553,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                   />
                 ) : (
                   <img
-                    src="/icon.svg"
+                    src="/pwa-192x192.png"
                     alt="Logo par défaut"
-                    className="w-full h-full object-cover rounded-xl"
+                    className="w-full h-full object-contain rounded-xl"
                   />
                 )}
               </div>

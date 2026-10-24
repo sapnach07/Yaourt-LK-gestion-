@@ -56,11 +56,11 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
             <img src={logoBase64} alt="Logo" className="w-full h-full object-contain" />
           </div>
         ) : (
-          <div className="w-16 h-16 rounded-3xl bg-teal-500/20 text-teal-400 flex items-center justify-center mb-4 border border-teal-500/30 shadow-lg shadow-teal-500/10 overflow-hidden">
+          <div className="w-16 h-16 rounded-3xl bg-white/10 p-2 border border-white/20 shadow-lg flex items-center justify-center mb-4 overflow-hidden backdrop-blur-sm">
             <img
-              src="/icon.svg"
+              src="/pwa-192x192.png"
               alt="Logo"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain"
               onError={(e) => {
                 (e.currentTarget as HTMLElement).style.display = 'none';
               }}

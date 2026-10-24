@@ -32,13 +32,12 @@ export const Header: React.FC<HeaderProps> = ({
             />
           </div>
         ) : (
-          <div className="w-8 h-8 rounded-xl bg-teal-700 text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0 overflow-hidden">
+          <div className="w-8 h-8 rounded-xl bg-white border border-slate-200/80 overflow-hidden flex items-center justify-center shadow-xs shrink-0 p-0.5">
             <img
-              src="/icon.svg"
+              src="/pwa-192x192.png"
               alt="Logo"
-              className="w-full h-full object-cover"
+              className="w-full h-full object-contain rounded-lg"
               onError={(e) => {
-                // If icon fails to load, fallback to styled text 'Y'
                 (e.currentTarget as HTMLElement).style.display = 'none';
               }}
             />
@@ -61,7 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Zone 2 / 3: Quick Action (PWA Install + Lock screen if PIN is enabled) */}
       <div className="flex items-center gap-1.5">
-        <PWAInstallButton variant="compact" />
+        <PWAInstallButton variant="compact" logoBase64={logoBase64} />
         {hasPin && onLockNow && (
           <button
             type="button"

@@ -4,9 +4,10 @@ import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface PWAInstallButtonProps {
   variant?: 'compact' | 'full';
+  logoBase64?: string;
 }
 
-export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'compact' }) => {
+export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'compact', logoBase64 }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showIOSGuide, setShowIOSGuide] = useState(false);
 
@@ -84,8 +85,14 @@ export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'c
           >
             <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl border border-slate-100 space-y-4">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-slate-900">
-                  <Smartphone className="w-5 h-5 text-teal-700" />
+                <div className="flex items-center gap-2.5 text-slate-900">
+                  <div className="w-8 h-8 rounded-xl bg-white border border-slate-200/80 p-0.5 flex items-center justify-center shrink-0 overflow-hidden shadow-xs">
+                    <img
+                      src={logoBase64 || '/pwa-192x192.png'}
+                      alt="Logo"
+                      className="w-full h-full object-contain rounded-lg"
+                    />
+                  </div>
                   <h3 className="text-sm font-bold">Installer sur l'écran d'accueil</h3>
                 </div>
                 <button
