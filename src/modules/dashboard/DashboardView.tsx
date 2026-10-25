@@ -42,6 +42,7 @@ import {
   getDateRangeForFilter,
   toISODate,
   toISOMonth,
+  formatMonthName,
   getFrenchDayName,
 } from '../../utils/formatters';
 import { generateMonthlyManagementReportPDF } from '../../utils/pdfGenerator';
@@ -176,6 +177,31 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     () => getDateRangeForFilter(periodType, customStart, customEnd),
     [periodType, customStart, customEnd]
   );
+
+  // Nom du mois ou de la période concernée pour la carte "Mes bénéfices (Gérant)"
+  const ownerProfitPeriodLabel = useMemo(() => {
+    if (periodType === 'this_month' || periodType === 'last_month') {
+      return formatMonthName(dateRange.startDate.slice(0, 7));
+    }
+    if (periodType === 'today') {
+      return `Aujourd’hui (${formatDate(dateRange.startDate)})`;
+    }
+    if (periodType === 'this_week') {
+      return `Cette semaine (${formatDate(dateRange.startDate)} → ${formatDate(dateRange.endDate)})`;
+    }
+    if (dateRange.startDate === dateRange.endDate) {
+      return `Le ${formatDate(dateRange.startDate)}`;
+    }
+    const ym = dateRange.startDate.slice(0, 7);
+    if (dateRange.endDate.slice(0, 7) === ym && dateRange.startDate.endsWith('-01')) {
+      const [yStr, mStr] = ym.split('-');
+      const lastDay = toISODate(new Date(parseInt(yStr, 10), parseInt(mStr, 10), 0));
+      if (dateRange.endDate === lastDay) {
+        return formatMonthName(ym);
+      }
+    }
+    return `Du ${formatDate(dateRange.startDate)} au ${formatDate(dateRange.endDate)}`;
+  }, [periodType, dateRange]);
 
   // Filter entries in current period vs previous period
   const { currentEntries, prevEntries, currentExpenses, prevExpenses, currentPersonalSales, prevPersonalSales } = useMemo(() => {
@@ -1333,6 +1359,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   Détail →
                 </span>
               </div>
+              <span className="text-[10px] font-semibold text-slate-500 block mt-0.5">
+                {ownerProfitPeriodLabel}
+              </span>
               <span className="text-base font-extrabold font-mono mt-0.5 block text-emerald-900">
                 {formatFC(currentMetrics.ownerShareFC, currency)}
               </span>

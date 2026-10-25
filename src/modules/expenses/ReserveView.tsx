@@ -29,6 +29,7 @@ import {
   formatMonthName,
   parseLocaleNumber,
   formatNumber,
+  getDateRangeForFilter,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import {
@@ -38,6 +39,11 @@ import {
   type ReserveDetails,
   type PeriodReserveSummary,
 } from '../../utils/reserveCalculator';
+import { computeDebtAllocations } from '../../utils/debtCalculator';
+import {
+  computeOwnerProfitStats,
+  computeBeneficesOutflowsForRange,
+} from '../dashboard/OwnerProfitView';
 import { PaymentsHistoryModal } from '../employees/PaymentsHistoryModal';
 import type {
   ReserveMovement,
@@ -198,6 +204,49 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     employees,
     debtPayments
   );
+
+  // Bénéfice gagné ce mois-ci (même calcul que "Mon Bénéfice" pour "Ce mois") et retraits du mois
+  const currentMonthBeneficesInfo = useMemo(() => {
+    const curMonthRange = getDateRangeForFilter('this_month');
+    const debtData = computeDebtAllocations(
+      personalSales,
+      debtPayments,
+      reserveRate,
+      [],
+      settings.debtReminderDays ?? 2
+    );
+    const monthProfit = computeOwnerProfitStats({
+      startDate: curMonthRange.startDate,
+      endDate: curMonthRange.endDate,
+      dailyEntries,
+      personalSales,
+      paymentAllocations: debtData.paymentAllocations,
+      totalRemainingDebtFC: debtData.totalRemainingFC,
+      employees,
+      reserveRate,
+      caisseStartDate: settings.caisseStartDate,
+      closedMonths: reserveDetails.closedMonths,
+    });
+    const outflows = computeBeneficesOutflowsForRange(
+      movements,
+      curMonthRange.startDate,
+      curMonthRange.endDate
+    );
+    return {
+      earnedFC: monthProfit.totalOwnerShareFC,
+      withdrawnFC: outflows.totalOutflowsFC,
+    };
+  }, [
+    personalSales,
+    debtPayments,
+    reserveRate,
+    settings.debtReminderDays,
+    settings.caisseStartDate,
+    dailyEntries,
+    employees,
+    reserveDetails.closedMonths,
+    movements,
+  ]);
 
   // Rappel de paiement vendeur(se)s (du 25 de chaque mois et pendant les premiers jours du mois suivant)
   const paymentReminder = useMemo(() => {
@@ -1025,13 +1074,37 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
             </span>
           </div>
 
-          <div>
-            <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-emerald-950 block">
-              {formatFC(reserveDetails.soldeBeneficesFC, currency)}
-            </span>
-            <span className="text-[11px] text-slate-500 block mt-0.5">
-              Disponible pour retrait personnel ou pour alimenter la Réserve
-            </span>
+          <div className="space-y-2">
+            <div>
+              <span className="text-[11px] font-bold text-emerald-800 block mb-0.5">
+                Solde total (anciens mois + ce mois)
+              </span>
+              <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-emerald-950 block">
+                {formatFC(reserveDetails.soldeBeneficesFC, currency)}
+              </span>
+              <span className="text-[11px] text-slate-500 block mt-0.5">
+                Disponible pour retrait personnel ou pour alimenter la Réserve
+              </span>
+            </div>
+
+            <div className="p-2.5 rounded-2xl bg-emerald-100/80 border border-emerald-300/80 text-xs space-y-0.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-extrabold text-emerald-950">
+                  Bénéfice gagné ce mois-ci :
+                </span>
+                <span className="font-black font-mono text-emerald-950 shrink-0">
+                  {formatFC(currentMonthBeneficesInfo.earnedFC, currency)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 text-[11px] text-emerald-800">
+                <span className="font-semibold">
+                  dont déjà retiré ce mois-ci :
+                </span>
+                <span className="font-bold font-mono shrink-0">
+                  {formatFC(currentMonthBeneficesInfo.withdrawnFC, currency)}
+                </span>
+              </div>
+            </div>
           </div>
 
           {/* Bouton d'action Bénéfices */}
