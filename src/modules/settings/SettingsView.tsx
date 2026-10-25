@@ -19,6 +19,7 @@ import {
   Calendar,
   RotateCcw,
   UserCheck,
+  Calculator,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -32,7 +33,13 @@ import { formatFC, formatDate, formatPercent, parseLocaleNumber, formatNumber } 
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
 import { PayslipSettingsSection } from './PayslipSettingsSection';
-import type { AppSettings, Product } from '../../types';
+import type {
+  AppSettings,
+  Product,
+  CostItem,
+  ProductCostConfig,
+  ProductPackagingLine,
+} from '../../types';
 
 interface SettingsViewProps {
   settings: AppSettings;
@@ -967,6 +974,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </form>
       </div>
 
+      {/* Section: Coût de revient : ingrédients et emballages */}
+      <CostingSettingsSection
+        settings={settings}
+        products={products}
+        onSettingsUpdated={onSettingsUpdated}
+        onShowToast={onShowToast}
+      />
+
       {/* Section 3: Expense Categories */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
         <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
@@ -1255,6 +1270,968 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             >
               Annuler
             </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+function formatUnitCostFC(amount: number, currency = 'FC'): string {
+  if (!Number.isFinite(amount) || isNaN(amount)) return `0 ${currency}`;
+  const rounded2 = Math.round(amount * 100) / 100;
+  const [intPart, decPart] = rounded2.toFixed(2).split('.');
+  const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+  const trimmedDec = decPart.replace(/0+$/, '');
+  return trimmedDec ? `${formattedInt},${trimmedDec} ${currency}` : `${formattedInt} ${currency}`;
+}
+
+interface CostingSettingsSectionProps {
+  settings: AppSettings;
+  products: Product[];
+  onSettingsUpdated: (newSettings: AppSettings) => void;
+  onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
+}
+
+const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
+  settings,
+  products,
+  onSettingsUpdated,
+  onShowToast,
+}) => {
+  const currency = settings.currency || 'FC';
+  const costItems: CostItem[] = settings.costItems ?? [];
+  const productCosting: Record<string, ProductCostConfig> = settings.productCosting ?? {};
+
+  // Shared modal state for adding/editing an ingredient or packaging item
+  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
+  const [editingItem, setEditingItem] = useState<CostItem | null>(null);
+  const [formKind, setFormKind] = useState<'ingredient' | 'packaging'>('ingredient');
+  const [formName, setFormName] = useState('');
+  const [formPurchaseUnit, setFormPurchaseUnit] = useState('');
+  const [formPurchasePrice, setFormPurchasePrice] = useState('');
+  const [formUsageUnitsPerPurchase, setFormUsageUnitsPerPurchase] = useState('');
+  const [formUsageUnit, setFormUsageUnit] = useState('');
+  const [formAllowDecimals, setFormAllowDecimals] = useState(false);
+
+  // Per-product drafts for volumeWeight and existing packaging line quantities
+  const [volumeInputs, setVolumeInputs] = useState<Record<string, string>>({});
+  const [lineQtyInputs, setLineQtyInputs] = useState<Record<string, string>>({});
+  const [newPkgItemIds, setNewPkgItemIds] = useState<Record<string, string>>({});
+  const [newPkgQtys, setNewPkgQtys] = useState<Record<string, string>>({});
+
+  const activeProducts = products.filter((p) => p.isActive);
+  const ingredients = costItems.filter((item) => item.kind === 'ingredient');
+  const packagings = costItems.filter((item) => item.kind === 'packaging');
+  const activePackagings = packagings.filter((item) => item.isActive);
+
+  const costItemsById = new Map<string, CostItem>();
+  for (const item of costItems) {
+    costItemsById.set(item.id, item);
+  }
+
+  // Sync per-product inputs when settings or products change
+  useEffect(() => {
+    const nextVols: Record<string, string> = {};
+    const nextLineQtys: Record<string, string> = {};
+    const currentCosting = settings.productCosting ?? {};
+
+    for (const prod of products) {
+      const cfg = currentCosting[prod.id];
+      const vol = cfg && cfg.volumeWeight > 0 ? cfg.volumeWeight : 1;
+      nextVols[prod.id] = formatNumber(vol, 4);
+      if (cfg?.packaging) {
+        for (const line of cfg.packaging) {
+          nextLineQtys[`${prod.id}::${line.itemId}`] = formatNumber(line.qtyPerUnit, 4);
+        }
+      }
+    }
+    setVolumeInputs(nextVols);
+    setLineQtyInputs(nextLineQtys);
+  }, [settings.productCosting, products]);
+
+  const persistCostingData = async (
+    nextItems: CostItem[],
+    nextProductCosting: Record<string, ProductCostConfig>
+  ) => {
+    const updated: AppSettings = {
+      ...settings,
+      costItems: nextItems,
+      productCosting: nextProductCosting,
+    };
+    await db.settings.put(updated);
+    onSettingsUpdated(updated);
+  };
+
+  const openAddItemModal = (kind: 'ingredient' | 'packaging') => {
+    setEditingItem(null);
+    setFormKind(kind);
+    setFormName('');
+    setFormPurchaseUnit('');
+    setFormPurchasePrice('');
+    setFormUsageUnitsPerPurchase('');
+    setFormUsageUnit('');
+    setFormAllowDecimals(false);
+    setIsItemModalOpen(true);
+  };
+
+  const openEditItemModal = (item: CostItem) => {
+    setEditingItem(item);
+    setFormKind(item.kind);
+    setFormName(item.name);
+    setFormPurchaseUnit(item.purchaseUnit);
+    setFormPurchasePrice(formatNumber(item.purchasePriceFC, 4));
+    setFormUsageUnitsPerPurchase(formatNumber(item.usageUnitsPerPurchase, 4));
+    setFormUsageUnit(item.usageUnit);
+    setFormAllowDecimals(item.allowDecimals);
+    setIsItemModalOpen(true);
+  };
+
+  const handleSaveCostItem = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedName = formName.trim();
+    const trimmedPurchaseUnit = formPurchaseUnit.trim();
+    const trimmedUsageUnit = formUsageUnit.trim();
+
+    if (!trimmedName) {
+      onShowToast('error', 'Veuillez saisir le nom de l’élément.');
+      return;
+    }
+    if (!trimmedPurchaseUnit) {
+      onShowToast('error', 'Veuillez indiquer l’unité d’achat (ex. paquet, bouteille).');
+      return;
+    }
+    if (formPurchasePrice.trim() === '') {
+      onShowToast('error', 'Veuillez saisir le prix d’achat.');
+      return;
+    }
+    const priceNum = parseLocaleNumber(formPurchasePrice);
+    if (!Number.isFinite(priceNum) || priceNum < 0) {
+      onShowToast('error', 'Le prix d’achat doit être un nombre positif ou nul.');
+      return;
+    }
+    if (formUsageUnitsPerPurchase.trim() === '') {
+      onShowToast('error', 'Veuillez indiquer le contenu d’un achat en unités d’utilisation.');
+      return;
+    }
+    const unitsNum = parseLocaleNumber(formUsageUnitsPerPurchase);
+    if (!Number.isFinite(unitsNum) || unitsNum <= 0) {
+      onShowToast('error', 'Le contenu d’un achat doit être supérieur à 0.');
+      return;
+    }
+    if (!trimmedUsageUnit) {
+      onShowToast('error', 'Veuillez indiquer l’unité d’utilisation (ex. boîte, sachet, bouchon).');
+      return;
+    }
+
+    if (editingItem) {
+      const updatedItem: CostItem = {
+        ...editingItem,
+        kind: formKind,
+        name: trimmedName,
+        purchaseUnit: trimmedPurchaseUnit,
+        purchasePriceFC: priceNum,
+        usageUnit: trimmedUsageUnit,
+        usageUnitsPerPurchase: unitsNum,
+        allowDecimals: formAllowDecimals,
+      };
+      const nextItems = costItems.map((it) => (it.id === editingItem.id ? updatedItem : it));
+      await persistCostingData(nextItems, productCosting);
+      setIsItemModalOpen(false);
+      onShowToast('success', `« ${trimmedName} » mis à jour.`);
+    } else {
+      const newItem: CostItem = {
+        id: 'cost_' + Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6),
+        kind: formKind,
+        name: trimmedName,
+        purchaseUnit: trimmedPurchaseUnit,
+        purchasePriceFC: priceNum,
+        usageUnit: trimmedUsageUnit,
+        usageUnitsPerPurchase: unitsNum,
+        allowDecimals: formAllowDecimals,
+        isActive: true,
+        createdAt: Date.now(),
+      };
+      const nextItems = [...costItems, newItem];
+      await persistCostingData(nextItems, productCosting);
+      setIsItemModalOpen(false);
+      onShowToast(
+        'success',
+        formKind === 'ingredient'
+          ? `Ingrédient « ${trimmedName} » ajouté.`
+          : `Emballage « ${trimmedName} » ajouté.`
+      );
+    }
+  };
+
+  const handleToggleCostItemActive = async (item: CostItem) => {
+    const nextActive = !item.isActive;
+    const nextItems = costItems.map((it) =>
+      it.id === item.id ? { ...it, isActive: nextActive } : it
+    );
+    await persistCostingData(nextItems, productCosting);
+    onShowToast(
+      'info',
+      nextActive
+        ? `« ${item.name} » réactivé.`
+        : `« ${item.name} » désactivé (conservé pour l’historique).`
+    );
+  };
+
+  const getSavedProductConfig = (productId: string): ProductCostConfig => {
+    const existing = productCosting[productId];
+    return {
+      volumeWeight: existing && existing.volumeWeight > 0 ? existing.volumeWeight : 1,
+      packaging: existing?.packaging ? [...existing.packaging] : [],
+    };
+  };
+
+  const handleSaveProductVolume = async (productId: string, rawVal?: string) => {
+    const savedCfg = getSavedProductConfig(productId);
+    const strVal = (rawVal !== undefined ? rawVal : volumeInputs[productId] ?? '').trim();
+
+    if (!strVal) {
+      setVolumeInputs((prev) => ({
+        ...prev,
+        [productId]: formatNumber(savedCfg.volumeWeight, 4),
+      }));
+      return;
+    }
+
+    const volNum = parseLocaleNumber(strVal);
+    if (!Number.isFinite(volNum) || volNum <= 0) {
+      onShowToast('error', 'Le volume relatif doit être un nombre supérieur à 0.');
+      setVolumeInputs((prev) => ({
+        ...prev,
+        [productId]: formatNumber(savedCfg.volumeWeight, 4),
+      }));
+      return;
+    }
+
+    if (volNum === savedCfg.volumeWeight && productCosting[productId]) {
+      setVolumeInputs((prev) => ({
+        ...prev,
+        [productId]: formatNumber(volNum, 4),
+      }));
+      return;
+    }
+
+    const nextCosting: Record<string, ProductCostConfig> = {
+      ...productCosting,
+      [productId]: {
+        ...savedCfg,
+        volumeWeight: volNum,
+      },
+    };
+    await persistCostingData(costItems, nextCosting);
+    onShowToast('success', 'Volume relatif enregistré.');
+  };
+
+  const handleSavePackagingLineQty = async (
+    productId: string,
+    itemId: string,
+    rawVal?: string
+  ) => {
+    const key = `${productId}::${itemId}`;
+    const savedCfg = getSavedProductConfig(productId);
+    const existingLine = savedCfg.packaging.find((l) => l.itemId === itemId);
+    if (!existingLine) return;
+
+    const strVal = (rawVal !== undefined ? rawVal : lineQtyInputs[key] ?? '').trim();
+    if (!strVal) {
+      setLineQtyInputs((prev) => ({
+        ...prev,
+        [key]: formatNumber(existingLine.qtyPerUnit, 4),
+      }));
+      return;
+    }
+
+    const qtyNum = parseLocaleNumber(strVal);
+    const item = costItemsById.get(itemId);
+
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+      onShowToast('error', 'La quantité par unité produite doit être supérieure à 0.');
+      setLineQtyInputs((prev) => ({
+        ...prev,
+        [key]: formatNumber(existingLine.qtyPerUnit, 4),
+      }));
+      return;
+    }
+
+    if (item && !item.allowDecimals && !Number.isInteger(qtyNum)) {
+      onShowToast(
+        'error',
+        `« ${item.name} » n’accepte pas les quantités avec virgule (nombre entier requis).`
+      );
+      setLineQtyInputs((prev) => ({
+        ...prev,
+        [key]: formatNumber(existingLine.qtyPerUnit, 4),
+      }));
+      return;
+    }
+
+    if (qtyNum === existingLine.qtyPerUnit) {
+      setLineQtyInputs((prev) => ({
+        ...prev,
+        [key]: formatNumber(qtyNum, 4),
+      }));
+      return;
+    }
+
+    const nextPackaging: ProductPackagingLine[] = savedCfg.packaging.map((l) =>
+      l.itemId === itemId ? { ...l, qtyPerUnit: qtyNum } : l
+    );
+
+    const nextCosting: Record<string, ProductCostConfig> = {
+      ...productCosting,
+      [productId]: {
+        ...savedCfg,
+        packaging: nextPackaging,
+      },
+    };
+    await persistCostingData(costItems, nextCosting);
+    onShowToast('success', 'Quantité d’emballage mise à jour.');
+  };
+
+  const handleAddPackagingLine = async (productId: string, availableItems: CostItem[]) => {
+    const selectedId = newPkgItemIds[productId] || availableItems[0]?.id || '';
+    const item = costItemsById.get(selectedId);
+    if (!item || item.kind !== 'packaging' || !item.isActive) {
+      onShowToast('error', 'Veuillez choisir un élément d’emballage actif.');
+      return;
+    }
+
+    const rawQty = (newPkgQtys[productId] ?? '1').trim();
+    const qtyNum = parseLocaleNumber(rawQty);
+    if (!Number.isFinite(qtyNum) || qtyNum <= 0) {
+      onShowToast('error', 'La quantité par unité produite doit être supérieure à 0.');
+      return;
+    }
+
+    if (!item.allowDecimals && !Number.isInteger(qtyNum)) {
+      onShowToast(
+        'error',
+        `« ${item.name} » n’accepte pas les quantités avec virgule (nombre entier requis).`
+      );
+      return;
+    }
+
+    const savedCfg = getSavedProductConfig(productId);
+    if (savedCfg.packaging.some((l) => l.itemId === item.id)) {
+      onShowToast('error', 'Cet emballage est déjà présent sur ce produit.');
+      return;
+    }
+
+    const draftVol = parseLocaleNumber(volumeInputs[productId] ?? '');
+    const effectiveVol =
+      Number.isFinite(draftVol) && draftVol > 0 ? draftVol : savedCfg.volumeWeight;
+
+    const nextCosting: Record<string, ProductCostConfig> = {
+      ...productCosting,
+      [productId]: {
+        volumeWeight: effectiveVol,
+        packaging: [...savedCfg.packaging, { itemId: item.id, qtyPerUnit: qtyNum }],
+      },
+    };
+
+    await persistCostingData(costItems, nextCosting);
+    setNewPkgItemIds((prev) => ({ ...prev, [productId]: '' }));
+    setNewPkgQtys((prev) => ({ ...prev, [productId]: '1' }));
+    onShowToast('success', `« ${item.name} » ajouté à l’emballage du produit.`);
+  };
+
+  const handleRemovePackagingLine = async (productId: string, itemId: string) => {
+    const savedCfg = getSavedProductConfig(productId);
+    const nextPackaging = savedCfg.packaging.filter((l) => l.itemId !== itemId);
+    const nextCosting: Record<string, ProductCostConfig> = {
+      ...productCosting,
+      [productId]: {
+        ...savedCfg,
+        packaging: nextPackaging,
+      },
+    };
+    await persistCostingData(costItems, nextCosting);
+    onShowToast('info', 'Ligne d’emballage retirée de ce produit.');
+  };
+
+  // Live preview inside the add/edit CostItem modal
+  const parsedFormPrice =
+    formPurchasePrice.trim() !== '' ? parseLocaleNumber(formPurchasePrice) : NaN;
+  const parsedFormUnits =
+    formUsageUnitsPerPurchase.trim() !== '' ? parseLocaleNumber(formUsageUnitsPerPurchase) : NaN;
+  const liveFormUnitCost =
+    Number.isFinite(parsedFormPrice) &&
+    parsedFormPrice >= 0 &&
+    Number.isFinite(parsedFormUnits) &&
+    parsedFormUnits > 0
+      ? parsedFormPrice / parsedFormUnits
+      : null;
+
+  const renderCostItemsList = (items: CostItem[], kind: 'ingredient' | 'packaging') => {
+    const sorted = [...items].sort((a, b) => {
+      if (a.isActive !== b.isActive) return a.isActive ? -1 : 1;
+      return a.createdAt - b.createdAt;
+    });
+
+    if (sorted.length === 0) {
+      return (
+        <p className="text-[11px] text-slate-500 italic py-2">
+          {kind === 'ingredient'
+            ? 'Aucun ingrédient enregistré pour le moment.'
+            : 'Aucun emballage enregistré pour le moment.'}
+        </p>
+      );
+    }
+
+    return (
+      <div className="divide-y divide-slate-100">
+        {sorted.map((item) => {
+          const unitCost =
+            item.usageUnitsPerPurchase > 0
+              ? item.purchasePriceFC / item.usageUnitsPerPurchase
+              : 0;
+          return (
+            <div
+              key={item.id}
+              className={`py-2.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 ${
+                item.isActive ? '' : 'opacity-60'
+              }`}
+            >
+              <div className="min-w-0 flex-1 space-y-0.5">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-xs font-bold text-slate-900">{item.name}</span>
+                  {!item.isActive && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-slate-200 text-slate-700 text-[10px] font-bold">
+                      Désactivé
+                    </span>
+                  )}
+                  <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-medium">
+                    {item.allowDecimals ? 'Avec virgule' : 'Entier uniquement'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-500">
+                  Achat : 1 {item.purchaseUnit} ({formatUnitCostFC(item.purchasePriceFC, currency)})
+                  {' → '}
+                  {formatNumber(item.usageUnitsPerPurchase, 4)} {item.usageUnit}
+                </p>
+                <p className="text-[11px] font-bold text-teal-800">
+                  Coût par {item.usageUnit} : {formatUnitCostFC(unitCost, currency)}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 self-end sm:self-center shrink-0">
+                <button
+                  type="button"
+                  onClick={() => openEditItemModal(item)}
+                  className="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold flex items-center gap-1 min-h-[34px]"
+                >
+                  <Edit2 className="w-3.5 h-3.5" />
+                  <span>Modifier</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleToggleCostItemActive(item)}
+                  className={`px-2.5 py-1.5 rounded-lg text-[11px] font-bold min-h-[34px] ${
+                    item.isActive
+                      ? 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
+                      : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                  }`}
+                >
+                  {item.isActive ? 'Désactiver' : 'Réactiver'}
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-4">
+      <div className="space-y-1">
+        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+          <Calculator className="w-4 h-4 text-teal-700" />
+          <span>Coût de revient : ingrédients et emballages</span>
+        </h3>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Estimation de coût uniquement : cette section ne crée aucune dépense et ne modifie jamais
+          les caisses, les bénéfices, le stock ni les ventes.
+        </p>
+      </div>
+
+      {/* Help example box */}
+      <div className="p-3 rounded-xl bg-teal-50/70 border border-teal-200/80 text-[11px] text-teal-900 leading-relaxed">
+        <span className="font-bold">Exemple :</span> Ex. paquet de sucre vanillé : prix 1 500,
+        contenu 10, unité sachet → 150 FC le sachet
+      </div>
+
+      {/* Sub-section 1: Ingrédients */}
+      <div className="p-3 rounded-xl border border-slate-200/80 bg-slate-50/40 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h4 className="text-xs font-bold text-slate-900">Ingrédients</h4>
+            <p className="text-[10px] text-slate-500">
+              Un élément désactivé n’est plus proposé pour les nouvelles productions mais reste
+              visible dans les anciennes.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openAddItemModal('ingredient')}
+            className="px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1 shrink-0 min-h-[38px]"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Ajouter</span>
+          </button>
+        </div>
+
+        {renderCostItemsList(ingredients, 'ingredient')}
+      </div>
+
+      {/* Sub-section 2: Emballages */}
+      <div className="p-3 rounded-xl border border-slate-200/80 bg-slate-50/40 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h4 className="text-xs font-bold text-slate-900">Emballages</h4>
+            <p className="text-[10px] text-slate-500">
+              Bouteilles vides, bouchons, sachets, étiquettes… (jamais supprimés définitivement).
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openAddItemModal('packaging')}
+            className="px-3 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center gap-1 shrink-0 min-h-[38px]"
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Ajouter</span>
+          </button>
+        </div>
+
+        {renderCostItemsList(packagings, 'packaging')}
+      </div>
+
+      {/* Sub-section 3: Volume relatif & Emballage par produit actif */}
+      <div className="space-y-3 pt-1">
+        <div>
+          <h4 className="text-xs font-bold text-slate-900">
+            Volume relatif & emballage par produit actif
+          </h4>
+          <p className="text-[11px] text-slate-500 leading-relaxed">
+            Sert à répartir le coût des ingrédients entre tes produits, ex. 1 bouteille = 2 sachets
+            → mets 2 pour la bouteille et 1 pour le sachet.
+          </p>
+        </div>
+
+        {activeProducts.length === 0 ? (
+          <p className="text-[11px] text-slate-500 italic">Aucun produit actif.</p>
+        ) : (
+          <div className="space-y-3">
+            {activeProducts.map((prod) => {
+              const savedCfg = getSavedProductConfig(prod.id);
+              const volInputStr = volumeInputs[prod.id] ?? formatNumber(savedCfg.volumeWeight, 4);
+              const parsedDraftVol = parseLocaleNumber(volInputStr);
+              const isVolDirty =
+                volInputStr.trim() !== '' &&
+                Number.isFinite(parsedDraftVol) &&
+                parsedDraftVol !== savedCfg.volumeWeight;
+
+              const usedItemIds = new Set(savedCfg.packaging.map((l) => l.itemId));
+              const selectablePackagings = activePackagings.filter(
+                (item) => !usedItemIds.has(item.id)
+              );
+              const selectedNewItemId =
+                newPkgItemIds[prod.id] && selectablePackagings.some((i) => i.id === newPkgItemIds[prod.id])
+                  ? newPkgItemIds[prod.id]
+                  : selectablePackagings[0]?.id || '';
+              const selectedNewItem = costItemsById.get(selectedNewItemId);
+
+              // Calculate live packaging cost per unit for this product
+              const packagingUnitCostFC = savedCfg.packaging.reduce((sum, line) => {
+                const item = costItemsById.get(line.itemId);
+                if (!item || item.usageUnitsPerPurchase <= 0) return sum;
+                const itemUnitCost = item.purchasePriceFC / item.usageUnitsPerPurchase;
+                const draftKey = `${prod.id}::${line.itemId}`;
+                const rawDraft = lineQtyInputs[draftKey];
+                const parsedDraft =
+                  rawDraft !== undefined && rawDraft.trim() !== ''
+                    ? parseLocaleNumber(rawDraft)
+                    : line.qtyPerUnit;
+                const effectiveQty =
+                  Number.isFinite(parsedDraft) && parsedDraft > 0 ? parsedDraft : line.qtyPerUnit;
+                return sum + effectiveQty * itemUnitCost;
+              }, 0);
+
+              return (
+                <div
+                  key={prod.id}
+                  className="p-3 rounded-xl border border-slate-200 bg-white space-y-3"
+                >
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <span className="text-xs font-extrabold text-slate-900">{prod.name}</span>
+                      <span className="ml-2 text-[11px] text-slate-500">
+                        (Prix vente : {formatFC(prod.defaultPrice, currency)})
+                      </span>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-lg bg-teal-50 border border-teal-200 text-[11px] font-bold text-teal-900">
+                      Coût d’emballage par unité : {formatUnitCostFC(packagingUnitCostFC, currency)}
+                    </span>
+                  </div>
+
+                  {/* Volume relatif */}
+                  <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200/70 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <label className="text-xs font-bold text-slate-800">Volume relatif</label>
+                      <div className="flex items-center gap-1.5">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={volInputStr}
+                          onChange={(e) =>
+                            setVolumeInputs((prev) => ({
+                              ...prev,
+                              [prod.id]: e.target.value.replace(/[^0-9.,]/g, ''),
+                            }))
+                          }
+                          onBlur={(e) => handleSaveProductVolume(prod.id, e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveProductVolume(prod.id, volInputStr);
+                            }
+                          }}
+                          className="w-20 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-bold text-slate-900 text-center"
+                        />
+                        {isVolDirty && (
+                          <button
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => handleSaveProductVolume(prod.id, volInputStr)}
+                            className="p-1.5 rounded-lg bg-teal-700 text-white hover:bg-teal-800"
+                            title="Enregistrer le volume relatif"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-snug">
+                      Sert à répartir le coût des ingrédients entre tes produits, ex. 1 bouteille =
+                      2 sachets → mets 2 pour la bouteille et 1 pour le sachet.
+                    </p>
+                  </div>
+
+                  {/* Emballage de ce produit */}
+                  <div className="space-y-2">
+                    <h5 className="text-[11px] font-bold text-slate-700">
+                      Emballage de ce produit
+                    </h5>
+
+                    {savedCfg.packaging.length === 0 ? (
+                      <p className="text-[11px] text-slate-400 italic">
+                        Aucun élément d’emballage associé à ce produit.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {savedCfg.packaging.map((line) => {
+                          const item = costItemsById.get(line.itemId);
+                          const draftKey = `${prod.id}::${line.itemId}`;
+                          const qtyStr =
+                            lineQtyInputs[draftKey] ?? formatNumber(line.qtyPerUnit, 4);
+                          const parsedQty = parseLocaleNumber(qtyStr);
+                          const isQtyDirty =
+                            qtyStr.trim() !== '' &&
+                            Number.isFinite(parsedQty) &&
+                            parsedQty !== line.qtyPerUnit;
+                          const itemUnitCost =
+                            item && item.usageUnitsPerPurchase > 0
+                              ? item.purchasePriceFC / item.usageUnitsPerPurchase
+                              : 0;
+                          const effectiveQty =
+                            Number.isFinite(parsedQty) && parsedQty > 0
+                              ? parsedQty
+                              : line.qtyPerUnit;
+                          const lineCost = effectiveQty * itemUnitCost;
+
+                          return (
+                            <div
+                              key={line.itemId}
+                              className="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-50 border border-slate-200/70"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="text-xs font-semibold text-slate-800">
+                                    {item ? item.name : 'Élément inconnu'}
+                                  </span>
+                                  {item && !item.isActive && (
+                                    <span className="text-[10px] font-bold text-amber-700 bg-amber-50 px-1.5 py-0.5 rounded">
+                                      désactivé
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] text-slate-500">
+                                  {formatUnitCostFC(lineCost, currency)} par unité produite
+                                </span>
+                              </div>
+
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <input
+                                  type="text"
+                                  inputMode={item?.allowDecimals ? 'decimal' : 'numeric'}
+                                  value={qtyStr}
+                                  onChange={(e) => {
+                                    const pattern = item?.allowDecimals
+                                      ? /[^0-9.,]/g
+                                      : /[^0-9]/g;
+                                    setLineQtyInputs((prev) => ({
+                                      ...prev,
+                                      [draftKey]: e.target.value.replace(pattern, ''),
+                                    }));
+                                  }}
+                                  onBlur={(e) =>
+                                    handleSavePackagingLineQty(prod.id, line.itemId, e.target.value)
+                                  }
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                      e.preventDefault();
+                                      handleSavePackagingLineQty(prod.id, line.itemId, qtyStr);
+                                    }
+                                  }}
+                                  className="w-16 px-2 py-1 rounded-lg border border-slate-300 bg-white text-xs font-bold text-slate-900 text-center"
+                                />
+                                <span className="text-[11px] text-slate-600 font-medium">
+                                  {item?.usageUnit || 'u.'}
+                                </span>
+                                {isQtyDirty && (
+                                  <button
+                                    type="button"
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    onClick={() =>
+                                      handleSavePackagingLineQty(prod.id, line.itemId, qtyStr)
+                                    }
+                                    className="p-1.5 rounded-lg bg-teal-700 text-white hover:bg-teal-800"
+                                    title="Enregistrer la quantité"
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePackagingLine(prod.id, line.itemId)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50"
+                                  title="Retirer cet emballage de ce produit"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Add packaging line form */}
+                    {selectablePackagings.length > 0 ? (
+                      <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 pt-1">
+                        <select
+                          value={selectedNewItemId}
+                          onChange={(e) =>
+                            setNewPkgItemIds((prev) => ({
+                              ...prev,
+                              [prod.id]: e.target.value,
+                            }))
+                          }
+                          className="flex-1 min-w-[140px] px-2.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-800 min-h-[38px]"
+                        >
+                          {selectablePackagings.map((pkg) => (
+                            <option key={pkg.id} value={pkg.id}>
+                              {pkg.name} ({pkg.usageUnit})
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          type="text"
+                          inputMode={selectedNewItem?.allowDecimals ? 'decimal' : 'numeric'}
+                          placeholder="Qté"
+                          value={newPkgQtys[prod.id] ?? '1'}
+                          onChange={(e) => {
+                            const pattern = selectedNewItem?.allowDecimals
+                              ? /[^0-9.,]/g
+                              : /[^0-9]/g;
+                            setNewPkgQtys((prev) => ({
+                              ...prev,
+                              [prod.id]: e.target.value.replace(pattern, ''),
+                            }));
+                          }}
+                          className="w-20 px-2.5 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-800 text-center min-h-[38px]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleAddPackagingLine(prod.id, selectablePackagings)}
+                          className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center gap-1 min-h-[38px] shrink-0"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Ajouter</span>
+                        </button>
+                      </div>
+                    ) : activePackagings.length === 0 ? (
+                      <p className="text-[10px] text-slate-500">
+                        Ajoutez d’abord un emballage actif dans la section « Emballages » ci-dessus
+                        (ex. bouteille vide, étiquette, sachet).
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Shared Add/Edit Modal for Ingrédient & Emballage */}
+      {isItemModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in overflow-y-auto"
+        >
+          <div className="w-full max-w-md bg-white rounded-3xl p-5 shadow-2xl border border-slate-100 space-y-4 my-auto">
+            <h3 className="text-base font-bold text-slate-900">
+              {editingItem
+                ? formKind === 'ingredient'
+                  ? 'Modifier l’ingrédient'
+                  : 'Modifier l’emballage'
+                : formKind === 'ingredient'
+                ? 'Nouvel ingrédient'
+                : 'Nouvel emballage'}
+            </h3>
+
+            <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 text-[11px] text-slate-600 leading-relaxed">
+              Ex. paquet de sucre vanillé : prix 1 500, contenu 10, unité sachet → 150 FC le sachet
+            </div>
+
+            <form onSubmit={handleSaveCostItem} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Nom</label>
+                <input
+                  type="text"
+                  value={formName}
+                  onChange={(e) => setFormName(e.target.value)}
+                  placeholder={
+                    formKind === 'ingredient'
+                      ? 'Ex. Sucre vanillé, Lait en poudre...'
+                      : 'Ex. Bouteille vide, Étiquette, Sachet...'
+                  }
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Unité d’achat
+                  </label>
+                  <input
+                    type="text"
+                    value={formPurchaseUnit}
+                    onChange={(e) => setFormPurchaseUnit(e.target.value)}
+                    placeholder="Ex. paquet, bouteille"
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Prix d’achat ({currency})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={formPurchasePrice}
+                    onChange={(e) =>
+                      setFormPurchasePrice(e.target.value.replace(/[^0-9.,]/g, ''))
+                    }
+                    placeholder="Ex. 1500"
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Contenu d’un achat
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={formUsageUnitsPerPurchase}
+                    onChange={(e) =>
+                      setFormUsageUnitsPerPurchase(e.target.value.replace(/[^0-9.,]/g, ''))
+                    }
+                    placeholder="Ex. 10"
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Unité d’utilisation
+                  </label>
+                  <input
+                    type="text"
+                    value={formUsageUnit}
+                    onChange={(e) => setFormUsageUnit(e.target.value)}
+                    placeholder="Ex. boîte, sachet, bouchon"
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
+                  />
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formAllowDecimals}
+                  onChange={(e) => setFormAllowDecimals(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                />
+                <span className="text-xs font-semibold text-slate-800">
+                  Accepter les quantités avec virgule
+                </span>
+              </label>
+
+              {/* Live unit cost display */}
+              <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-between gap-2">
+                <span className="text-xs font-bold text-teal-900">
+                  Coût par {formUsageUnit.trim() || 'unité d’utilisation'} :
+                </span>
+                <span className="text-sm font-extrabold text-teal-900 font-mono">
+                  {liveFormUnitCost !== null
+                    ? formatUnitCostFC(liveFormUnitCost, currency)
+                    : `— ${currency}`}
+                </span>
+              </div>
+
+              <div className="pt-1 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsItemModalOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 min-h-[44px]"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-teal-700 text-white text-xs font-bold hover:bg-teal-800 min-h-[44px]"
+                >
+                  {editingItem ? 'Enregistrer' : 'Ajouter'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

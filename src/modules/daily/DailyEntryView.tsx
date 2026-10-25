@@ -33,7 +33,11 @@ import {
 } from '../../utils/stockCalculator';
 import { computeDebtAllocations } from '../../utils/debtCalculator';
 import { DailyEntryModal } from './DailyEntryModal';
-import { ProductionStockModal } from './ProductionStockModal';
+import {
+  ProductionStockModal,
+  ProductionCostDetailModal,
+  formatCostAmountFC,
+} from './ProductionStockModal';
 import { PersonalSaleModal } from './PersonalSaleModal';
 import { MonthlyStockClosureModal } from './MonthlyStockClosureModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
@@ -113,6 +117,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
 
   const [isProdModalOpen, setIsProdModalOpen] = useState(false);
   const [prodToEdit, setProdToEdit] = useState<ProductionEntry | null>(null);
+  const [prodDetailToView, setProdDetailToView] = useState<ProductionEntry | null>(null);
 
   const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
   const [saleToEdit, setSaleToEdit] = useState<PersonalSale | null>(null);
@@ -1088,6 +1093,31 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                             {prod.notes}
                           </p>
                         )}
+
+                        {prod.costing && (
+                          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-[11px] font-bold font-mono text-slate-700">
+                              Coût : {formatCostAmountFC(prod.costing.totalCostFC, currency)} · Gain
+                              estimé :{' '}
+                              <span
+                                className={
+                                  prod.costing.netGainFC <= 0
+                                    ? 'text-rose-600'
+                                    : 'text-emerald-700'
+                                }
+                              >
+                                {formatCostAmountFC(prod.costing.netGainFC, currency)}
+                              </span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setProdDetailToView(prod)}
+                              className="px-2.5 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200/80 text-[11px] font-bold transition-colors"
+                            >
+                              Voir le détail
+                            </button>
+                          </div>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1">
@@ -1465,6 +1495,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         isOpen={isProdModalOpen}
         entryToEdit={prodToEdit}
         products={products}
+        settings={settings}
+        employees={employees}
+        productionEntries={productionEntries}
         onClose={() => {
           setIsProdModalOpen(false);
           setProdToEdit(null);
@@ -1473,6 +1506,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           onShowToast('success', 'Production enregistrée.');
           await loadAllData();
         }}
+      />
+
+      {/* Read-only Production Cost Detail Modal */}
+      <ProductionCostDetailModal
+        entry={prodDetailToView}
+        currency={currency}
+        onClose={() => setProdDetailToView(null)}
       />
 
       {/* Personal Sale Modal */}

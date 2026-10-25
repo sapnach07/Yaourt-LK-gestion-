@@ -56,11 +56,60 @@ export interface ProductionItem {
   producedQty: number;
 }
 
+export interface ProductionCostLine {
+  itemId: string;
+  name: string;
+  qty: number;
+  usageUnit: string;
+  unitCostFC: number;
+  totalFC: number;
+}
+
+export interface ProductionPackagingLineSnapshot {
+  itemId: string;
+  name: string;
+  qtyPerUnit: number;
+  totalQty: number;
+  usageUnit: string;
+  unitCostFC: number;
+  totalFC: number;
+}
+
+export interface ProductionProductCostSnapshot {
+  productId: string;
+  productName: string;
+  producedQty: number;
+  volumeWeight: number;
+  packagingUnitCostFC: number;
+  packagingTotalFC: number;
+  packagingLines?: ProductionPackagingLineSnapshot[];
+  ingredientShareFC: number;
+  unitCostFC: number;
+  sellPriceFC: number;
+  revenueFC: number;
+}
+
+export interface ProductionCosting {
+  lines: ProductionCostLine[];
+  ingredientsFC: number;
+  packagingFC: number;
+  totalCostFC: number;
+  sellPrices: Record<string, number>; // par productId
+  revenueFC: number;
+  gainFC: number;
+  commissionLabel: string;
+  commissionPct: number;
+  netGainFC: number;
+  sellerId?: string;
+  productBreakdown?: ProductionProductCostSnapshot[];
+}
+
 export interface ProductionEntry {
   id: string;
   date: string; // YYYY-MM-DD
   items: ProductionItem[];
   notes?: string;
+  costing?: ProductionCosting;
   createdAt: number;
 }
 
@@ -144,6 +193,29 @@ export interface PersonalSale {
   createdAt: number;
 }
 
+export interface CostItem {
+  id: string;
+  kind: 'ingredient' | 'packaging';
+  name: string;
+  purchaseUnit: string; // texte libre, ex. "paquet", "bouteille"
+  purchasePriceFC: number;
+  usageUnit: string; // texte libre, ex. "boîte", "sachet", "bouchon"
+  usageUnitsPerPurchase: number; // nombre > 0 : combien d'unités d'utilisation contient un achat
+  allowDecimals: boolean; // accepte ou non les quantités avec virgule
+  isActive: boolean;
+  createdAt: number;
+}
+
+export interface ProductPackagingLine {
+  itemId: string;
+  qtyPerUnit: number;
+}
+
+export interface ProductCostConfig {
+  volumeWeight: number; // nombre > 0, 1 par défaut : volume relatif, ex. sachet = 1, bouteille = 2
+  packaging: ProductPackagingLine[];
+}
+
 export interface AppSettings {
   id: string; // 'app_settings'
   businessName: string; // Default: 'Yaourt Gestion'
@@ -170,6 +242,9 @@ export interface AppSettings {
   debtReminderDays?: number;
   // Logo personnalisé de l'application (base64)
   appLogoBase64?: string;
+  // Coût de revient : ingrédients et emballages (estimation uniquement, optionnel)
+  costItems?: CostItem[];
+  productCosting?: Record<string, ProductCostConfig>;
 }
 
 export interface PayslipSettings {

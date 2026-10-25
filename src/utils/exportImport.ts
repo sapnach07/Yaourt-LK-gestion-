@@ -1,7 +1,161 @@
 import { db } from '../db/db';
 import { formatDate, formatFC, toISODate } from './formatters';
 import { normalizeCustomerName } from './debtCalculator';
-import type { AppSettings, Customer } from '../types';
+import type {
+  AppSettings,
+  Customer,
+  CostItem,
+  ProductCostConfig,
+  ProductionCosting,
+  ProductionCostLine,
+  ProductionProductCostSnapshot,
+} from '../types';
+
+function sanitizeCostItems(raw: unknown): CostItem[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const items: CostItem[] = [];
+  for (const it of raw) {
+    if (!it || typeof it !== 'object' || !it.id || !it.name) continue;
+    const usageUnits = Number(it.usageUnitsPerPurchase);
+    if (isNaN(usageUnits) || usageUnits <= 0) continue;
+    const price = Number(it.purchasePriceFC);
+    items.push({
+      id: String(it.id),
+      kind: it.kind === 'packaging' ? 'packaging' : 'ingredient',
+      name: String(it.name).trim(),
+      purchaseUnit: String(it.purchaseUnit || '').trim() || 'unité',
+      purchasePriceFC: !isNaN(price) && price >= 0 ? price : 0,
+      usageUnit: String(it.usageUnit || '').trim() || 'unité',
+      usageUnitsPerPurchase: usageUnits,
+      allowDecimals: Boolean(it.allowDecimals),
+      isActive: it.isActive !== false,
+      createdAt: Number(it.createdAt) || Date.now(),
+    });
+  }
+  return items;
+}
+
+function sanitizeProductCosting(
+  raw: unknown
+): Record<string, ProductCostConfig> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, ProductCostConfig> = {};
+  for (const [productId, cfg] of Object.entries(raw as Record<string, any>)) {
+    if (!productId || !cfg || typeof cfg !== 'object') continue;
+    const vw = Number(cfg.volumeWeight);
+    const volumeWeight = !isNaN(vw) && vw > 0 ? vw : 1;
+    const packaging = Array.isArray(cfg.packaging)
+      ? cfg.packaging
+          .filter(
+            (line: any) =>
+              line &&
+              line.itemId &&
+              !isNaN(Number(line.qtyPerUnit)) &&
+              Number(line.qtyPerUnit) > 0
+          )
+          .map((line: any) => ({
+            itemId: String(line.itemId),
+            qtyPerUnit: Number(line.qtyPerUnit),
+          }))
+      : [];
+    result[productId] = { volumeWeight, packaging };
+  }
+  return result;
+}
+
+function sanitizeProductionCosting(raw: unknown): ProductionCosting | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, any>;
+  if (!Array.isArray(obj.lines) || obj.lines.length === 0) return undefined;
+
+  const lines: ProductionCostLine[] = obj.lines
+    .filter((l: any) => l && typeof l === 'object' && l.itemId && l.name && Number(l.qty) > 0)
+    .map((l: any) => {
+      const qty = Number(l.qty);
+      const unitCostFC = Number(l.unitCostFC) >= 0 ? Number(l.unitCostFC) : 0;
+      const totalFC = Number.isFinite(Number(l.totalFC)) ? Number(l.totalFC) : qty * unitCostFC;
+      return {
+        itemId: String(l.itemId),
+        name: String(l.name),
+        qty,
+        usageUnit: String(l.usageUnit || 'unité'),
+        unitCostFC,
+        totalFC,
+      };
+    });
+
+  if (lines.length === 0) return undefined;
+
+  const sellPrices: Record<string, number> = {};
+  if (obj.sellPrices && typeof obj.sellPrices === 'object' && !Array.isArray(obj.sellPrices)) {
+    for (const [prodId, price] of Object.entries(obj.sellPrices)) {
+      const pNum = Number(price);
+      if (prodId && Number.isFinite(pNum) && pNum >= 0) {
+        sellPrices[prodId] = pNum;
+      }
+    }
+  }
+
+  let productBreakdown: ProductionProductCostSnapshot[] | undefined = undefined;
+  if (Array.isArray(obj.productBreakdown)) {
+    productBreakdown = obj.productBreakdown
+      .filter((pb: any) => pb && typeof pb === 'object' && pb.productId)
+      .map((pb: any) => ({
+        productId: String(pb.productId),
+        productName: String(pb.productName || ''),
+        producedQty: Number(pb.producedQty) || 0,
+        volumeWeight: Number(pb.volumeWeight) > 0 ? Number(pb.volumeWeight) : 1,
+        packagingUnitCostFC: Number(pb.packagingUnitCostFC) || 0,
+        packagingTotalFC: Number(pb.packagingTotalFC) || 0,
+        packagingLines: Array.isArray(pb.packagingLines)
+          ? pb.packagingLines
+              .filter((pl: any) => pl && typeof pl === 'object' && pl.itemId)
+              .map((pl: any) => ({
+                itemId: String(pl.itemId),
+                name: String(pl.name || ''),
+                qtyPerUnit: Number(pl.qtyPerUnit) || 0,
+                totalQty: Number(pl.totalQty) || 0,
+                usageUnit: String(pl.usageUnit || 'unité'),
+                unitCostFC: Number(pl.unitCostFC) || 0,
+                totalFC: Number(pl.totalFC) || 0,
+              }))
+          : undefined,
+        ingredientShareFC: Number(pb.ingredientShareFC) || 0,
+        unitCostFC: Number(pb.unitCostFC) || 0,
+        sellPriceFC: Number(pb.sellPriceFC) || 0,
+        revenueFC: Number(pb.revenueFC) || 0,
+      }));
+  }
+
+  const ingredientsFC = Number(obj.ingredientsFC) || 0;
+  const packagingFC = Number(obj.packagingFC) || 0;
+  const totalCostFC = Number.isFinite(Number(obj.totalCostFC))
+    ? Number(obj.totalCostFC)
+    : ingredientsFC + packagingFC;
+  const revenueFC = Number(obj.revenueFC) || 0;
+  const gainFC = Number.isFinite(Number(obj.gainFC))
+    ? Number(obj.gainFC)
+    : revenueFC - totalCostFC;
+  const commissionPct = Number(obj.commissionPct) >= 0 ? Number(obj.commissionPct) : 0;
+  const netGainFC = Number.isFinite(Number(obj.netGainFC))
+    ? Number(obj.netGainFC)
+    : gainFC - (commissionPct / 100) * revenueFC;
+
+  return {
+    lines,
+    ingredientsFC,
+    packagingFC,
+    totalCostFC,
+    sellPrices,
+    revenueFC,
+    gainFC,
+    commissionLabel: String(obj.commissionLabel || 'Moi-même'),
+    commissionPct,
+    netGainFC,
+    sellerId: obj.sellerId ? String(obj.sellerId) : undefined,
+    productBreakdown,
+  };
+}
 
 export interface BackupData {
   version: number;
@@ -72,6 +226,8 @@ export async function exportAllDataToJSON(): Promise<void> {
     settings: {
       ...currentSettings,
       debtReminderDays: currentSettings?.debtReminderDays ?? 2,
+      costItems: currentSettings?.costItems,
+      productCosting: currentSettings?.productCosting,
       lastBackupDate: dateStr,
     },
   };
@@ -169,7 +325,17 @@ export async function restoreDataFromJSON(
     if (data.employees?.length) await db.employees.bulkPut(data.employees);
     if (data.products?.length) await db.products.bulkPut(data.products);
     if (data.dailyEntries?.length) await db.dailyEntries.bulkPut(data.dailyEntries);
-    if (data.productionEntries?.length) await db.productionEntries.bulkPut(data.productionEntries);
+    if (data.productionEntries?.length) {
+      const sanitizedProductions = data.productionEntries.map((pe: any) => {
+        const sanitizedCosting = sanitizeProductionCosting(pe?.costing);
+        if (sanitizedCosting) {
+          return { ...pe, costing: sanitizedCosting };
+        }
+        const { costing: _unused, ...rest } = pe || {};
+        return rest;
+      });
+      await db.productionEntries.bulkPut(sanitizedProductions);
+    }
     if (data.expenses?.length) await db.expenses.bulkPut(data.expenses);
     if (data.reserveMovements?.length) await db.reserveMovements.bulkPut(data.reserveMovements);
     if (data.payments?.length) await db.payments.bulkPut(data.payments);
@@ -220,10 +386,46 @@ export async function restoreDataFromJSON(
       }
     }
     if (data.settings) {
+      const existingSettings =
+        mode === 'merge' ? await db.settings.get('app_settings') : undefined;
+
+      const importedCostItems = sanitizeCostItems(data.settings.costItems);
+      const importedProductCosting = sanitizeProductCosting(data.settings.productCosting);
+
+      let finalCostItems: CostItem[] | undefined = importedCostItems;
+      let finalProductCosting: Record<string, ProductCostConfig> | undefined =
+        importedProductCosting;
+
+      if (mode === 'merge') {
+        if (existingSettings?.costItems || importedCostItems) {
+          const map = new Map<string, CostItem>();
+          for (const item of existingSettings?.costItems || []) {
+            map.set(item.id, item);
+          }
+          for (const item of importedCostItems || []) {
+            map.set(item.id, item);
+          }
+          finalCostItems = Array.from(map.values());
+        }
+
+        if (existingSettings?.productCosting || importedProductCosting) {
+          finalProductCosting = {
+            ...(existingSettings?.productCosting || {}),
+            ...(importedProductCosting || {}),
+          };
+        }
+      }
+
       await db.settings.put({
+        ...(existingSettings || {}),
         ...data.settings,
+        id: 'app_settings',
         debtReminderDays:
-          data.settings.debtReminderDays !== undefined ? data.settings.debtReminderDays : 2,
+          data.settings.debtReminderDays !== undefined
+            ? data.settings.debtReminderDays
+            : (existingSettings?.debtReminderDays ?? 2),
+        costItems: finalCostItems,
+        productCosting: finalProductCosting,
       });
     }
 
