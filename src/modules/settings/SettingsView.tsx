@@ -20,6 +20,7 @@ import {
   RotateCcw,
   UserCheck,
   Calculator,
+  ChevronRight,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -45,12 +46,14 @@ interface SettingsViewProps {
   settings: AppSettings;
   onSettingsUpdated: (newSettings: AppSettings) => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
+  onOpenIngredientStock?: () => void;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   settings,
   onSettingsUpdated,
   onShowToast,
+  onOpenIngredientStock,
 }) => {
   // Local settings form state
   const [businessName, setBusinessName] = useState(settings.businessName || 'Yaourt Gestion');
@@ -483,6 +486,30 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           Configuration du business, produits, sécurité et exports
         </p>
       </div>
+
+      {/* Shortcut Button: Stock d'ingrédients */}
+      {onOpenIngredientStock && (
+        <button
+          type="button"
+          onClick={onOpenIngredientStock}
+          className="w-full p-4 rounded-2xl bg-teal-800 hover:bg-teal-900 active:scale-[0.99] text-white shadow-sm flex items-center justify-between gap-3 transition-all text-left"
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+              <Package className="w-5 h-5 text-white" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-sm font-extrabold block leading-tight">
+                Stock d’ingrédients
+              </span>
+              <span className="text-[11px] text-teal-100 block truncate mt-0.5">
+                Stock calculé, historique des prix, ajustements et liste d’achats
+              </span>
+            </div>
+          </div>
+          <ChevronRight className="w-5 h-5 text-teal-200 shrink-0" />
+        </button>
+      )}
 
       {/* Storage persistence notification */}
       <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-200/70 flex items-center justify-between">
@@ -982,6 +1009,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         onShowToast={onShowToast}
       />
 
+      {/* Section: Stock de départ & alertes (ingrédients et emballages) */}
+      <IngredientStockSettingsSection
+        settings={settings}
+        onSettingsUpdated={onSettingsUpdated}
+        onShowToast={onShowToast}
+      />
+
       {/* Section 3: Expense Categories */}
       <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
         <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
@@ -1313,6 +1347,9 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
   const [formUsageUnitsPerPurchase, setFormUsageUnitsPerPurchase] = useState('');
   const [formUsageUnit, setFormUsageUnit] = useState('');
   const [formAllowDecimals, setFormAllowDecimals] = useState(false);
+  const [formTrackStock, setFormTrackStock] = useState(true);
+  const [formExpenseCategory, setFormExpenseCategory] = useState('');
+  const [formAutoUpdateRefPrice, setFormAutoUpdateRefPrice] = useState(false);
 
   // Per-product drafts for volumeWeight and existing packaging line quantities
   const [volumeInputs, setVolumeInputs] = useState<Record<string, string>>({});
@@ -1372,6 +1409,9 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
     setFormUsageUnitsPerPurchase('');
     setFormUsageUnit('');
     setFormAllowDecimals(false);
+    setFormTrackStock(true);
+    setFormExpenseCategory('');
+    setFormAutoUpdateRefPrice(false);
     setIsItemModalOpen(true);
   };
 
@@ -1384,6 +1424,9 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
     setFormUsageUnitsPerPurchase(formatNumber(item.usageUnitsPerPurchase, 4));
     setFormUsageUnit(item.usageUnit);
     setFormAllowDecimals(item.allowDecimals);
+    setFormTrackStock(item.trackStock !== false);
+    setFormExpenseCategory(item.expenseCategory || '');
+    setFormAutoUpdateRefPrice(Boolean(item.autoUpdateRefPrice));
     setIsItemModalOpen(true);
   };
 
@@ -1424,6 +1467,8 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
       return;
     }
 
+    const cleanedExpenseCategory = formExpenseCategory.trim() || undefined;
+
     if (editingItem) {
       const updatedItem: CostItem = {
         ...editingItem,
@@ -1434,6 +1479,9 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
         usageUnit: trimmedUsageUnit,
         usageUnitsPerPurchase: unitsNum,
         allowDecimals: formAllowDecimals,
+        trackStock: formTrackStock,
+        expenseCategory: cleanedExpenseCategory,
+        autoUpdateRefPrice: formAutoUpdateRefPrice,
       };
       const nextItems = costItems.map((it) => (it.id === editingItem.id ? updatedItem : it));
       await persistCostingData(nextItems, productCosting);
@@ -1449,6 +1497,9 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
         usageUnit: trimmedUsageUnit,
         usageUnitsPerPurchase: unitsNum,
         allowDecimals: formAllowDecimals,
+        trackStock: formTrackStock,
+        expenseCategory: cleanedExpenseCategory,
+        autoUpdateRefPrice: formAutoUpdateRefPrice,
         isActive: true,
         createdAt: Date.now(),
       };
@@ -1708,6 +1759,16 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
                   <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-600 text-[10px] font-medium">
                     {item.allowDecimals ? 'Avec virgule' : 'Entier uniquement'}
                   </span>
+                  {item.trackStock === false && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-slate-100 text-slate-500 text-[10px] font-medium">
+                      Stock non suivi
+                    </span>
+                  )}
+                  {item.expenseCategory && (
+                    <span className="px-1.5 py-0.5 rounded-md bg-teal-50 text-teal-800 text-[10px] font-semibold">
+                      {item.expenseCategory}
+                    </span>
+                  )}
                 </div>
                 <p className="text-[11px] text-slate-500">
                   Achat : 1 {item.purchaseUnit} ({formatUnitCostFC(item.purchasePriceFC, currency)})
@@ -2204,6 +2265,52 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
                 </span>
               </label>
 
+              <label className="flex items-center gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formTrackStock}
+                  onChange={(e) => setFormTrackStock(e.target.checked)}
+                  className="w-4 h-4 rounded border-slate-300 text-teal-700 focus:ring-teal-600"
+                />
+                <span className="text-xs font-semibold text-slate-800">
+                  Suivre le stock
+                </span>
+              </label>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Catégorie de dépense associée
+                </label>
+                <select
+                  value={formExpenseCategory}
+                  onChange={(e) => setFormExpenseCategory(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-semibold text-slate-800 min-h-[38px]"
+                >
+                  <option value="">— Aucune catégorie associée —</option>
+                  {formExpenseCategory &&
+                    !(settings.expenseCategories || []).includes(formExpenseCategory) && (
+                      <option value={formExpenseCategory}>{formExpenseCategory}</option>
+                    )}
+                  {(settings.expenseCategories || []).map((cat) => (
+                    <option key={cat} value={cat}>
+                      {cat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formAutoUpdateRefPrice}
+                  onChange={(e) => setFormAutoUpdateRefPrice(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600 shrink-0"
+                />
+                <span className="text-xs font-semibold text-slate-800 leading-snug">
+                  Mettre à jour automatiquement le prix de référence après chaque achat
+                </span>
+              </label>
+
               {/* Live unit cost display */}
               <div className="p-3 rounded-xl bg-teal-50 border border-teal-200 flex items-center justify-between gap-2">
                 <span className="text-xs font-bold text-teal-900">
@@ -2238,3 +2345,244 @@ const CostingSettingsSection: React.FC<CostingSettingsSectionProps> = ({
     </div>
   );
 };
+
+interface IngredientStockSettingsSectionProps {
+  settings: AppSettings;
+  onSettingsUpdated: (newSettings: AppSettings) => void;
+  onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
+}
+
+const IngredientStockSettingsSection: React.FC<IngredientStockSettingsSectionProps> = ({
+  settings,
+  onSettingsUpdated,
+  onShowToast,
+}) => {
+  const costItems = settings.costItems ?? [];
+  const trackedItems = costItems.filter(
+    (it) => it.isActive !== false && it.trackStock !== false
+  );
+
+  const [stockStartDate, setStockStartDate] = useState(settings.stockStartDate || '');
+  const [stockStartInputs, setStockStartInputs] = useState<Record<string, string>>({});
+  const [stockLowBatchesStr, setStockLowBatchesStr] = useState(
+    formatNumber(settings.stockLowBatches ?? 1, 2)
+  );
+  const [priceRiseAlertPctStr, setPriceRiseAlertPctStr] = useState(
+    formatNumber(settings.priceRiseAlertPct ?? 5, 2)
+  );
+
+  useEffect(() => {
+    setStockStartDate(settings.stockStartDate || '');
+    setStockLowBatchesStr(formatNumber(settings.stockLowBatches ?? 1, 2));
+    setPriceRiseAlertPctStr(formatNumber(settings.priceRiseAlertPct ?? 5, 2));
+
+    const nextInputs: Record<string, string> = {};
+    const currentStart = settings.stockStart ?? {};
+    for (const item of settings.costItems ?? []) {
+      const val = currentStart[item.id];
+      if (val !== undefined && Number.isFinite(val)) {
+        nextInputs[item.id] = formatNumber(val, 4);
+      } else {
+        nextInputs[item.id] = '0';
+      }
+    }
+    setStockStartInputs(nextInputs);
+  }, [
+    settings.stockStartDate,
+    settings.stockStart,
+    settings.stockLowBatches,
+    settings.priceRiseAlertPct,
+    settings.costItems,
+  ]);
+
+  const handleSaveStockSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const parsedLowBatches =
+      stockLowBatchesStr.trim() === '' ? 1 : parseLocaleNumber(stockLowBatchesStr);
+    if (!Number.isFinite(parsedLowBatches) || parsedLowBatches < 0) {
+      onShowToast('error', 'Le seuil de stock bas (en fournées) doit être positif ou nul.');
+      return;
+    }
+
+    const parsedPriceRisePct =
+      priceRiseAlertPctStr.trim() === '' ? 5 : parseLocaleNumber(priceRiseAlertPctStr);
+    if (!Number.isFinite(parsedPriceRisePct) || parsedPriceRisePct < 0) {
+      onShowToast('error', 'Le seuil d’alerte de hausse de prix (%) doit être positif ou nul.');
+      return;
+    }
+
+    const nextStockStart: Record<string, number> = { ...(settings.stockStart ?? {}) };
+    for (const item of trackedItems) {
+      const raw = (stockStartInputs[item.id] ?? '0').trim();
+      const qty = raw === '' ? 0 : parseLocaleNumber(raw);
+      if (!Number.isFinite(qty) || qty < 0) {
+        onShowToast(
+          'error',
+          `La quantité de départ pour « ${item.name} » doit être positive ou nulle.`
+        );
+        return;
+      }
+      if (!item.allowDecimals && !Number.isInteger(qty)) {
+        onShowToast(
+          'error',
+          `« ${item.name} » n’accepte pas les quantités avec virgule (nombre entier requis).`
+        );
+        return;
+      }
+      nextStockStart[item.id] = qty;
+    }
+
+    const updated: AppSettings = {
+      ...settings,
+      stockStartDate: stockStartDate.trim() || undefined,
+      stockStart: nextStockStart,
+      stockLowBatches: parsedLowBatches,
+      priceRiseAlertPct: parsedPriceRisePct,
+    };
+
+    await db.settings.put(updated);
+    onSettingsUpdated(updated);
+    onShowToast('success', 'Stock de départ et alertes enregistrés.');
+  };
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-4">
+      <div className="space-y-1">
+        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+          <Package className="w-4 h-4 text-teal-700" />
+          <span>Stock de départ & alertes (ingrédients)</span>
+        </h3>
+        <p className="text-[11px] text-slate-500 leading-relaxed">
+          Définissez votre stock initial à une date donnée ainsi que vos seuils d’alerte. Ce suivi
+          ne modifie jamais les caisses, les dépenses ni le stock des produits finis.
+        </p>
+      </div>
+
+      <form onSubmit={handleSaveStockSettings} className="space-y-3.5">
+        {/* Date du stock de départ */}
+        <div>
+          <label className="block text-xs font-bold text-slate-700 mb-1">
+            Date du stock de départ
+          </label>
+          <input
+            type="date"
+            value={stockStartDate}
+            onChange={(e) => setStockStartDate(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
+          />
+          <p className="text-[10px] text-slate-400 mt-1">
+            Seuls les achats, productions et ajustements datés à partir de cette date seront pris en
+            compte.
+          </p>
+        </div>
+
+        {/* Lignes par élément suivi */}
+        <div className="space-y-2">
+          <h4 className="text-xs font-bold text-slate-800">
+            Quantités de départ (en unités d’utilisation)
+          </h4>
+
+          {trackedItems.length === 0 ? (
+            <p className="text-[11px] text-slate-500 italic py-1">
+              Aucun élément suivi pour le moment. Ajoutez des ingrédients ou emballages ci-dessus.
+            </p>
+          ) : (
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200/80 bg-slate-50/50">
+              {trackedItems.map((item) => {
+                const rawVal = stockStartInputs[item.id] ?? '0';
+                const parsedUsage = rawVal.trim() === '' ? 0 : parseLocaleNumber(rawVal);
+                const safeUsage =
+                  Number.isFinite(parsedUsage) && parsedUsage >= 0 ? parsedUsage : 0;
+                const unitsPerPurchase =
+                  item.usageUnitsPerPurchase > 0 ? item.usageUnitsPerPurchase : 1;
+                const equivPurchase = safeUsage / unitsPerPurchase;
+
+                return (
+                  <div
+                    key={item.id}
+                    className="p-2.5 flex items-center justify-between gap-2.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <span className="text-xs font-bold text-slate-900 block truncate">
+                        {item.name}
+                      </span>
+                      <span className="text-[11px] text-teal-800 font-semibold block">
+                        Équivalent : {formatNumber(equivPurchase, 2)} {item.purchaseUnit}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <input
+                        type="text"
+                        inputMode={item.allowDecimals ? 'decimal' : 'numeric'}
+                        value={rawVal}
+                        onChange={(e) => {
+                          const pattern = item.allowDecimals ? /[^0-9.,]/g : /[^0-9]/g;
+                          setStockStartInputs((prev) => ({
+                            ...prev,
+                            [item.id]: e.target.value.replace(pattern, ''),
+                          }));
+                        }}
+                        className="w-20 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-extrabold text-slate-900 text-center min-h-[36px]"
+                      />
+                      <span className="text-[11px] font-semibold text-slate-600">
+                        {item.usageUnit}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Seuils d'alerte */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Alerte stock bas : moins de N fournées
+            </label>
+            <input
+              type="text"
+              inputMode="decimal"
+              value={stockLowBatchesStr}
+              onChange={(e) => setStockLowBatchesStr(e.target.value.replace(/[^0-9.,]/g, ''))}
+              placeholder="1"
+              className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
+            />
+            <span className="text-[10px] text-slate-400 block mt-1">1 fournée par défaut</span>
+          </div>
+
+          <div>
+            <label className="block text-xs font-bold text-slate-700 mb-1">
+              Alerte hausse de prix : plus de N %
+            </label>
+            <div className="relative">
+              <input
+                type="text"
+                inputMode="decimal"
+                value={priceRiseAlertPctStr}
+                onChange={(e) => setPriceRiseAlertPctStr(e.target.value.replace(/[^0-9.,]/g, ''))}
+                placeholder="5"
+                className="w-full px-3 py-2 pr-7 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 min-h-[40px]"
+              />
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                %
+              </span>
+            </div>
+            <span className="text-[10px] text-slate-400 block mt-1">5 % par défaut</span>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
+        >
+          Enregistrer le stock de départ et les alertes
+        </button>
+      </form>
+    </div>
+  );
+};
+

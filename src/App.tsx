@@ -17,6 +17,10 @@ import { ExpensesView } from './modules/expenses/ExpensesView';
 import { ReserveView } from './modules/expenses/ReserveView';
 import { OwnerProfitView } from './modules/dashboard/OwnerProfitView';
 import { SettingsView } from './modules/settings/SettingsView';
+import {
+  IngredientStockView,
+  type StockSubTab,
+} from './modules/ingredients/IngredientStockView';
 
 import type { AppSettings } from './types';
 
@@ -28,6 +32,8 @@ export default function App() {
   const [isEarningsOpen, setIsEarningsOpen] = useState(false);
   const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
   const [isDebtsOpen, setIsDebtsOpen] = useState(false);
+  const [isIngredientStockOpen, setIsIngredientStockOpen] = useState(false);
+  const [ingredientStockInitialTab, setIngredientStockInitialTab] = useState<StockSubTab>('stock');
   const [debtsInitialCustomerId, setDebtsInitialCustomerId] = useState<string | null>(null);
   const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string; source?: 'personnel' | 'benefices' } | null>(null);
   const [dailyStatusFilter, setDailyStatusFilter] = useState<'all' | 'incomplete' | 'validated'>('all');
@@ -52,6 +58,7 @@ export default function App() {
     setIsEarningsOpen(false);
     setIsOwnerProfitOpen(false);
     setIsDebtsOpen(false);
+    setIsIngredientStockOpen(false);
     setDebtsInitialCustomerId(null);
     setReservePrefill(null);
   };
@@ -194,11 +201,19 @@ export default function App() {
               setDebtsInitialCustomerId(null);
             }}
           />
+        ) : isIngredientStockOpen ? (
+          <IngredientStockView
+            settings={settings}
+            initialTab={ingredientStockInitialTab}
+            onShowToast={showToast}
+            onBack={() => setIsIngredientStockOpen(false)}
+          />
         ) : (
           <>
             {activeTab === 'dashboard' && (
               <DashboardView
                 settings={settings}
+                onSettingsUpdated={handleSettingsUpdated}
                 onNavigateToTab={(tab, statusFilter) => {
                   resetSubViews();
                   if (tab === 'daily' && statusFilter) {
@@ -225,6 +240,11 @@ export default function App() {
                 onOpenDebts={() => {
                   resetSubViews();
                   setIsDebtsOpen(true);
+                }}
+                onOpenIngredientStock={(tab) => {
+                  resetSubViews();
+                  setIngredientStockInitialTab(tab || 'stock');
+                  setIsIngredientStockOpen(true);
                 }}
                 onShowToast={showToast}
               />
@@ -259,6 +279,7 @@ export default function App() {
             {activeTab === 'expenses' && (
               <ExpensesView
                 settings={settings}
+                onSettingsUpdated={handleSettingsUpdated}
                 onShowToast={showToast}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
                 onOpenReserve={(prefill) => {
@@ -274,6 +295,11 @@ export default function App() {
                 settings={settings}
                 onSettingsUpdated={handleSettingsUpdated}
                 onShowToast={showToast}
+                onOpenIngredientStock={() => {
+                  resetSubViews();
+                  setIngredientStockInitialTab('stock');
+                  setIsIngredientStockOpen(true);
+                }}
               />
             )}
           </>

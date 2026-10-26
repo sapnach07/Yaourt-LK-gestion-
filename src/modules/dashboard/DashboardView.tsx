@@ -56,6 +56,10 @@ import {
 import { StockDetailModal } from './StockDetailModal';
 import { MonthlyStockClosureModal } from '../daily/MonthlyStockClosureModal';
 import { computeDebtAllocations } from '../../utils/debtCalculator';
+import {
+  calculateIngredientsStock,
+  calculateItemsPriceAnalytics,
+} from '../../utils/ingredientStockCalculator';
 import type {
   DailyEntry,
   Expense,
@@ -69,15 +73,18 @@ import type {
   PersonalSale,
   Customer,
   DebtPayment,
+  StockAdjustment,
 } from '../../types';
 
 interface DashboardViewProps {
   settings: AppSettings;
+  onSettingsUpdated?: (newSettings: AppSettings) => void;
   onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings', statusFilter?: 'all' | 'incomplete' | 'validated') => void;
   onOpenReserve?: (prefill?: { amount: number; reason: string; source?: 'personnel' | 'benefices' }) => void;
   onOpenEarnings?: () => void;
   onOpenOwnerProfit?: () => void;
   onOpenDebts?: () => void;
+  onOpenIngredientStock?: (tab?: 'stock' | 'prices') => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
 }
 
@@ -86,11 +93,13 @@ const CATEGORY_COLORS = ['#10b981', '#f59e0b', '#3b82f6', '#8b5cf6', '#ef4444', 
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
   settings,
+  onSettingsUpdated,
   onNavigateToTab,
   onOpenReserve,
   onOpenEarnings,
   onOpenOwnerProfit,
   onOpenDebts,
+  onOpenIngredientStock,
   onShowToast,
 }) => {
   const [periodType, setPeriodType] = useState<PeriodFilterType>('this_month');
@@ -110,6 +119,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
+  const [stockAdjustments, setStockAdjustments] = useState<StockAdjustment[]>([]);
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
@@ -121,7 +131,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, []);
 
   const loadData = async () => {
-    const [dList, eList, empList, prodList, pList, payList, movList, psList, custList, dpList] = await Promise.all([
+    const [dList, eList, empList, prodList, pList, payList, movList, psList, custList, dpList, adjList] = await Promise.all([
       db.dailyEntries.toArray(),
       db.expenses.toArray(),
       db.employees.toArray(),
@@ -132,6 +142,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       db.personalSales.toArray(),
       db.customers.toArray(),
       db.debtPayments.toArray(),
+      db.stockAdjustments.toArray(),
     ]);
 
     setDailyEntries(dList);
@@ -144,6 +155,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     setPersonalSales(psList);
     setCustomers(custList);
     setDebtPayments(dpList);
+    setStockAdjustments(adjList);
   };
 
   // Real-time stock calculation across all active products
@@ -288,6 +300,107 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       ),
     [personalSales, debtPayments, customers, settings.expenseReservePct, settings.debtReminderDays]
   );
+
+  // Alertes Stock d'ingrédients & Prix en hausse (uniquement si un stock de départ est défini)
+  const hasIngredientStockStart = useMemo(() => {
+    const hasDate = Boolean(settings.stockStartDate && settings.stockStartDate.trim() !== '');
+    const hasInitialQty = Boolean(
+      settings.stockStart && Object.values(settings.stockStart).some((v) => Number(v) > 0)
+    );
+    return hasDate || hasInitialQty;
+  }, [settings.stockStartDate, settings.stockStart]);
+
+  const ingredientLowStockAlert = useMemo(() => {
+    if (!hasIngredientStockStart) return null;
+    const lowThreshold = settings.stockLowBatches ?? 1;
+    const res = calculateIngredientsStock({
+      costItems: settings.costItems ?? [],
+      expenses,
+      productionEntries,
+      stockAdjustments,
+      productCosting: settings.productCosting,
+      stockStartDate: settings.stockStartDate,
+      stockStart: settings.stockStart,
+      stockLowBatches: lowThreshold,
+    });
+    const lowItems = res.items.filter((it) => it.needsPurchase);
+    if (lowItems.length === 0) return null;
+    return {
+      names: lowItems.map((it) => it.item.name),
+      threshold: lowThreshold,
+    };
+  }, [
+    hasIngredientStockStart,
+    settings.costItems,
+    settings.productCosting,
+    settings.stockStartDate,
+    settings.stockStart,
+    settings.stockLowBatches,
+    expenses,
+    productionEntries,
+    stockAdjustments,
+  ]);
+
+  const ingredientPriceRiseAlerts = useMemo(() => {
+    if (!hasIngredientStockStart) return [];
+    const analytics = calculateItemsPriceAnalytics({
+      costItems: settings.costItems ?? [],
+      expenses,
+      productionEntries,
+      productCosting: settings.productCosting,
+      priceRiseAlertPct: settings.priceRiseAlertPct ?? 5,
+    });
+    const dismissedMap = settings.dismissedPriceAlertKeys ?? {};
+    const active: Array<{ itemId: string; name: string; pct: number; signature: string }> = [];
+
+    for (const pa of analytics) {
+      if (!pa.isPriceRiseAboveThreshold || pa.lastVariationPct === null || pa.purchases.length === 0) {
+        continue;
+      }
+      const lastPurchase = pa.purchases[pa.purchases.length - 1];
+      if (settings.stockStartDate && lastPurchase.date < settings.stockStartDate) {
+        continue;
+      }
+      const signature = `${lastPurchase.expenseId}_${Math.round(
+        lastPurchase.unitPurchasePriceFC * 100
+      )}`;
+      if (dismissedMap[pa.item.id] === signature) continue;
+      active.push({
+        itemId: pa.item.id,
+        name: pa.item.name,
+        pct: pa.lastVariationPct,
+        signature,
+      });
+    }
+    return active;
+  }, [
+    hasIngredientStockStart,
+    settings.costItems,
+    settings.productCosting,
+    settings.priceRiseAlertPct,
+    settings.stockStartDate,
+    settings.dismissedPriceAlertKeys,
+    expenses,
+    productionEntries,
+  ]);
+
+  const handleDismissPriceRiseAlerts = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (ingredientPriceRiseAlerts.length === 0) return;
+    const latestSettings = (await db.settings.get('app_settings')) || settings;
+    const nextDismissed: Record<string, string> = {
+      ...(latestSettings.dismissedPriceAlertKeys ?? {}),
+    };
+    for (const alert of ingredientPriceRiseAlerts) {
+      nextDismissed[alert.itemId] = alert.signature;
+    }
+    const updatedSettings: AppSettings = {
+      ...latestSettings,
+      dismissedPriceAlertKeys: nextDismissed,
+    };
+    await db.settings.put(updatedSettings);
+    onSettingsUpdated?.(updatedSettings);
+  };
 
   // Compute metrics for a set of entries
   const computeMetrics = (
@@ -952,6 +1065,68 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <ChevronRight className="w-3.5 h-3.5" />
             </span>
           )}
+        </div>
+      )}
+
+      {/* BANNIÈRE ORANGE DISCRÈTE : Stock bas d'ingrédients / emballages */}
+      {ingredientLowStockAlert && (
+        <div
+          onClick={() => onOpenIngredientStock?.('stock')}
+          role={onOpenIngredientStock ? 'button' : undefined}
+          tabIndex={onOpenIngredientStock ? 0 : undefined}
+          className={`p-3 rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-950 flex items-center justify-between gap-2.5 text-xs shadow-2xs ${
+            onOpenIngredientStock
+              ? 'cursor-pointer hover:bg-amber-100/70 active:scale-[0.99] transition-all'
+              : ''
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertTriangle className="w-4 h-4 shrink-0 text-amber-700" />
+            <span className="font-bold leading-snug">
+              Stock bas : {ingredientLowStockAlert.names.join(', ')} (moins de{' '}
+              {formatNumber(ingredientLowStockAlert.threshold, 1)}{' '}
+              {ingredientLowStockAlert.threshold > 1 ? 'fournées' : 'fournée'})
+            </span>
+          </div>
+          {onOpenIngredientStock && (
+            <ChevronRight className="w-4 h-4 text-amber-700 shrink-0" />
+          )}
+        </div>
+      )}
+
+      {/* BANNIÈRE ORANGE DISCRÈTE : Prix d'ingrédients en hausse */}
+      {ingredientPriceRiseAlerts.length > 0 && (
+        <div
+          onClick={() => onOpenIngredientStock?.('prices')}
+          role={onOpenIngredientStock ? 'button' : undefined}
+          tabIndex={onOpenIngredientStock ? 0 : undefined}
+          className={`p-3 rounded-2xl bg-amber-50 border border-amber-200/90 text-amber-950 flex items-center justify-between gap-2.5 text-xs shadow-2xs ${
+            onOpenIngredientStock
+              ? 'cursor-pointer hover:bg-amber-100/70 active:scale-[0.99] transition-all'
+              : ''
+          }`}
+        >
+          <div className="flex items-center gap-2 min-w-0">
+            <TrendingUp className="w-4 h-4 shrink-0 text-amber-700" />
+            <span className="font-bold leading-snug">
+              Prix en hausse :{' '}
+              {ingredientPriceRiseAlerts
+                .map((a) => `${a.name} +${formatPercent(a.pct)}`)
+                .join(', ')}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 shrink-0">
+            <button
+              type="button"
+              onClick={handleDismissPriceRiseAlerts}
+              className="px-2.5 py-1 rounded-lg bg-white hover:bg-amber-100 border border-amber-300 text-[11px] font-bold text-amber-900 transition-colors min-h-[30px]"
+            >
+              Ignorer
+            </button>
+            {onOpenIngredientStock && (
+              <ChevronRight className="w-4 h-4 text-amber-700 shrink-0" />
+            )}
+          </div>
         </div>
       )}
 

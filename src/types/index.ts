@@ -89,8 +89,15 @@ export interface ProductionProductCostSnapshot {
   revenueFC: number;
 }
 
+export interface ProductionCostPackagingLine {
+  itemId: string;
+  name: string;
+  qty: number;
+}
+
 export interface ProductionCosting {
   lines: ProductionCostLine[];
+  packagingLines?: ProductionCostPackagingLine[];
   ingredientsFC: number;
   packagingFC: number;
   totalCostFC: number;
@@ -113,12 +120,23 @@ export interface ProductionEntry {
   createdAt: number;
 }
 
+export interface ExpenseIngredientLine {
+  itemId: string;
+  name: string;
+  purchaseQty: number; // unités d'achat
+  usageQty: number; // unités d'utilisation = purchaseQty × usageUnitsPerPurchase au moment de l'achat
+  amountFC: number;
+}
+
 export interface Expense {
   id: string;
   date: string; // YYYY-MM-DD
   amountFC: number;
   category: string;
   detail: string;
+  ingredientLines?: ExpenseIngredientLine[];
+  otherFeesFC?: number;
+  supplier?: string;
   createdAt: number;
 }
 
@@ -193,6 +211,23 @@ export interface PersonalSale {
   createdAt: number;
 }
 
+export type StockAdjustmentReason =
+  | 'renverse'
+  | 'perime'
+  | 'erreur_comptage'
+  | 'don'
+  | 'autre';
+
+export interface StockAdjustment {
+  id: string;
+  itemId: string;
+  date: string; // YYYY-MM-DD
+  qtyDelta: number; // en unités d'utilisation, positif ou négatif
+  reason: StockAdjustmentReason;
+  note?: string;
+  createdAt: number;
+}
+
 export interface CostItem {
   id: string;
   kind: 'ingredient' | 'packaging';
@@ -202,6 +237,9 @@ export interface CostItem {
   usageUnit: string; // texte libre, ex. "boîte", "sachet", "bouchon"
   usageUnitsPerPurchase: number; // nombre > 0 : combien d'unités d'utilisation contient un achat
   allowDecimals: boolean; // accepte ou non les quantités avec virgule
+  trackStock?: boolean; // true par défaut
+  expenseCategory?: string; // catégorie de dépense associée
+  autoUpdateRefPrice?: boolean; // false par défaut
   isActive: boolean;
   createdAt: number;
 }
@@ -245,6 +283,12 @@ export interface AppSettings {
   // Coût de revient : ingrédients et emballages (estimation uniquement, optionnel)
   costItems?: CostItem[];
   productCosting?: Record<string, ProductCostConfig>;
+  // Suivi du stock d'ingrédients et emballages (optionnel)
+  stockStartDate?: string; // YYYY-MM-DD
+  stockStart?: Record<string, number>; // { [itemId]: quantité en unités d'utilisation }
+  stockLowBatches?: number; // 1 par défaut
+  priceRiseAlertPct?: number; // 5 par défaut
+  dismissedPriceAlertKeys?: Record<string, string>; // alertes de hausse de prix ignorées par itemId
 }
 
 export interface PayslipSettings {

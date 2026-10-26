@@ -13,6 +13,7 @@ import type {
   ProductionItem,
   ProductionCosting,
   ProductionCostLine,
+  ProductionCostPackagingLine,
   ProductionPackagingLineSnapshot,
   ProductionProductCostSnapshot,
   AppSettings,
@@ -612,8 +613,37 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
         totalFC: l.totalFC,
       }));
 
+      // Pour les nouvelles productions (ou celles ayant déjà packagingLines), figer packagingLines
+      const shouldStorePackagingLines =
+        !entryToEdit ||
+        !useFrozenProductPackaging ||
+        Array.isArray(entryToEdit.costing?.packagingLines);
+
+      let frozenPackagingLines: ProductionCostPackagingLine[] | undefined = undefined;
+      if (shouldStorePackagingLines) {
+        const pkgAgg = new Map<string, { itemId: string; name: string; qty: number }>();
+        for (const pb of productBreakdown) {
+          if (pb.producedQty <= 0 || !pb.packagingLines) continue;
+          for (const pl of pb.packagingLines) {
+            if (pl.totalQty <= 0) continue;
+            const prev = pkgAgg.get(pl.itemId);
+            if (prev) {
+              prev.qty = Math.round((prev.qty + pl.totalQty) * 1_000_000) / 1_000_000;
+            } else {
+              pkgAgg.set(pl.itemId, {
+                itemId: pl.itemId,
+                name: pl.name,
+                qty: Math.round(pl.totalQty * 1_000_000) / 1_000_000,
+              });
+            }
+          }
+        }
+        frozenPackagingLines = Array.from(pkgAgg.values());
+      }
+
       frozenCosting = {
         lines: frozenLines,
+        ...(frozenPackagingLines !== undefined ? { packagingLines: frozenPackagingLines } : {}),
         ingredientsFC,
         packagingFC,
         totalCostFC,
