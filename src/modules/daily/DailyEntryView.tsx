@@ -14,6 +14,13 @@ import {
   Filter,
   RotateCcw,
   Clock,
+  FileText,
+  Printer,
+  Share2,
+  Search,
+  Eye,
+  Ban,
+  X,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -32,6 +39,12 @@ import {
   getAllActivityMonths,
 } from '../../utils/stockCalculator';
 import { computeDebtAllocations } from '../../utils/debtCalculator';
+import {
+  formatReceiptNumber,
+  computeMissingPrintedReceiptNumbers,
+  generateFilledReceiptPDF,
+  RECEIPT_PAYMENT_MODE_LABELS,
+} from '../../utils/receiptPdfGenerator';
 import { DailyEntryModal } from './DailyEntryModal';
 import {
   ProductionStockModal,
@@ -39,8 +52,10 @@ import {
   formatCostAmountFC,
 } from './ProductionStockModal';
 import { PersonalSaleModal } from './PersonalSaleModal';
+import { ReceiptViewModal } from './ReceiptViewModal';
 import { MonthlyStockClosureModal } from './MonthlyStockClosureModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { SecurityConfirmModal } from '../../components/SecurityConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
 import type {
   DailyEntry,
@@ -55,6 +70,7 @@ import type {
 
 interface DailyEntryViewProps {
   settings: AppSettings;
+  onSettingsUpdated?: (newSettings: AppSettings) => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenCalculator?: () => void;
   initialStatusFilter?: 'all' | 'incomplete' | 'validated';
@@ -64,6 +80,7 @@ interface DailyEntryViewProps {
 
 export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   settings,
+  onSettingsUpdated,
   onShowToast,
   onOpenCalculator,
   initialStatusFilter,
@@ -101,8 +118,10 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
     }
   }, [initialStatusFilter]);
 
-  // Filters for personal sales
+  // Filters for personal sales & Carnet des reçus
   const [filterPersonalDate, setFilterPersonalDate] = useState<string>('');
+  const [personalViewFilter, setPersonalViewFilter] = useState<'all' | 'receipts'>('all');
+  const [receiptSearchQuery, setReceiptSearchQuery] = useState<string>('');
 
   // Stock period & monthly closure filters (par défaut en temps réel)
   const [stockFilterMode, setStockFilterMode] = useState<'realtime' | 'month' | 'custom'>('realtime');
@@ -122,6 +141,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   const [isPersonalModalOpen, setIsPersonalModalOpen] = useState(false);
   const [saleToEdit, setSaleToEdit] = useState<PersonalSale | null>(null);
   const [personalModalKind, setPersonalModalKind] = useState<'vente' | 'consommation'>('vente');
+  const [personalAutoReceipt, setPersonalAutoReceipt] = useState<boolean>(false);
+  const [personalPrefillReceiptNo, setPersonalPrefillReceiptNo] = useState<number | null>(null);
+
+  const [receiptSaleToView, setReceiptSaleToView] = useState<PersonalSale | null>(null);
+  const [receiptSaleToDelete, setReceiptSaleToDelete] = useState<PersonalSale | null>(null);
+  const [missingReceiptNoToCreate, setMissingReceiptNoToCreate] = useState<number | null>(null);
+  const [busyReceiptSaleId, setBusyReceiptSaleId] = useState<string | null>(null);
 
   const [entryToDelete, setEntryToDelete] = useState<DailyEntry | null>(null);
   const [prodToDelete, setProdToDelete] = useState<ProductionEntry | null>(null);
@@ -258,11 +284,157 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
     return true;
   });
 
+  const handleDeleteOnlyReceipt = async () => {
+    if (!receiptSaleToDelete) return;
+    try {
+      const removedNo = receiptSaleToDelete.receipt?.no;
+      const { receipt: _removedReceipt, ...restSale } = receiptSaleToDelete;
+      await db.personalSales.put(restSale);
+      setReceiptSaleToDelete(null);
+      if (receiptSaleToView?.id === receiptSaleToDelete.id) {
+        setReceiptSaleToView(null);
+      }
+      onShowToast(
+        'info',
+        removedNo
+          ? `Le reçu N° ${formatReceiptNumber(removedNo)} a été supprimé (la vente est conservée).`
+          : 'Le reçu a été supprimé (la vente est conservée).'
+      );
+      await loadAllData();
+    } catch (e: any) {
+      onShowToast('error', 'Erreur lors de la suppression du reçu : ' + e.message);
+    }
+  };
+
+  const handleMarkReceiptNumberVoided = async (noToVoid: number) => {
+    try {
+      const currentSettings = (await db.settings.get('app_settings')) || settings;
+      const currentR = currentSettings.receiptSettings || {};
+      const nextVoided = Array.from(
+        new Set([...(currentR.voidedNumbers || []), Math.floor(noToVoid)])
+      ).sort((a, b) => a - b);
+
+      const updatedSettings: AppSettings = {
+        ...currentSettings,
+        receiptSettings: {
+          ...currentR,
+          voidedNumbers: nextVoided,
+        },
+      };
+      await db.settings.put(updatedSettings);
+      onSettingsUpdated?.(updatedSettings);
+      onShowToast('info', `Le reçu N° ${formatReceiptNumber(noToVoid)} est marqué comme annulé.`);
+    } catch (e: any) {
+      onShowToast('error', 'Erreur : ' + e.message);
+    }
+  };
+
+  const handleQuickDownloadReceiptPdf = async (sale: PersonalSale) => {
+    if (!sale.receipt) return;
+    setBusyReceiptSaleId(sale.id);
+    try {
+      await generateFilledReceiptPDF({
+        sale,
+        settings,
+        products,
+        action: 'download',
+      });
+      onShowToast(
+        'success',
+        `PDF du reçu N° ${formatReceiptNumber(sale.receipt.no)} téléchargé.`
+      );
+    } catch (e: any) {
+      onShowToast('error', 'Erreur génération PDF : ' + e.message);
+    } finally {
+      setBusyReceiptSaleId(null);
+    }
+  };
+
+  const handleQuickShareReceiptPdf = async (sale: PersonalSale) => {
+    if (!sale.receipt) return;
+    setBusyReceiptSaleId(sale.id);
+    try {
+      const canShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+      await generateFilledReceiptPDF({
+        sale,
+        settings,
+        products,
+        action: canShare ? 'share' : 'download',
+      });
+      if (!canShare) {
+        onShowToast(
+          'info',
+          'Partage direct non supporté sur cet appareil : le PDF a été téléchargé.'
+        );
+      }
+    } catch (e: any) {
+      onShowToast('error', 'Erreur partage PDF : ' + e.message);
+    } finally {
+      setBusyReceiptSaleId(null);
+    }
+  };
+
+  const openPersonalModalForNewSale = (
+    kindToOpen: 'vente' | 'consommation',
+    withReceipt = false,
+    prefillNo: number | null = null
+  ) => {
+    setSaleToEdit(null);
+    setPersonalModalKind(kindToOpen);
+    setPersonalAutoReceipt(withReceipt);
+    setPersonalPrefillReceiptNo(prefillNo);
+    setIsPersonalModalOpen(true);
+  };
+
+  const openPersonalModalForEdit = (
+    sale: PersonalSale,
+    withReceipt = false,
+    prefillNo: number | null = null
+  ) => {
+    setSaleToEdit(sale);
+    setPersonalModalKind(sale.kind || 'vente');
+    setPersonalAutoReceipt(withReceipt);
+    setPersonalPrefillReceiptNo(prefillNo);
+    setIsPersonalModalOpen(true);
+  };
+
   // Filtered personal sales entries
   const filteredPersonalSales = personalSales.filter((sale) => {
     if (filterPersonalDate && sale.date !== filterPersonalDate) return false;
     return true;
   });
+
+  // Sales with receipts (Carnet des reçus), sorted by receipt number ascending
+  const allReceiptSales = useMemo(() => {
+    return personalSales
+      .filter((s) => s.kind !== 'consommation' && Boolean(s.receipt))
+      .sort((a, b) => (a.receipt?.no || 0) - (b.receipt?.no || 0));
+  }, [personalSales]);
+
+  const filteredReceiptSales = useMemo(() => {
+    const q = receiptSearchQuery.trim().toLocaleLowerCase('fr');
+    return allReceiptSales.filter((s) => {
+      if (!s.receipt) return false;
+      if (filterPersonalDate && s.receipt.date !== filterPersonalDate && s.date !== filterPersonalDate) {
+        return false;
+      }
+      if (!q) return true;
+      const paddedNo = formatReceiptNumber(s.receipt.no).toLocaleLowerCase('fr');
+      const rawNo = String(s.receipt.no);
+      const client = (s.customerName || '').toLocaleLowerCase('fr');
+      return paddedNo.includes(q) || rawNo.includes(q) || client.includes(q);
+    });
+  }, [allReceiptSales, receiptSearchQuery, filterPersonalDate]);
+
+  // Numéros imprimés sans reçu enregistré (hors numéros annulés)
+  const missingPrintedNumbers = useMemo(() => {
+    return computeMissingPrintedReceiptNumbers(personalSales, settings.receiptSettings);
+  }, [personalSales, settings.receiptSettings]);
+
+  // Ventes client existantes sans reçu (pour proposer d'y attacher un numéro imprimé manquant)
+  const clientSalesWithoutReceipt = useMemo(() => {
+    return personalSales.filter((s) => s.kind !== 'consommation' && !s.receipt);
+  }, [personalSales]);
 
   const currency = settings.currency || 'FC';
 
@@ -306,11 +478,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => {
-                setSaleToEdit(null);
-                setPersonalModalKind('consommation');
-                setIsPersonalModalOpen(true);
-              }}
+              onClick={() => openPersonalModalForNewSale('consommation')}
               className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
               title="Sortir des yaourts pour ma consommation personnelle"
             >
@@ -337,11 +505,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             )}
             <button
               type="button"
-              onClick={() => {
-                setSaleToEdit(null);
-                setPersonalModalKind('vente');
-                setIsPersonalModalOpen(true);
-              }}
+              onClick={() => openPersonalModalForNewSale('vente')}
               className="inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
             >
               <Plus className="w-4 h-4" />
@@ -1150,18 +1314,14 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         </div>
       )}
 
-      {/* SUB-TAB 3: MES VENTES PERSONNELLES (VENTES & CONSOMMATIONS DU GÉRANT) */}
+      {/* SUB-TAB 3: MES VENTES PERSONNELLES (VENTES, CONSOMMATIONS & CARNET DES REÇUS) */}
       {subTab === 'personal' && (
         <div className="space-y-3">
           {/* Boutons d'action : Vente à un client & Ma consommation */}
           <div className="grid grid-cols-2 gap-2">
             <button
               type="button"
-              onClick={() => {
-                setSaleToEdit(null);
-                setPersonalModalKind('vente');
-                setIsPersonalModalOpen(true);
-              }}
+              onClick={() => openPersonalModalForNewSale('vente')}
               className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl bg-teal-700 hover:bg-teal-800 text-white font-bold text-xs shadow-xs active:scale-95 transition-all min-h-[46px]"
             >
               <Plus className="w-4 h-4" />
@@ -1169,11 +1329,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => {
-                setSaleToEdit(null);
-                setPersonalModalKind('consommation');
-                setIsPersonalModalOpen(true);
-              }}
+              onClick={() => openPersonalModalForNewSale('consommation')}
               className="flex items-center justify-center gap-1.5 py-3 px-3 rounded-2xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs active:scale-95 transition-all min-h-[46px]"
             >
               <span className="text-base">🍽</span>
@@ -1181,33 +1337,287 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
             </button>
           </div>
 
-          {/* Filter Bar */}
-          <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-2">
-            <div className="flex-1 min-w-[140px]">
-              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
-                Filtrer par date
-              </label>
-              <input
-                type="date"
-                value={filterPersonalDate}
-                onChange={(e) => setFilterPersonalDate(e.target.value)}
-                className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800 bg-white"
-              />
-            </div>
-
-            {filterPersonalDate && (
-              <button
-                type="button"
-                onClick={() => setFilterPersonalDate('')}
-                className="text-xs font-bold text-teal-700 hover:underline self-end pb-2 min-h-[36px] flex items-center"
-              >
-                Toutes les dates
-              </button>
-            )}
+          {/* Filtre : Toutes les ventes personnelles vs Carnet des reçus ("Reçus") */}
+          <div className="grid grid-cols-2 gap-1.5 p-1 bg-slate-200/70 rounded-2xl">
+            <button
+              type="button"
+              onClick={() => setPersonalViewFilter('all')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition-all min-h-[38px] flex items-center justify-center gap-1.5 ${
+                personalViewFilter === 'all'
+                  ? 'bg-white text-slate-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Toutes ({personalSales.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setPersonalViewFilter('receipts')}
+              className={`py-2 px-3 rounded-xl text-xs font-bold transition-all min-h-[38px] flex items-center justify-center gap-1.5 ${
+                personalViewFilter === 'receipts'
+                  ? 'bg-white text-amber-900 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5 text-amber-600" />
+              <span>Reçus ({allReceiptSales.length})</span>
+              {missingPrintedNumbers.length > 0 && (
+                <span className="px-1.5 py-0.2 rounded-md bg-amber-500 text-slate-950 text-[10px] font-mono font-extrabold">
+                  {missingPrintedNumbers.length}
+                </span>
+              )}
+            </button>
           </div>
 
-          {/* List of Personal Sales */}
-          {filteredPersonalSales.length === 0 ? (
+          {/* Filter Bar */}
+          <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs space-y-2.5">
+            {personalViewFilter === 'receipts' && (
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  type="text"
+                  value={receiptSearchQuery}
+                  onChange={(e) => setReceiptSearchQuery(e.target.value)}
+                  placeholder="Rechercher par numéro (ex: 0003) ou client..."
+                  className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800 bg-slate-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500/30 focus:border-amber-500"
+                />
+                {receiptSearchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setReceiptSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-700"
+                    title="Effacer la recherche"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex-1 min-w-[140px]">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                  Filtrer par date
+                </label>
+                <input
+                  type="date"
+                  value={filterPersonalDate}
+                  onChange={(e) => setFilterPersonalDate(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800 bg-white"
+                />
+              </div>
+
+              {filterPersonalDate && (
+                <button
+                  type="button"
+                  onClick={() => setFilterPersonalDate('')}
+                  className="text-xs font-bold text-teal-700 hover:underline self-end pb-2 min-h-[36px] flex items-center"
+                >
+                  Toutes les dates
+                </button>
+              )}
+            </div>
+          </div>
+
+          {personalViewFilter === 'receipts' ? (
+            /* CARNET DES REÇUS */
+            <div className="space-y-3">
+              {/* Bandeau : Numéros imprimés sans reçu enregistré */}
+              {missingPrintedNumbers.length > 0 && (
+                <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs space-y-2.5">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                    <div className="text-xs font-bold text-amber-950 leading-snug">
+                      Numéros imprimés sans reçu enregistré :{' '}
+                      <span className="font-mono font-black">
+                        {missingPrintedNumbers.map((n) => formatReceiptNumber(n)).join(', ')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 max-h-52 overflow-y-auto pr-0.5">
+                    {missingPrintedNumbers.map((n) => (
+                      <div
+                        key={n}
+                        className="flex flex-wrap items-center justify-between gap-2 bg-white px-2.5 py-2 rounded-xl border border-amber-200/80"
+                      >
+                        <span className="text-xs font-black font-mono text-slate-900">
+                          N° {formatReceiptNumber(n)}
+                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (clientSalesWithoutReceipt.length > 0) {
+                                setMissingReceiptNoToCreate(n);
+                              } else {
+                                openPersonalModalForNewSale('vente', true, n);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-bold transition-colors min-h-[32px]"
+                          >
+                            <Plus className="w-3.5 h-3.5" />
+                            <span>Créer ce reçu</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleMarkReceiptNumberVoided(n)}
+                            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold transition-colors min-h-[32px]"
+                          >
+                            <Ban className="w-3 h-3" />
+                            <span>Marquer comme annulé</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Liste des reçus par numéro */}
+              {filteredReceiptSales.length === 0 ? (
+                <div className="bg-white rounded-2xl border border-slate-200/80 p-6 text-center shadow-xs">
+                  <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center mx-auto mb-3">
+                    <FileText className="w-6 h-6" />
+                  </div>
+                  <h4 className="text-sm font-bold text-slate-800 mb-1">
+                    {allReceiptSales.length === 0
+                      ? 'Aucun reçu enregistré'
+                      : 'Aucun reçu ne correspond à votre recherche'}
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-sm mx-auto mb-4">
+                    Activez « Créer un reçu pour cette vente » lors d’une vente à un client, ou créez un reçu sur une vente existante.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => openPersonalModalForNewSale('vente', true, null)}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[40px]"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>+ Vente client avec reçu</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2.5">
+                  {filteredReceiptSales.map((sale) => {
+                    const r = sale.receipt!;
+                    const totalFC = Math.round(sale.totalSalesFC || 0);
+                    const paidNotedFC = Math.round(r.paidNotedFC || 0);
+                    const remainingFC = Math.max(0, totalFC - paidNotedFC);
+                    const isBusy = busyReceiptSaleId === sale.id;
+
+                    return (
+                      <div
+                        key={sale.id}
+                        className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="px-2.5 py-0.5 rounded-lg bg-amber-100 text-amber-950 border border-amber-300 text-xs font-black font-mono">
+                                N° {formatReceiptNumber(r.no)}
+                              </span>
+                              <span className="text-xs font-bold text-slate-600">
+                                {formatDate(r.date)}
+                              </span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
+                                {RECEIPT_PAYMENT_MODE_LABELS[r.paymentMode]}
+                              </span>
+                            </div>
+                            <div className="text-sm font-extrabold text-slate-900 mt-1">
+                              {sale.customerName || 'Client'}
+                              {r.phone ? (
+                                <span className="text-xs font-semibold text-slate-500 font-mono ml-2">
+                                  · {r.phone}
+                                </span>
+                              ) : null}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-2 text-center text-xs bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-500 uppercase block">
+                              Total
+                            </span>
+                            <span className="text-xs font-extrabold font-mono text-slate-900">
+                              {formatFC(totalFC, currency)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-emerald-700 uppercase block">
+                              Payé noté
+                            </span>
+                            <span className="text-xs font-extrabold font-mono text-emerald-800">
+                              {formatFC(paidNotedFC, currency)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="text-[10px] font-bold text-amber-800 uppercase block">
+                              Reste
+                            </span>
+                            <span
+                              className={`text-xs font-extrabold font-mono ${
+                                remainingFC > 0 ? 'text-amber-900' : 'text-slate-600'
+                              }`}
+                            >
+                              {formatFC(remainingFC, currency)}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1 border-t border-slate-100">
+                          <button
+                            type="button"
+                            onClick={() => setReceiptSaleToView(sale)}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors min-h-[38px]"
+                          >
+                            <Eye className="w-3.5 h-3.5" />
+                            <span>Voir le reçu</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleQuickDownloadReceiptPdf(sale)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors disabled:opacity-50 min-h-[38px]"
+                          >
+                            <Printer className="w-3.5 h-3.5" />
+                            <span>Imprimer le reçu</span>
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => handleQuickShareReceiptPdf(sale)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold transition-colors disabled:opacity-50 min-h-[38px]"
+                          >
+                            <Share2 className="w-3.5 h-3.5" />
+                            <span>Partager</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openPersonalModalForEdit(sale, true, null)}
+                            className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[38px]"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                            <span>Modifier le reçu</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setReceiptSaleToDelete(sale)}
+                            className="inline-flex items-center gap-1 px-2.5 py-2 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-colors min-h-[38px]"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                            <span>Supprimer le reçu</span>
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : filteredPersonalSales.length === 0 ? (
+            /* Empty state of Personal Sales */
             <div className="bg-white rounded-2xl border border-slate-200/80 p-6 text-center shadow-xs">
               <div className="w-12 h-12 rounded-2xl bg-teal-50 text-teal-700 flex items-center justify-center mx-auto mb-3">
                 <UserCheck className="w-6 h-6" />
@@ -1221,11 +1631,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               <div className="flex flex-wrap items-center justify-center gap-2">
                 <button
                   type="button"
-                  onClick={() => {
-                    setSaleToEdit(null);
-                    setPersonalModalKind('vente');
-                    setIsPersonalModalOpen(true);
-                  }}
+                  onClick={() => openPersonalModalForNewSale('vente')}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[40px]"
                 >
                   <Plus className="w-4 h-4" />
@@ -1233,11 +1639,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => {
-                    setSaleToEdit(null);
-                    setPersonalModalKind('consommation');
-                    setIsPersonalModalOpen(true);
-                  }}
+                  onClick={() => openPersonalModalForNewSale('consommation')}
                   className="inline-flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[40px]"
                 >
                   <span>🍽</span>
@@ -1246,14 +1648,16 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               </div>
             </div>
           ) : (
+            /* List of Personal Sales */
             <div className="space-y-3">
               {filteredPersonalSales.map((sale) => {
                 const totalSoldQty = sale.items.reduce((acc, it) => acc + it.soldQty, 0);
-                const isCreditSale =
-                  sale.kind !== 'consommation' && sale.paymentStatus === 'credit';
+                const isClientSale = sale.kind !== 'consommation';
+                const isCreditSale = isClientSale && sale.paymentStatus === 'credit';
                 const creditStatus = isCreditSale
                   ? debtInfo.saleStatusMap.get(sale.id)
                   : undefined;
+                const isBusy = busyReceiptSaleId === sale.id;
 
                 return (
                   <div
@@ -1306,8 +1710,21 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           ) : (
                             <span className="text-xs font-bold text-indigo-800 bg-indigo-50 px-2 py-0.5 rounded-lg border border-indigo-200/50 flex items-center gap-1">
                               <UserCheck className="w-3 h-3" />
-                              <span>Vente directe (Moi)</span>
+                              <span>
+                                Vente directe{sale.customerName ? ` · ${sale.customerName}` : ' (Moi)'}
+                              </span>
                             </span>
+                          )}
+
+                          {isClientSale && sale.receipt && (
+                            <button
+                              type="button"
+                              onClick={() => setReceiptSaleToView(sale)}
+                              className="text-xs font-black font-mono text-amber-950 bg-amber-100 hover:bg-amber-200 px-2 py-0.5 rounded-lg border border-amber-300 flex items-center gap-1 transition-colors"
+                            >
+                              <FileText className="w-3 h-3 text-amber-700" />
+                              <span>Reçu N° {formatReceiptNumber(sale.receipt.no)}</span>
+                            </button>
                           )}
                         </div>
                         {sale.kind === 'consommation' ? (
@@ -1341,11 +1758,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => {
-                            setSaleToEdit(sale);
-                            setPersonalModalKind(sale.kind || 'vente');
-                            setIsPersonalModalOpen(true);
-                          }}
+                          onClick={() => openPersonalModalForEdit(sale, false, null)}
                           className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 min-w-[40px] min-h-[40px] flex items-center justify-center"
                           title="Modifier"
                         >
@@ -1386,6 +1799,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                           >
                             <span>
                               {it.productName} × {formatNumber(it.soldQty)}
+                              <span className="text-[11px] text-slate-400 font-mono ml-1.5">
+                                ({formatFC(it.unitPrice, currency)})
+                              </span>
                             </span>
                             <span className="font-mono font-bold text-slate-900">
                               {formatFC(it.soldQty * it.unitPrice, currency)}
@@ -1451,6 +1867,67 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                             {formatFC(sale.ownerShareFC, currency)}
                           </span>
                         </div>
+                      </div>
+                    )}
+
+                    {/* Actions Reçu sur vente client */}
+                    {isClientSale && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-2 border-t border-slate-100">
+                        {!sale.receipt ? (
+                          <button
+                            type="button"
+                            onClick={() => openPersonalModalForEdit(sale, true, null)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 text-xs font-bold transition-colors min-h-[36px]"
+                          >
+                            <FileText className="w-3.5 h-3.5 text-amber-700" />
+                            <span>Créer un reçu</span>
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setReceiptSaleToView(sale)}
+                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition-colors min-h-[36px]"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>Voir le reçu</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleQuickDownloadReceiptPdf(sale)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold transition-colors disabled:opacity-50 min-h-[36px]"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                              <span>Imprimer le reçu</span>
+                            </button>
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => handleQuickShareReceiptPdf(sale)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold transition-colors disabled:opacity-50 min-h-[36px]"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                              <span>Partager</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => openPersonalModalForEdit(sale, true, null)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold transition-colors min-h-[36px]"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                              <span>Modifier le reçu</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReceiptSaleToDelete(sale)}
+                              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold transition-colors min-h-[36px]"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              <span>Supprimer le reçu</span>
+                            </button>
+                          </>
+                        )}
                       </div>
                     )}
 
@@ -1524,9 +2001,14 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         products={products}
         settings={settings}
         stockMap={Object.fromEntries(stockData.map((s) => [s.product.id, s.houseStock]))}
+        existingSales={personalSales}
+        autoEnableReceipt={personalAutoReceipt}
+        prefillReceiptNo={personalPrefillReceiptNo}
         onClose={() => {
           setIsPersonalModalOpen(false);
           setSaleToEdit(null);
+          setPersonalAutoReceipt(false);
+          setPersonalPrefillReceiptNo(null);
         }}
         onSaved={async (savedKind) => {
           const finalKind = savedKind || personalModalKind;
@@ -1536,10 +2018,126 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
               ? 'Consommation personnelle enregistrée avec succès.'
               : 'Vente personnelle enregistrée avec succès.'
           );
+          setPersonalAutoReceipt(false);
+          setPersonalPrefillReceiptNo(null);
           await loadAllData();
         }}
         onOpenCalculator={onOpenCalculator}
       />
+
+      {/* Large-print Receipt View Modal ("Voir le reçu") */}
+      <ReceiptViewModal
+        sale={receiptSaleToView}
+        products={products}
+        settings={settings}
+        onClose={() => setReceiptSaleToView(null)}
+        onEditReceipt={(sale) => {
+          setReceiptSaleToView(null);
+          openPersonalModalForEdit(sale, true, null);
+        }}
+        onDeleteReceipt={(sale) => {
+          setReceiptSaleToDelete(sale);
+        }}
+        onShowToast={onShowToast}
+      />
+
+      {/* Security Confirm Modal: Delete ONLY the receipt (keeps the sale) */}
+      <SecurityConfirmModal
+        isOpen={Boolean(receiptSaleToDelete)}
+        title="Supprimer uniquement ce reçu ?"
+        message={
+          receiptSaleToDelete?.receipt
+            ? `Voulez-vous supprimer le reçu N° ${formatReceiptNumber(
+                receiptSaleToDelete.receipt.no
+              )} ? La vente personnelle du ${formatDate(
+                receiptSaleToDelete.date
+              )} (${formatFC(receiptSaleToDelete.totalSalesFC, currency)}) sera conservée.`
+            : 'Voulez-vous supprimer ce reçu ? La vente personnelle sera conservée.'
+        }
+        confirmLabel="Supprimer le reçu"
+        pinCode={settings.pinCode}
+        confirmWord="SUPPRIMER"
+        onConfirm={handleDeleteOnlyReceipt}
+        onCancel={() => setReceiptSaleToDelete(null)}
+      />
+
+      {/* Choice Modal for creating a missing printed receipt number */}
+      {missingReceiptNoToCreate !== null && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-5 shadow-2xl border border-slate-100 space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-800 flex items-center justify-center">
+                  <FileText className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-extrabold text-slate-900">
+                    Créer le reçu N° {formatReceiptNumber(missingReceiptNoToCreate)}
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Choisissez une vente existante ou créez une nouvelle vente
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMissingReceiptNoToCreate(null)}
+                className="p-2 rounded-full text-slate-400 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const targetNo = missingReceiptNoToCreate;
+                setMissingReceiptNoToCreate(null);
+                openPersonalModalForNewSale('vente', true, targetNo);
+              }}
+              className="w-full py-3 px-4 rounded-2xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-xs transition-all min-h-[44px]"
+            >
+              <Plus className="w-4 h-4" />
+              <span>
+                Nouvelle vente client avec reçu N° {formatReceiptNumber(missingReceiptNoToCreate)}
+              </span>
+            </button>
+
+            <div className="space-y-2 overflow-y-auto pr-1 flex-1">
+              <div className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                Ou attacher à une vente client existante sans reçu :
+              </div>
+              {clientSalesWithoutReceipt.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => {
+                    const targetNo = missingReceiptNoToCreate;
+                    setMissingReceiptNoToCreate(null);
+                    openPersonalModalForEdit(s, true, targetNo);
+                  }}
+                  className="w-full text-left p-3 rounded-xl border border-slate-200 hover:border-amber-400 hover:bg-amber-50/40 transition-colors flex items-center justify-between gap-2"
+                >
+                  <div>
+                    <div className="text-xs font-extrabold text-slate-900">
+                      {formatDate(s.date)}
+                      {s.customerName ? ` · ${s.customerName}` : ''}
+                    </div>
+                    <div className="text-[11px] text-slate-500">
+                      {s.isOpeningDebt
+                        ? 'Ancienne dette'
+                        : s.items.map((it) => `${it.productName} × ${it.soldQty}`).join(', ')}
+                    </div>
+                  </div>
+                  <span className="text-xs font-extrabold font-mono text-slate-900 shrink-0">
+                    {formatFC(s.totalSalesFC, currency)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Delete Daily Entry Confirm */}
       <ConfirmModal

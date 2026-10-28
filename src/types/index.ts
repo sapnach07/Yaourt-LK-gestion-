@@ -187,6 +187,17 @@ export interface DebtPayment {
   createdAt: number;
 }
 
+export type ReceiptPaymentMode = 'especes' | 'mobile_money' | 'credit';
+
+export interface PersonalSaleReceipt {
+  no: number;
+  date: string; // YYYY-MM-DD
+  phone?: string;
+  paymentMode: ReceiptPaymentMode; // Espèces, Mobile money, À crédit (information seulement)
+  paidNotedFC: number; // Payé noté sur le reçu (information seulement)
+  createdAt: number;
+}
+
 export interface PersonalSale {
   id: string;
   date: string; // YYYY-MM-DD
@@ -207,6 +218,7 @@ export interface PersonalSale {
   isOpeningDebt?: boolean;
   writtenOffFC?: number; // reste abandonné
   writtenOffAt?: number;
+  receipt?: PersonalSaleReceipt; // Reçu attaché (information uniquement)
   notes?: string;
   createdAt: number;
 }
@@ -289,6 +301,32 @@ export interface AppSettings {
   stockLowBatches?: number; // 1 par défaut
   priceRiseAlertPct?: number; // 5 par défaut
   dismissedPriceAlertKeys?: Record<string, string>; // alertes de hausse de prix ignorées par itemId
+  // Réglages des reçus et prix de gros (optionnel)
+  receiptSettings?: ReceiptSettings;
+  wholesaleTiers?: Record<string, WholesaleTier[]>;
+}
+
+export interface WholesaleTier {
+  minQty: number;
+  priceFC: number;
+}
+
+export interface ReceiptSettings {
+  businessName?: string; // Défaut : settings.businessName
+  tagline?: string;
+  address?: string;
+  phone?: string;
+  email?: string;
+  idNat?: string;
+  rccm?: string;
+  taxId?: string;
+  mainColor?: string; // Défaut : '#B88714'
+  thankYouMessage?: string; // Défaut : 'Merci pour votre confiance'
+  footerMention?: string; // Défaut : 'Marchandise vendue : ni reprise ni échangée. Produit frais : à conserver entre 2 et 6 °C.'
+  printedProductIds?: string[]; // Jusqu'à 4 produits imprimés dans le tableau, par défaut les 2 premiers produits actifs
+  startNumber?: number; // Défaut : 1
+  printedUpTo?: number; // Dernier numéro imprimé, défaut : 0
+  voidedNumbers?: number[]; // Liste de numéros annulés
 }
 
 export interface PayslipSettings {

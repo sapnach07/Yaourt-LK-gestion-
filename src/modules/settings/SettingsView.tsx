@@ -34,6 +34,7 @@ import { formatFC, formatDate, formatPercent, parseLocaleNumber, formatNumber } 
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
 import { PayslipSettingsSection } from './PayslipSettingsSection';
+import { ReceiptSettingsSection } from './ReceiptSettingsSection';
 import type {
   AppSettings,
   Product,
@@ -1106,6 +1107,14 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* Section: Fiche de Paie (Personnalisation PDF) */}
       <PayslipSettingsSection
         settings={settings}
+        onSettingsUpdated={onSettingsUpdated}
+        onShowToast={onShowToast}
+      />
+
+      {/* Section: Reçus & Prix de gros (Personnalisation & Impression PDF) */}
+      <ReceiptSettingsSection
+        settings={settings}
+        products={products}
         onSettingsUpdated={onSettingsUpdated}
         onShowToast={onShowToast}
       />

@@ -12,8 +12,12 @@ import type {
   ProductionCostLine,
   ProductionCostPackagingLine,
   ProductionProductCostSnapshot,
+  PersonalSaleReceipt,
+  ReceiptPaymentMode,
+  ReceiptSettings,
   StockAdjustment,
   StockAdjustmentReason,
+  WholesaleTier,
 } from '../types';
 
 const VALID_ADJUSTMENT_REASONS = new Set<StockAdjustmentReason>([
@@ -76,6 +80,132 @@ function sanitizeDismissedPriceAlertKeys(raw: unknown): Record<string, string> |
     }
   }
   return Object.keys(result).length > 0 ? result : undefined;
+}
+
+function sanitizeReceiptSettings(raw: unknown): ReceiptSettings | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const optStr = (v: unknown): string | undefined =>
+    typeof v === 'string' && v.trim() ? v.trim() : undefined;
+
+  let printedProductIds: string[] | undefined = undefined;
+  if (Array.isArray(obj.printedProductIds)) {
+    printedProductIds = obj.printedProductIds
+      .filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      .slice(0, 4);
+  }
+
+  const startNumRaw = Number(obj.startNumber);
+  const startNumber =
+    obj.startNumber !== undefined && Number.isFinite(startNumRaw) && startNumRaw >= 1
+      ? Math.floor(startNumRaw)
+      : undefined;
+
+  const printedUpToRaw = Number(obj.printedUpTo);
+  const printedUpTo =
+    obj.printedUpTo !== undefined && Number.isFinite(printedUpToRaw) && printedUpToRaw >= 0
+      ? Math.floor(printedUpToRaw)
+      : undefined;
+
+  let voidedNumbers: number[] | undefined = undefined;
+  if (Array.isArray(obj.voidedNumbers)) {
+    const uniqueVoided = Array.from(
+      new Set(
+        obj.voidedNumbers
+          .map((n) => Math.floor(Number(n)))
+          .filter((n) => Number.isFinite(n) && n >= 1)
+      )
+    ).sort((a, b) => a - b);
+    if (uniqueVoided.length > 0) {
+      voidedNumbers = uniqueVoided;
+    }
+  }
+
+  return {
+    businessName: optStr(obj.businessName),
+    tagline: optStr(obj.tagline),
+    address: optStr(obj.address),
+    phone: optStr(obj.phone),
+    email: optStr(obj.email),
+    idNat: optStr(obj.idNat),
+    rccm: optStr(obj.rccm),
+    taxId: optStr(obj.taxId),
+    mainColor: optStr(obj.mainColor),
+    thankYouMessage:
+      typeof obj.thankYouMessage === 'string' ? obj.thankYouMessage : undefined,
+    footerMention: typeof obj.footerMention === 'string' ? obj.footerMention : undefined,
+    printedProductIds,
+    startNumber,
+    printedUpTo,
+    voidedNumbers,
+  };
+}
+
+function sanitizeWholesaleTiers(
+  raw: unknown
+): Record<string, WholesaleTier[]> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const result: Record<string, WholesaleTier[]> = {};
+  for (const [productId, list] of Object.entries(raw as Record<string, unknown>)) {
+    if (!productId || !Array.isArray(list)) continue;
+    const byMinQty = new Map<number, WholesaleTier>();
+    for (const item of list) {
+      if (!item || typeof item !== 'object') continue;
+      const t = item as Record<string, unknown>;
+      const minQty = Math.floor(Number(t.minQty));
+      const priceFC = Math.round(Number(t.priceFC));
+      if (Number.isFinite(minQty) && minQty >= 1 && Number.isFinite(priceFC) && priceFC > 0) {
+        byMinQty.set(minQty, { minQty, priceFC });
+      }
+    }
+    if (byMinQty.size > 0) {
+      result[productId] = Array.from(byMinQty.values()).sort((a, b) => a.minQty - b.minQty);
+    }
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
+const VALID_RECEIPT_PAYMENT_MODES = new Set<ReceiptPaymentMode>([
+  'especes',
+  'mobile_money',
+  'credit',
+]);
+
+function sanitizePersonalSaleReceipt(
+  raw: unknown,
+  fallbackDate?: string
+): PersonalSaleReceipt | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const obj = raw as Record<string, unknown>;
+  const no = Math.floor(Number(obj.no));
+  if (!Number.isFinite(no) || no < 1) return undefined;
+
+  const date =
+    typeof obj.date === 'string' && obj.date.trim()
+      ? obj.date.trim()
+      : fallbackDate || toISODate(new Date());
+
+  const phone =
+    typeof obj.phone === 'string' && obj.phone.trim() ? obj.phone.trim() : undefined;
+
+  const rawMode = String(obj.paymentMode || 'especes') as ReceiptPaymentMode;
+  const paymentMode: ReceiptPaymentMode = VALID_RECEIPT_PAYMENT_MODES.has(rawMode)
+    ? rawMode
+    : 'especes';
+
+  const paidNum = Number(obj.paidNotedFC);
+  const paidNotedFC = Number.isFinite(paidNum) && paidNum >= 0 ? Math.round(paidNum) : 0;
+
+  const createdAt = Number(obj.createdAt) || Date.now();
+
+  return {
+    no,
+    date,
+    phone,
+    paymentMode,
+    paidNotedFC,
+    createdAt,
+  };
 }
 
 function sanitizeExpense(raw: any): Expense {
@@ -360,6 +490,8 @@ export async function exportAllDataToJSON(): Promise<void> {
       stockLowBatches: currentSettings?.stockLowBatches ?? 1,
       priceRiseAlertPct: currentSettings?.priceRiseAlertPct ?? 5,
       dismissedPriceAlertKeys: currentSettings?.dismissedPriceAlertKeys,
+      receiptSettings: currentSettings?.receiptSettings,
+      wholesaleTiers: currentSettings?.wholesaleTiers,
       lastBackupDate: dateStr,
     },
   };
@@ -480,13 +612,29 @@ export async function restoreDataFromJSON(
     if (data.reserveMovements?.length) await db.reserveMovements.bulkPut(data.reserveMovements);
     if (data.payments?.length) await db.payments.bulkPut(data.payments);
     if (data.personalSales?.length) {
+      const existingSalesMap = new Map<string, any>();
+      if (mode === 'merge') {
+        const existingSales = await db.personalSales.toArray();
+        for (const es of existingSales) {
+          existingSalesMap.set(es.id, es);
+        }
+      }
+
       const sanitizedSales = data.personalSales.map((ps: any) => {
         const kind = ps.kind || 'vente';
         const isConsommation = kind === 'consommation';
         const remappedCustomerId = ps.customerId
           ? customerIdRemap.get(ps.customerId) || ps.customerId
           : undefined;
-        return {
+        const importedReceipt = isConsommation
+          ? undefined
+          : sanitizePersonalSaleReceipt(ps.receipt, ps.date ? String(ps.date) : undefined);
+        const existingSale = mode === 'merge' ? existingSalesMap.get(String(ps.id)) : undefined;
+        const finalReceipt = isConsommation
+          ? undefined
+          : importedReceipt ?? sanitizePersonalSaleReceipt(existingSale?.receipt, ps.date);
+
+        const cleaned: any = {
           ...ps,
           kind,
           consumptionValueFC: ps.consumptionValueFC ?? 0,
@@ -507,6 +655,14 @@ export async function restoreDataFromJSON(
           writtenOffAt:
             !isConsommation && ps.writtenOffAt !== undefined ? Number(ps.writtenOffAt) : undefined,
         };
+
+        if (finalReceipt) {
+          cleaned.receipt = finalReceipt;
+        } else {
+          delete cleaned.receipt;
+        }
+
+        return cleaned;
       });
       await db.personalSales.bulkPut(sanitizedSales);
     }
@@ -605,6 +761,49 @@ export async function restoreDataFromJSON(
             : undefined
           : importedDismissedKeys;
 
+      const importedReceiptSettings = sanitizeReceiptSettings(data.settings.receiptSettings);
+      let finalReceiptSettings: ReceiptSettings | undefined = importedReceiptSettings;
+      if (mode === 'merge' && (existingSettings?.receiptSettings || importedReceiptSettings)) {
+        const exR = existingSettings?.receiptSettings;
+        const impR = importedReceiptSettings;
+        const mergedVoided = Array.from(
+          new Set([...(exR?.voidedNumbers || []), ...(impR?.voidedNumbers || [])])
+        ).sort((a, b) => a - b);
+        const mergedPrintedUpTo = Math.max(exR?.printedUpTo ?? 0, impR?.printedUpTo ?? 0);
+        finalReceiptSettings = {
+          ...(exR || {}),
+          ...(impR || {}),
+          printedUpTo:
+            exR?.printedUpTo !== undefined || impR?.printedUpTo !== undefined
+              ? mergedPrintedUpTo
+              : undefined,
+          voidedNumbers: mergedVoided.length > 0 ? mergedVoided : undefined,
+        };
+      }
+
+      const importedWholesaleTiers = sanitizeWholesaleTiers(data.settings.wholesaleTiers);
+      let finalWholesaleTiers: Record<string, WholesaleTier[]> | undefined =
+        importedWholesaleTiers;
+      if (mode === 'merge' && (existingSettings?.wholesaleTiers || importedWholesaleTiers)) {
+        const mergedTiers: Record<string, WholesaleTier[]> = {
+          ...(existingSettings?.wholesaleTiers || {}),
+        };
+        for (const [prodId, impList] of Object.entries(importedWholesaleTiers || {})) {
+          const byMinQty = new Map<number, WholesaleTier>();
+          for (const t of mergedTiers[prodId] || []) {
+            byMinQty.set(t.minQty, t);
+          }
+          for (const t of impList) {
+            byMinQty.set(t.minQty, t);
+          }
+          mergedTiers[prodId] = Array.from(byMinQty.values()).sort(
+            (a, b) => a.minQty - b.minQty
+          );
+        }
+        finalWholesaleTiers =
+          Object.keys(mergedTiers).length > 0 ? mergedTiers : undefined;
+      }
+
       await db.settings.put({
         ...(existingSettings || {}),
         ...data.settings,
@@ -620,6 +819,8 @@ export async function restoreDataFromJSON(
         stockLowBatches: finalStockLowBatches,
         priceRiseAlertPct: finalPriceRiseAlertPct,
         dismissedPriceAlertKeys: finalDismissedKeys,
+        receiptSettings: finalReceiptSettings,
+        wholesaleTiers: finalWholesaleTiers,
       });
     }
 

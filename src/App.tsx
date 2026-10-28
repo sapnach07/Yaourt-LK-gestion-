@@ -253,6 +253,7 @@ export default function App() {
             {activeTab === 'daily' && (
               <DailyEntryView
                 settings={settings}
+                onSettingsUpdated={handleSettingsUpdated}
                 onShowToast={showToast}
                 onOpenCalculator={() => setIsCalculatorOpen(true)}
                 initialStatusFilter={dailyStatusFilter}
