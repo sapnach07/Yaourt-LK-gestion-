@@ -40,6 +40,7 @@ import {
   calculateIngredientsStock,
   calculateItemsPriceAnalytics,
 } from '../../utils/ingredientStockCalculator';
+import { moveToTrash } from '../../utils/trashManager';
 import { SecurityConfirmModal } from '../../components/SecurityConfirmModal';
 import type {
   AppSettings,
@@ -411,9 +412,9 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
 
   const handleConfirmDeleteAdjustment = async () => {
     if (!adjToDelete) return;
-    await db.stockAdjustments.delete(adjToDelete.id);
+    await moveToTrash('stockAdjustment', adjToDelete);
     setAdjToDelete(null);
-    onShowToast('info', 'Ajustement supprimé.');
+    onShowToast('info', 'Ajustement déplacé dans la corbeille.');
   };
 
   // Sorted adjustments for Ajustements tab

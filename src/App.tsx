@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Calculator } from 'lucide-react';
+import { liveQuery } from 'dexie';
 import { db, initializeDatabase, DEFAULT_SETTINGS } from './db/db';
 import { Header } from './components/Header';
 import { BottomNav, type NavTabId } from './components/BottomNav';
 import { PinLockScreen } from './components/PinLockScreen';
 import { CalculatorModal } from './components/CalculatorModal';
 import { NotificationToast, type ToastMessage } from './components/NotificationToast';
-import { ConfirmModal } from './components/ConfirmModal';
+import { RecoveryCodeModal } from './components/RecoveryCodeModal';
 
 import { DashboardView } from './modules/dashboard/DashboardView';
 import { DailyEntryView } from './modules/daily/DailyEntryView';
@@ -21,6 +22,7 @@ import {
   IngredientStockView,
   type StockSubTab,
 } from './modules/ingredients/IngredientStockView';
+import { TrashHistoryView } from './modules/trash/TrashHistoryView';
 
 import type { AppSettings } from './types';
 
@@ -33,6 +35,7 @@ export default function App() {
   const [isOwnerProfitOpen, setIsOwnerProfitOpen] = useState(false);
   const [isDebtsOpen, setIsDebtsOpen] = useState(false);
   const [isIngredientStockOpen, setIsIngredientStockOpen] = useState(false);
+  const [isTrashHistoryOpen, setIsTrashHistoryOpen] = useState(false);
   const [ingredientStockInitialTab, setIngredientStockInitialTab] = useState<StockSubTab>('stock');
   const [debtsInitialCustomerId, setDebtsInitialCustomerId] = useState<string | null>(null);
   const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string; source?: 'personnel' | 'benefices' } | null>(null);
@@ -41,7 +44,7 @@ export default function App() {
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
-  const [isResetPinModalOpen, setIsResetPinModalOpen] = useState(false);
+  const [pendingRecoveryCode, setPendingRecoveryCode] = useState<string | null>(null);
 
   // Calculator floating modal state
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
@@ -53,12 +56,25 @@ export default function App() {
     initApp();
   }, []);
 
+  useEffect(() => {
+    if (!isDbReady) return;
+    const sub = liveQuery(() => db.settings.get('app_settings')).subscribe({
+      next: (latest) => {
+        if (latest) {
+          setSettings(latest);
+        }
+      },
+    });
+    return () => sub.unsubscribe();
+  }, [isDbReady]);
+
   const resetSubViews = () => {
     setIsReserveOpen(false);
     setIsEarningsOpen(false);
     setIsOwnerProfitOpen(false);
     setIsDebtsOpen(false);
     setIsIngredientStockOpen(false);
+    setIsTrashHistoryOpen(false);
     setDebtsInitialCustomerId(null);
     setReservePrefill(null);
   };
@@ -98,15 +114,6 @@ export default function App() {
     setSettings(newSettings);
   };
 
-  const handleResetPinConfirm = async () => {
-    const updated = { ...settings, pinCode: '' };
-    await db.settings.put(updated);
-    setSettings(updated);
-    setIsLocked(false);
-    setIsResetPinModalOpen(false);
-    showToast('info', 'Code PIN réinitialisé et désactivé avec succès.');
-  };
-
   if (!isDbReady) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex flex-col items-center justify-center p-6 text-center">
@@ -128,26 +135,18 @@ export default function App() {
   // If locked with PIN
   if (isLocked && settings.pinCode) {
     return (
-      <>
-        <PinLockScreen
-          correctPin={settings.pinCode}
-          onUnlocked={() => setIsLocked(false)}
-          onResetPinRequest={() => setIsResetPinModalOpen(true)}
-          businessName={settings.businessName}
-          logoBase64={settings.appLogoBase64}
-        />
-
-        <ConfirmModal
-          isOpen={isResetPinModalOpen}
-          title="Réinitialiser le code PIN ?"
-          message="Si vous avez oublié votre code PIN, vous pouvez le désactiver pour retrouver l'accès complet à vos données."
-          confirmLabel="Désactiver le PIN"
-          cancelLabel="Annuler"
-          isDanger={true}
-          onConfirm={handleResetPinConfirm}
-          onCancel={() => setIsResetPinModalOpen(false)}
-        />
-      </>
+      <PinLockScreen
+        settings={settings}
+        onSettingsUpdated={handleSettingsUpdated}
+        onUnlocked={(oneTimeRecoveryCode) => {
+          setIsLocked(false);
+          if (oneTimeRecoveryCode) {
+            setPendingRecoveryCode(oneTimeRecoveryCode);
+          }
+        }}
+        businessName={settings.businessName}
+        logoBase64={settings.appLogoBase64}
+      />
     );
   }
 
@@ -155,6 +154,12 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* Toast Manager */}
       <NotificationToast toasts={toasts} onDismiss={dismissToast} />
+
+      {/* One-time Recovery Code Modal (after legacy PIN migration or forgot-PIN recovery) */}
+      <RecoveryCodeModal
+        code={pendingRecoveryCode}
+        onConfirmNoted={() => setPendingRecoveryCode(null)}
+      />
 
       {/* Top App Bar */}
       <Header
@@ -207,6 +212,12 @@ export default function App() {
             initialTab={ingredientStockInitialTab}
             onShowToast={showToast}
             onBack={() => setIsIngredientStockOpen(false)}
+          />
+        ) : isTrashHistoryOpen ? (
+          <TrashHistoryView
+            settings={settings}
+            onShowToast={showToast}
+            onBack={() => setIsTrashHistoryOpen(false)}
           />
         ) : (
           <>
@@ -300,6 +311,10 @@ export default function App() {
                   resetSubViews();
                   setIngredientStockInitialTab('stock');
                   setIsIngredientStockOpen(true);
+                }}
+                onOpenTrashHistory={() => {
+                  resetSubViews();
+                  setIsTrashHistoryOpen(true);
                 }}
               />
             )}

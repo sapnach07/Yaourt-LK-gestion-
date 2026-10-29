@@ -22,6 +22,7 @@ import {
   toISODate,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { moveToTrash } from '../../utils/trashManager';
 import { PaymentModal } from './PaymentModal';
 import type { Employee, Payment, DailyEntry, AppSettings } from '../../types';
 
@@ -138,8 +139,8 @@ export const PaymentsHistoryModal: React.FC<PaymentsHistoryModalProps> = ({
   const handleDeleteConfirm = async () => {
     if (!paymentToDelete) return;
     try {
-      await db.payments.delete(paymentToDelete.id);
-      onShowToast('info', 'Paiement supprimé.');
+      await moveToTrash('payment', paymentToDelete);
+      onShowToast('info', 'Paiement déplacé dans la corbeille.');
       setPaymentToDelete(null);
       onPaymentsChanged();
     } catch (err: any) {

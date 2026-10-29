@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, Info, CheckCircle2, X } from 'lucide-react';
+import { SecurityConfirmModal } from './SecurityConfirmModal';
 
 interface ConfirmModalProps {
   isOpen: boolean;
@@ -9,6 +10,7 @@ interface ConfirmModalProps {
   cancelLabel?: string;
   isDanger?: boolean;
   isAlertOnly?: boolean;
+  requirePin?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 }
@@ -21,9 +23,24 @@ export const ConfirmModal: React.FC<ConfirmModalProps> = ({
   cancelLabel = 'Annuler',
   isDanger = false,
   isAlertOnly = false,
+  requirePin,
   onConfirm,
   onCancel,
 }) => {
+  if (isDanger && !isAlertOnly && requirePin !== false) {
+    return (
+      <SecurityConfirmModal
+        isOpen={isOpen}
+        title={title}
+        message={message}
+        confirmLabel={confirmLabel}
+        cancelLabel={cancelLabel}
+        onConfirm={onConfirm}
+        onCancel={onCancel}
+      />
+    );
+  }
+
   if (!isOpen) return null;
 
   return (

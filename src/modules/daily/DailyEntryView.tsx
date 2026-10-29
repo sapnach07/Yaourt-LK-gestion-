@@ -45,6 +45,7 @@ import {
   generateFilledReceiptPDF,
   RECEIPT_PAYMENT_MODE_LABELS,
 } from '../../utils/receiptPdfGenerator';
+import { moveToTrash } from '../../utils/trashManager';
 import { DailyEntryModal } from './DailyEntryModal';
 import {
   ProductionStockModal,
@@ -233,8 +234,8 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   const handleDeleteDailyEntry = async () => {
     if (!entryToDelete) return;
     try {
-      await db.dailyEntries.delete(entryToDelete.id);
-      onShowToast('info', 'Saisie de vente supprimée avec succès.');
+      await moveToTrash('dailyEntry', entryToDelete);
+      onShowToast('info', 'Saisie de vente déplacée dans la corbeille.');
       setEntryToDelete(null);
       await loadAllData();
     } catch (e: any) {
@@ -245,8 +246,8 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   const handleDeleteProdEntry = async () => {
     if (!prodToDelete) return;
     try {
-      await db.productionEntries.delete(prodToDelete.id);
-      onShowToast('info', 'Saisie de production supprimée avec succès.');
+      await moveToTrash('production', prodToDelete);
+      onShowToast('info', 'Saisie de production déplacée dans la corbeille.');
       setProdToDelete(null);
       await loadAllData();
     } catch (e: any) {
@@ -257,8 +258,8 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   const handleDeletePersonalSale = async () => {
     if (!saleToDelete) return;
     try {
-      await db.personalSales.delete(saleToDelete.id);
-      onShowToast('info', 'Vente personnelle supprimée avec succès.');
+      await moveToTrash('personalSale', saleToDelete);
+      onShowToast('info', 'Vente personnelle déplacée dans la corbeille.');
       setSaleToDelete(null);
       await loadAllData();
     } catch (e: any) {

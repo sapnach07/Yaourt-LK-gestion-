@@ -26,6 +26,7 @@ import {
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
 import { calculateReserveBalance } from '../../utils/reserveCalculator';
+import { moveToTrash } from '../../utils/trashManager';
 import type {
   Expense,
   ExpenseIngredientLine,
@@ -667,8 +668,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleDelete = async () => {
     if (!expenseToDelete) return;
     try {
-      await db.expenses.delete(expenseToDelete.id);
-      onShowToast('info', 'Dépense supprimée.');
+      await moveToTrash('expense', expenseToDelete);
+      onShowToast('info', 'Dépense déplacée dans la corbeille.');
       setExpenseToDelete(null);
       await loadData();
     } catch (err: any) {

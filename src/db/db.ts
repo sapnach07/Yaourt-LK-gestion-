@@ -12,6 +12,7 @@ import type {
   Customer,
   DebtPayment,
   StockAdjustment,
+  TrashItem,
 } from '../types';
 
 export const DEFAULT_EXPENSE_CATEGORIES = [
@@ -55,6 +56,7 @@ export class YaourtDatabase extends Dexie {
   customers!: Table<Customer, string>;
   debtPayments!: Table<DebtPayment, string>;
   stockAdjustments!: Table<StockAdjustment, string>;
+  trash!: Table<TrashItem, string>;
 
   constructor() {
     super('YaourtGestionDB');
@@ -91,6 +93,21 @@ export class YaourtDatabase extends Dexie {
       customers: 'id, name, createdAt',
       debtPayments: 'id, customerId, date, createdAt',
       stockAdjustments: 'id, itemId, date, createdAt',
+    });
+    this.version(6).stores({
+      employees: 'id, name, isArchived, startDate',
+      products: 'id, name, isActive, sortOrder',
+      dailyEntries: 'id, date, employeeId, createdAt',
+      productionEntries: 'id, date, createdAt',
+      expenses: 'id, date, category, createdAt',
+      reserveMovements: 'id, date, type, createdAt',
+      payments: 'id, employeeId, month, date, createdAt',
+      settings: 'id',
+      personalSales: 'id, date, customerId, paymentStatus, createdAt',
+      customers: 'id, name, createdAt',
+      debtPayments: 'id, customerId, date, createdAt',
+      stockAdjustments: 'id, itemId, date, createdAt',
+      trash: 'id, deletedAt, kind',
     });
   }
 }

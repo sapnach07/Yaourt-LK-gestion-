@@ -1,6 +1,7 @@
 import { db } from '../db/db';
 import { formatDate, formatFC, toISODate } from './formatters';
 import { normalizeCustomerName } from './debtCalculator';
+import { isValidTrashKind } from './trashManager';
 import type {
   AppSettings,
   Customer,
@@ -17,6 +18,7 @@ import type {
   ReceiptSettings,
   StockAdjustment,
   StockAdjustmentReason,
+  TrashItem,
   WholesaleTier,
 } from '../types';
 
@@ -410,6 +412,62 @@ function sanitizeProductionCosting(raw: unknown): ProductionCosting | undefined 
   };
 }
 
+function sanitizeTrashItems(
+  raw: unknown,
+  customerIdRemap: Map<string, string>
+): TrashItem[] {
+  if (!Array.isArray(raw)) return [];
+  const items: TrashItem[] = [];
+
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const obj = entry as Record<string, any>;
+    if (!obj.id || !isValidTrashKind(obj.kind) || !obj.originalId) continue;
+    if (!obj.payload || typeof obj.payload !== 'object' || Array.isArray(obj.payload)) continue;
+
+    const clonedPayload = JSON.parse(JSON.stringify(obj.payload));
+    if (
+      (obj.kind === 'personalSale' || obj.kind === 'debtPayment') &&
+      typeof clonedPayload.customerId === 'string' &&
+      customerIdRemap.has(clonedPayload.customerId)
+    ) {
+      clonedPayload.customerId = customerIdRemap.get(clonedPayload.customerId);
+    }
+
+    const amountNum = Number(obj.amountFC);
+    const hasAmount = obj.amountFC !== undefined && Number.isFinite(amountNum);
+
+    const deletedAtNum = Number(obj.deletedAt);
+    const restoredAtNum = Number(obj.restoredAt);
+    const hasRestoredAt =
+      obj.restoredAt !== undefined && obj.restoredAt !== null && Number.isFinite(restoredAtNum);
+
+    const cleaned: TrashItem = {
+      id: String(obj.id),
+      kind: obj.kind,
+      originalId: String(obj.originalId),
+      label: String(obj.label || obj.originalId),
+      originalDate:
+        typeof obj.originalDate === 'string' && obj.originalDate.trim()
+          ? obj.originalDate.trim()
+          : toISODate(new Date(Number.isFinite(deletedAtNum) ? deletedAtNum : Date.now())),
+      payload: clonedPayload,
+      deletedAt: Number.isFinite(deletedAtNum) ? deletedAtNum : Date.now(),
+    };
+
+    if (hasAmount) {
+      cleaned.amountFC = Math.round(amountNum);
+    }
+    if (hasRestoredAt) {
+      cleaned.restoredAt = restoredAtNum;
+    }
+
+    items.push(cleaned);
+  }
+
+  return items;
+}
+
 export interface BackupData {
   version: number;
   exportDate: string;
@@ -425,7 +483,21 @@ export interface BackupData {
   customers?: any[];
   debtPayments?: any[];
   stockAdjustments?: any[];
-  settings: AppSettings;
+  trash?: TrashItem[];
+  settings: Omit<
+    AppSettings,
+    | 'pinCode'
+    | 'recoveryCodeHash'
+    | 'pinFailedAttempts'
+    | 'pinLockoutCount'
+    | 'pinLockoutUntil'
+  > & {
+    pinCode?: string;
+    recoveryCodeHash?: string;
+    pinFailedAttempts?: number;
+    pinLockoutCount?: number;
+    pinLockoutUntil?: number;
+  };
 }
 
 /**
@@ -445,6 +517,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     customers,
     debtPayments,
     stockAdjustments,
+    trash,
     settingsList,
   ] = await Promise.all([
     db.employees.toArray(),
@@ -458,6 +531,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     db.customers.toArray(),
     db.debtPayments.toArray(),
     db.stockAdjustments.toArray(),
+    db.trash.toArray(),
     db.settings.toArray(),
   ]);
 
@@ -465,8 +539,20 @@ export async function exportAllDataToJSON(): Promise<void> {
   const now = new Date();
   const dateStr = toISODate(now);
 
+  // Ne jamais inclure le PIN, le code de récupération, ni leurs empreintes ou compteurs dans l'export JSON
+  const {
+    pinCode: _exportedPin,
+    recoveryCodeHash: _exportedRecovery,
+    pinFailedAttempts: _exportedFailedAttempts,
+    pinLockoutCount: _exportedLockoutCount,
+    pinLockoutUntil: _exportedLockoutUntil,
+    pinDeleteFailedAttempts: _exportedDeleteFailedAttempts,
+    pinDeleteLockoutUntil: _exportedDeleteLockoutUntil,
+    ...settingsWithoutSecrets
+  } = (currentSettings || {}) as AppSettings;
+
   const backup: BackupData = {
-    version: 5,
+    version: 6,
     exportDate: now.toISOString(),
     businessName: currentSettings?.businessName || 'Yaourt Gestion',
     employees,
@@ -480,8 +566,9 @@ export async function exportAllDataToJSON(): Promise<void> {
     customers,
     debtPayments,
     stockAdjustments,
+    trash,
     settings: {
-      ...currentSettings,
+      ...settingsWithoutSecrets,
       debtReminderDays: currentSettings?.debtReminderDays ?? 2,
       costItems: currentSettings?.costItems,
       productCosting: currentSettings?.productCosting,
@@ -496,7 +583,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     },
   };
 
-  // Update last backup date in database
+  // Update last backup date in database (en conservant le PIN et le code de récupération locaux)
   if (currentSettings) {
     await db.settings.put({
       ...currentSettings,
@@ -542,6 +629,7 @@ export async function restoreDataFromJSON(
         db.customers.clear(),
         db.debtPayments.clear(),
         db.stockAdjustments.clear(),
+        db.trash.clear(),
       ]);
     }
 
@@ -687,9 +775,41 @@ export async function restoreDataFromJSON(
         await db.stockAdjustments.bulkPut(sanitizedAdjustments);
       }
     }
+    if (Array.isArray(data.trash) && data.trash.length > 0) {
+      const sanitizedTrash = sanitizeTrashItems(data.trash, customerIdRemap);
+      if (sanitizedTrash.length > 0) {
+        if (mode === 'merge') {
+          const existingTrashList = await db.trash.toArray();
+          const existingById = new Map(existingTrashList.map((t) => [t.id, t]));
+          const mergedTrash = sanitizedTrash.map((imp) => {
+            const local = existingById.get(imp.id);
+            if (local?.restoredAt && !imp.restoredAt) {
+              return { ...imp, restoredAt: local.restoredAt };
+            }
+            return imp;
+          });
+          await db.trash.bulkPut(mergedTrash);
+        } else {
+          await db.trash.bulkPut(sanitizedTrash);
+        }
+      }
+    }
     if (data.settings) {
-      const existingSettings =
-        mode === 'merge' ? await db.settings.get('app_settings') : undefined;
+      // Toujours lire les paramètres locaux pour conserver intacts le PIN et le code de récupération actuels
+      // aussi bien en mode Remplacer qu'en mode Fusionner
+      const currentLocalSettings = await db.settings.get('app_settings');
+      const existingSettings = mode === 'merge' ? currentLocalSettings : undefined;
+
+      const {
+        pinCode: _importedPin,
+        recoveryCodeHash: _importedRecovery,
+        pinFailedAttempts: _importedFailedAttempts,
+        pinLockoutCount: _importedLockoutCount,
+        pinLockoutUntil: _importedLockoutUntil,
+        pinDeleteFailedAttempts: _importedDeleteFailedAttempts,
+        pinDeleteLockoutUntil: _importedDeleteLockoutUntil,
+        ...importedSettingsWithoutSecrets
+      } = data.settings;
 
       const importedCostItems = sanitizeCostItems(data.settings.costItems);
       const importedProductCosting = sanitizeProductCosting(data.settings.productCosting);
@@ -804,10 +924,17 @@ export async function restoreDataFromJSON(
           Object.keys(mergedTiers).length > 0 ? mergedTiers : undefined;
       }
 
-      await db.settings.put({
+      const restoredSettings: AppSettings = {
         ...(existingSettings || {}),
-        ...data.settings,
+        ...importedSettingsWithoutSecrets,
         id: 'app_settings',
+        pinCode: currentLocalSettings?.pinCode ?? '',
+        recoveryCodeHash: currentLocalSettings?.recoveryCodeHash,
+        pinFailedAttempts: currentLocalSettings?.pinFailedAttempts,
+        pinLockoutCount: currentLocalSettings?.pinLockoutCount,
+        pinLockoutUntil: currentLocalSettings?.pinLockoutUntil,
+        pinDeleteFailedAttempts: currentLocalSettings?.pinDeleteFailedAttempts,
+        pinDeleteLockoutUntil: currentLocalSettings?.pinDeleteLockoutUntil,
         debtReminderDays:
           data.settings.debtReminderDays !== undefined
             ? data.settings.debtReminderDays
@@ -821,7 +948,27 @@ export async function restoreDataFromJSON(
         dismissedPriceAlertKeys: finalDismissedKeys,
         receiptSettings: finalReceiptSettings,
         wholesaleTiers: finalWholesaleTiers,
-      });
+      };
+      if (currentLocalSettings?.recoveryCodeHash === undefined) {
+        delete restoredSettings.recoveryCodeHash;
+      }
+      if (currentLocalSettings?.pinFailedAttempts === undefined) {
+        delete restoredSettings.pinFailedAttempts;
+      }
+      if (currentLocalSettings?.pinLockoutCount === undefined) {
+        delete restoredSettings.pinLockoutCount;
+      }
+      if (currentLocalSettings?.pinLockoutUntil === undefined) {
+        delete restoredSettings.pinLockoutUntil;
+      }
+      if (currentLocalSettings?.pinDeleteFailedAttempts === undefined) {
+        delete restoredSettings.pinDeleteFailedAttempts;
+      }
+      if (currentLocalSettings?.pinDeleteLockoutUntil === undefined) {
+        delete restoredSettings.pinDeleteLockoutUntil;
+      }
+
+      await db.settings.put(restoredSettings);
     }
 
     return {

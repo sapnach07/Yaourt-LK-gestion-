@@ -32,6 +32,7 @@ import {
   getDateRangeForFilter,
 } from '../../utils/formatters';
 import { ConfirmModal } from '../../components/ConfirmModal';
+import { moveToTrash } from '../../utils/trashManager';
 import {
   calculateReserveBalance,
   calculatePeriodReserveSummary,
@@ -449,10 +450,10 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
   const handleDeleteConfirm = async () => {
     if (!movementToDelete) return;
     try {
-      await db.reserveMovements.delete(movementToDelete.id);
+      await moveToTrash('reserveMovement', movementToDelete);
       setMovementToDelete(null);
       await loadData();
-      onShowToast('info', 'Mouvement supprimé.');
+      onShowToast('info', 'Mouvement déplacé dans la corbeille.');
     } catch (err: any) {
       onShowToast('error', 'Erreur suppression : ' + err.message);
     }
@@ -1082,9 +1083,6 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
               <span className="text-2xl sm:text-3xl font-black font-mono tracking-tight text-emerald-950 block">
                 {formatFC(reserveDetails.soldeBeneficesFC, currency)}
               </span>
-              <span className="text-[11px] text-slate-500 block mt-0.5">
-                Disponible pour retrait personnel ou pour alimenter la Réserve
-              </span>
             </div>
 
             <div className="p-2.5 rounded-2xl bg-emerald-100/80 border border-emerald-300/80 text-xs space-y-0.5">
@@ -1105,6 +1103,10 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                 </span>
               </div>
             </div>
+
+            <span className="text-[11px] text-slate-500 block">
+              Disponible pour retrait personnel ou pour alimenter la Réserve
+            </span>
           </div>
 
           {/* Bouton d'action Bénéfices */}

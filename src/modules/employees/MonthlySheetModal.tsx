@@ -18,6 +18,8 @@ import {
   formatNumber,
 } from '../../utils/formatters';
 import { generateEmployeeMonthlyPDF } from '../../utils/pdfGenerator';
+import { moveToTrash } from '../../utils/trashManager';
+import { ConfirmModal } from '../../components/ConfirmModal';
 import type { DailyEntry, Employee, Payment, AppSettings } from '../../types';
 
 interface MonthlySheetModalProps {
@@ -39,6 +41,7 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
   const [entries, setEntries] = useState<DailyEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
+  const [paymentToDelete, setPaymentToDelete] = useState<Payment | null>(null);
 
   useEffect(() => {
     if (!isOpen || !employee) return;
@@ -123,8 +126,10 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
     }
   };
 
-  const handleDeletePayment = async (paymentId: string) => {
-    await db.payments.delete(paymentId);
+  const handleDeletePayment = async () => {
+    if (!paymentToDelete) return;
+    await moveToTrash('payment', paymentToDelete);
+    setPaymentToDelete(null);
     await loadMonthData();
   };
 
@@ -370,7 +375,7 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
                       </span>
                       <button
                         type="button"
-                        onClick={() => handleDeletePayment(p.id)}
+                        onClick={() => setPaymentToDelete(p)}
                         className="text-slate-400 hover:text-rose-600 p-1 rounded-lg min-w-[32px] min-h-[32px] flex items-center justify-center"
                         title="Supprimer ce versement"
                       >
@@ -406,6 +411,22 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
           </button>
         </div>
       </div>
+
+      <ConfirmModal
+        isOpen={Boolean(paymentToDelete)}
+        title="Supprimer ce versement ?"
+        message={`Voulez-vous supprimer le versement de ${formatFC(
+          paymentToDelete?.amountFC,
+          currency
+        )} effectué le ${formatDate(paymentToDelete?.date)} pour ${
+          employee.name
+        } ? Cette action est irréversible.`}
+        confirmLabel="Supprimer"
+        cancelLabel="Annuler"
+        isDanger={true}
+        onConfirm={handleDeletePayment}
+        onCancel={() => setPaymentToDelete(null)}
+      />
     </div>
   );
 };

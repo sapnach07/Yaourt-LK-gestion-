@@ -273,7 +273,13 @@ export interface AppSettings {
   expenseReservePct: number; // Default: 50
   monthlySalesTargetFC: number; // Default: 1000000 FC
   lossAlertThresholdPct: number; // Default: 5.0%
-  pinCode: string; // 4 digits or empty string if disabled
+  pinCode: string; // Salted SHA-256 hash ('sha256$<salt>$<hash>'), '' if disabled (or legacy 4 digits before migration)
+  recoveryCodeHash?: string; // Salted SHA-256 hash of 12-char recovery code (never plaintext)
+  pinFailedAttempts?: number; // Consecutive wrong PIN or recovery attempts
+  pinLockoutCount?: number; // Escalating lockout tier (1 -> 1 min, 2 -> 5 min, >=3 -> 15 min)
+  pinLockoutUntil?: number; // Timestamp (ms) until which PIN/recovery input is blocked
+  pinDeleteFailedAttempts?: number; // Consecutive wrong PIN attempts in protected deletions (max 3)
+  pinDeleteLockoutUntil?: number; // Timestamp (ms) until which protected deletions are blocked (30s)
   expenseCategories: string[];
   lastBackupDate: string | null;
   payslipSettings?: PayslipSettings;
@@ -356,3 +362,27 @@ export interface DateRange {
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
 }
+
+export type TrashKind =
+  | 'dailyEntry'
+  | 'personalSale'
+  | 'production'
+  | 'expense'
+  | 'payment'
+  | 'reserveMovement'
+  | 'debtPayment'
+  | 'customer'
+  | 'stockAdjustment';
+
+export interface TrashItem<T = any> {
+  id: string;
+  kind: TrashKind;
+  originalId: string;
+  label: string;
+  originalDate: string; // YYYY-MM-DD
+  amountFC?: number;
+  payload: T;
+  deletedAt: number;
+  restoredAt?: number;
+}
+

@@ -474,6 +474,7 @@ export const EmployeesView: React.FC<EmployeesViewProps> = ({
         confirmLabel={confirmArchiveEmp?.isArchived ? 'Réactiver' : 'Archiver'}
         cancelLabel="Annuler"
         isDanger={!confirmArchiveEmp?.isArchived}
+        requirePin={false}
         onConfirm={() => {
           if (confirmArchiveEmp) handleToggleArchive(confirmArchiveEmp);
         }}

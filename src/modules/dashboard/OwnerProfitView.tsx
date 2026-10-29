@@ -842,15 +842,19 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-200/60 text-[10px] font-mono">
+                <div className="grid grid-cols-3 gap-1.5 pt-1 border-t border-slate-200/60 text-[10px] font-mono items-end">
                   <div>
-                    <span className="text-slate-400 font-sans block">Bénéfice gagné</span>
+                    <span className="text-slate-400 font-sans block leading-tight">
+                      Bénéfice gagné
+                    </span>
                     <span className="font-bold text-emerald-800">
                       {formatFC(row.earnedFC, currency)}
                     </span>
                   </div>
                   <div>
-                    <span className="text-slate-400 font-sans block">Retraits & transf.</span>
+                    <span className="text-slate-400 font-sans block leading-tight">
+                      Retraits et transferts
+                    </span>
                     <span className="font-bold text-slate-700">
                       {row.outflowsFC > 0
                         ? `−${formatFC(row.outflowsFC, currency)}`
@@ -858,7 +862,9 @@ export const OwnerProfitView: React.FC<OwnerProfitViewProps> = ({
                     </span>
                   </div>
                   <div className="text-right">
-                    <span className="text-slate-400 font-sans block">Solde fin de mois</span>
+                    <span className="text-slate-400 font-sans block leading-tight">
+                      Solde fin de mois
+                    </span>
                     <span className="font-extrabold text-slate-900">
                       {formatFC(row.endBalanceFC, currency)}
                     </span>

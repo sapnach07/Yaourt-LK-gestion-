@@ -34,6 +34,7 @@ import {
   calculateDaysBetweenDates,
   type CustomerDebtSummary,
 } from '../../utils/debtCalculator';
+import { moveToTrash } from '../../utils/trashManager';
 import { SecurityConfirmModal } from '../../components/SecurityConfirmModal';
 import type { AppSettings, Customer, DebtPayment, PersonalSale } from '../../types';
 
@@ -254,9 +255,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const handleConfirmDeletePayment = async () => {
     if (!paymentToDelete) return;
     try {
-      await db.debtPayments.delete(paymentToDelete.id);
+      await moveToTrash('debtPayment', paymentToDelete);
       setPaymentToDelete(null);
-      onShowToast('info', 'Paiement supprimé. Les caisses et le reste dû ont été recalculés.');
+      onShowToast(
+        'info',
+        'Paiement déplacé dans la corbeille. Les caisses et le reste dû ont été recalculés.'
+      );
     } catch (err: any) {
       onShowToast('error', 'Erreur lors de la suppression : ' + err.message);
     }
@@ -475,10 +479,10 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const handleConfirmDeleteCustomer = async () => {
     if (!selectedCustomerSummary) return;
     try {
-      await db.customers.delete(selectedCustomerSummary.customer.id);
+      await moveToTrash('customer', selectedCustomerSummary.customer);
       setIsDeleteCustomerModalOpen(false);
       setSelectedCustomerId(null);
-      onShowToast('info', 'Client supprimé.');
+      onShowToast('info', 'Client déplacé dans la corbeille.');
     } catch (err: any) {
       onShowToast('error', 'Erreur : ' + err.message);
     }

@@ -26,6 +26,7 @@ import {
   FileText,
   Store,
 } from 'lucide-react';
+import { liveQuery } from 'dexie';
 import { db } from '../../db/db';
 import {
   exportAllDataToJSON,
@@ -39,7 +40,19 @@ import {
   formatReceiptNumber,
 } from '../../utils/receiptPdfGenerator';
 import { formatFC, formatDate, parseLocaleNumber, formatNumber } from '../../utils/formatters';
+import {
+  hashSecretWithSalt,
+  generateRecoveryCode,
+  hashRecoveryCode,
+  verifyPinValue,
+  getRemainingLockoutSeconds,
+  formatLockoutCountdown,
+  recordFailedPinOrRecoveryAttempt,
+  clearPinLockoutFields,
+} from '../../utils/pinSecurity';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
+import { ConfirmModal } from '../../components/ConfirmModal';
+import { RecoveryCodeModal } from '../../components/RecoveryCodeModal';
 import { PayslipSettingsSection } from './PayslipSettingsSection';
 import { ReceiptSettingsSection } from './ReceiptSettingsSection';
 import type {
@@ -152,6 +165,7 @@ interface SettingsViewProps {
   onSettingsUpdated: (newSettings: AppSettings) => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenIngredientStock?: () => void;
+  onOpenTrashHistory?: () => void;
   initialTheme?: SettingsThemeId | null;
   initialSection?: SettingsSectionId;
 }
@@ -161,6 +175,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSettingsUpdated,
   onShowToast,
   onOpenIngredientStock,
+  onOpenTrashHistory,
   initialTheme = null,
   initialSection,
 }) => {
@@ -210,11 +225,33 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   // Storage persistence state
   const [isPersisted, setIsPersisted] = useState<boolean | null>(null);
 
-  // PIN modal
-  const [isPinModalOpen, setIsPinModalOpen] = useState(false);
+  // PIN modal & one-time recovery code display
+  const [pinModalMode, setPinModalMode] = useState<'create' | 'change' | 'disable' | null>(null);
+  const [currentPin, setCurrentPin] = useState('');
   const [newPin, setNewPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
   const [pinError, setPinError] = useState('');
+  const [isPinSubmitting, setIsPinSubmitting] = useState(false);
+  const [generatedRecoveryCode, setGeneratedRecoveryCode] = useState<string | null>(null);
+  const [pinNowTick, setPinNowTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!settings.pinLockoutUntil || settings.pinLockoutUntil <= Date.now()) {
+      return;
+    }
+    setPinNowTick(Date.now());
+    const interval = window.setInterval(() => {
+      const current = Date.now();
+      setPinNowTick(current);
+      if (!settings.pinLockoutUntil || current >= settings.pinLockoutUntil) {
+        window.clearInterval(interval);
+      }
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [settings.pinLockoutUntil]);
+
+  const remainingPinLockoutSeconds = getRemainingLockoutSeconds(settings, pinNowTick);
+  const isPinLockedOut = remainingPinLockoutSeconds > 0;
 
   // Point de départ des caisses
   const [caisseStartDate, setCaisseStartDate] = useState(settings.caisseStartDate || '');
@@ -246,6 +283,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingRestoreContent, setPendingRestoreContent] = useState<string | null>(null);
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
+  const [isReplaceConfirmOpen, setIsReplaceConfirmOpen] = useState(false);
+  const [trashCount, setTrashCount] = useState(0);
+
+  useEffect(() => {
+    const sub = liveQuery(() => db.trash.count()).subscribe({
+      next: (count) => setTrashCount(count),
+    });
+    return () => sub.unsubscribe();
+  }, []);
 
   useEffect(() => {
     loadProducts();
@@ -593,34 +639,111 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   };
 
   // PIN Management
-  const handleSavePin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPinError('');
-
-    if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
-      setPinError('Le code PIN doit comporter exactement 4 chiffres.');
-      return;
-    }
-
-    if (newPin !== confirmPin) {
-      setPinError('Les deux codes PIN ne correspondent pas.');
-      return;
-    }
-
-    const updated = { ...settings, pinCode: newPin };
-    await db.settings.put(updated);
-    onSettingsUpdated(updated);
-    setIsPinModalOpen(false);
+  const openPinModal = (mode: 'create' | 'change' | 'disable') => {
+    setCurrentPin('');
     setNewPin('');
     setConfirmPin('');
-    onShowToast('success', 'Code PIN activé avec succès.');
+    setPinError('');
+    setPinNowTick(Date.now());
+    setPinModalMode(mode);
   };
 
-  const handleDisablePin = async () => {
-    const updated = { ...settings, pinCode: '' };
-    await db.settings.put(updated);
-    onSettingsUpdated(updated);
-    onShowToast('info', 'Code PIN désactivé.');
+  const closePinModal = () => {
+    setCurrentPin('');
+    setNewPin('');
+    setConfirmPin('');
+    setPinError('');
+    setPinModalMode(null);
+  };
+
+  const handleSubmitPinModal = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinModalMode || isPinLockedOut || isPinSubmitting) return;
+    setPinError('');
+
+    setIsPinSubmitting(true);
+    try {
+      // Point 6 : Pour changer ou désactiver le PIN, vérifier d'abord le PIN actuel
+      if (pinModalMode === 'change' || pinModalMode === 'disable') {
+        if (currentPin.length !== 4 || !/^\d{4}$/.test(currentPin)) {
+          setPinError('Veuillez saisir votre code PIN actuel à 4 chiffres.');
+          return;
+        }
+
+        const isCurrentValid = await verifyPinValue(currentPin, settings.pinCode);
+        if (!isCurrentValid) {
+          const {
+            updatedSettings,
+            isNowLockedOut,
+            lockoutDurationMinutes,
+            remainingAttemptsBeforeLockout,
+          } = recordFailedPinOrRecoveryAttempt(settings);
+          await db.settings.put(updatedSettings);
+          onSettingsUpdated(updatedSettings);
+          setPinNowTick(Date.now());
+          setCurrentPin('');
+
+          if (isNowLockedOut) {
+            setPinError(
+              `Trop d’essais incorrects. Saisie bloquée pendant ${lockoutDurationMinutes} min.`
+            );
+          } else {
+            setPinError(
+              `Code PIN actuel incorrect (${remainingAttemptsBeforeLockout} essai${
+                remainingAttemptsBeforeLockout > 1 ? 's' : ''
+              } restant${remainingAttemptsBeforeLockout > 1 ? 's' : ''}).`
+            );
+          }
+          return;
+        }
+      }
+
+      if (pinModalMode === 'disable') {
+        const updated: AppSettings = {
+          ...clearPinLockoutFields(settings),
+          pinCode: '',
+        };
+        delete updated.recoveryCodeHash;
+        await db.settings.put(updated);
+        onSettingsUpdated(updated);
+        closePinModal();
+        onShowToast('info', 'Code PIN désactivé.');
+        return;
+      }
+
+      // Modes 'create' et 'change'
+      if (newPin.length !== 4 || !/^\d{4}$/.test(newPin)) {
+        setPinError('Le code PIN doit comporter exactement 4 chiffres.');
+        return;
+      }
+
+      if (newPin !== confirmPin) {
+        setPinError('Les deux codes PIN ne correspondent pas.');
+        return;
+      }
+
+      const hashedPin = await hashSecretWithSalt(newPin);
+      const freshRecoveryCode = generateRecoveryCode();
+      const hashedRecovery = await hashRecoveryCode(freshRecoveryCode);
+
+      const updated: AppSettings = {
+        ...clearPinLockoutFields(settings),
+        pinCode: hashedPin,
+        recoveryCodeHash: hashedRecovery,
+      };
+      await db.settings.put(updated);
+      onSettingsUpdated(updated);
+      closePinModal();
+      setGeneratedRecoveryCode(freshRecoveryCode);
+      onShowToast(
+        'success',
+        pinModalMode === 'change'
+          ? 'Code PIN modifié avec succès.'
+          : 'Code PIN activé avec succès.'
+      );
+    } finally {
+      setIsPinSubmitting(false);
+    }
   };
 
   // Backup & Restore
@@ -924,6 +1047,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             'mot de passe',
             'code',
             'acces',
+            'recuperation',
+            'code de recuperation',
           ],
         },
       ],
@@ -937,6 +1062,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       icon: <Download className="w-5 h-5 text-teal-700" />,
       iconBgClass: 'bg-teal-50 border-teal-200/70',
       entries: [
+        {
+          label: 'Historique des suppressions (corbeille)',
+          keywords: [
+            'corbeille',
+            'historique des suppressions',
+            'suppression',
+            'suppressions',
+            'supprime',
+            'efface',
+            'restaurer',
+          ],
+        },
         {
           label: 'Sauvegarde & restauration (JSON / CSV)',
           sectionId: 'backup_data',
@@ -1109,6 +1246,41 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             ))}
           </div>
         )}
+
+        {/* Bouton direct : Historique des suppressions (corbeille) */}
+        {onOpenTrashHistory &&
+          (!isSearching ||
+            queryTokens.every((tok) =>
+              normalizeSearchText(
+                'historique des suppressions corbeille restaurer elements supprimes effaces'
+              ).includes(tok)
+            )) && (
+            <button
+              type="button"
+              onClick={onOpenTrashHistory}
+              className="w-full p-3.5 rounded-2xl bg-white hover:bg-slate-50/80 active:scale-[0.99] border border-slate-200/80 shadow-xs flex items-center justify-between gap-3 transition-all text-left"
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="w-10 h-10 rounded-xl border bg-rose-50 border-rose-200/70 flex items-center justify-center shrink-0">
+                  <Trash2 className="w-5 h-5 text-rose-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-extrabold text-slate-900 leading-snug truncate">
+                      Historique des suppressions
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold font-mono bg-slate-100 text-slate-800 border border-slate-200 shrink-0">
+                      {trashCount}
+                    </span>
+                  </div>
+                  <span className="text-xs text-slate-500 block truncate mt-0.5">
+                    Corbeille et restauration ({trashCount} élément{trashCount > 1 ? 's' : ''})
+                  </span>
+                </div>
+              </div>
+              <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+            </button>
+          )}
       </div>
 
       {/* =================================================================== */}
@@ -1791,12 +1963,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       <div className={activeTheme === 'security' ? 'space-y-3.5' : 'hidden'}>
         {/* Section 4: Security & PIN Code */}
         <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="flex items-center gap-2">
               {settings.pinCode ? (
-                <Lock className="w-4 h-4 text-emerald-600" />
+                <Lock className="w-4 h-4 text-emerald-600 shrink-0" />
               ) : (
-                <Unlock className="w-4 h-4 text-slate-400" />
+                <Unlock className="w-4 h-4 text-slate-400 shrink-0" />
               )}
               <div>
                 <h3 className="text-xs font-bold text-slate-900">
@@ -1811,17 +1983,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
 
             {settings.pinCode ? (
-              <button
-                type="button"
-                onClick={handleDisablePin}
-                className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold border border-rose-200 min-h-[38px]"
-              >
-                Désactiver
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openPinModal('change')}
+                  className="px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-100 text-xs font-bold border border-teal-200 min-h-[38px]"
+                >
+                  Changer le PIN
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openPinModal('disable')}
+                  className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold border border-rose-200 min-h-[38px]"
+                >
+                  Désactiver
+                </button>
+              </div>
             ) : (
               <button
                 type="button"
-                onClick={() => setIsPinModalOpen(true)}
+                onClick={() => openPinModal('create')}
                 className="px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-100 text-xs font-bold border border-teal-200 min-h-[38px]"
               >
                 Activer un PIN
@@ -1835,6 +2016,35 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       {/* THÈME G : SAUVEGARDE & APPLICATION                                  */}
       {/* =================================================================== */}
       <div className={activeTheme === 'backup' ? 'space-y-3.5' : 'hidden'}>
+        {onOpenTrashHistory && (
+          <button
+            type="button"
+            onClick={onOpenTrashHistory}
+            className="w-full p-4 rounded-2xl bg-white hover:bg-slate-50 active:scale-[0.99] border border-slate-200/90 shadow-xs flex items-center justify-between gap-3 transition-all text-left"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 border border-rose-200/80 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5 text-rose-600" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-extrabold text-slate-900 leading-tight">
+                    Historique des suppressions
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[11px] font-extrabold font-mono bg-slate-100 text-slate-800 border border-slate-200 shrink-0">
+                    {trashCount}
+                  </span>
+                </div>
+                <span className="text-[11px] text-slate-500 block truncate mt-0.5">
+                  Voir le détail, restaurer ou vider la corbeille ({trashCount} élément
+                  {trashCount > 1 ? 's' : ''})
+                </span>
+              </div>
+            </div>
+            <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
+          </button>
+        )}
+
         <CollapsibleSettingsSection
           title="Sauvegarde & Restauration (Hors ligne)"
           isOpen={openSections.backup_data}
@@ -1948,8 +2158,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </CollapsibleSettingsSection>
       </div>
 
-      {/* PIN Setup Modal */}
-      {isPinModalOpen && (
+      {/* PIN Create / Change / Disable Modal */}
+      {pinModalMode && (
         <div
           role="dialog"
           aria-modal="true"
@@ -1957,67 +2167,136 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         >
           <div className="w-full max-w-sm bg-white rounded-3xl p-5 shadow-2xl border border-slate-100 space-y-4">
             <h3 className="text-base font-bold text-slate-900">
-              Définir un Code PIN à 4 chiffres
+              {pinModalMode === 'create'
+                ? 'Définir un Code PIN à 4 chiffres'
+                : pinModalMode === 'change'
+                ? 'Changer le Code PIN'
+                : 'Désactiver le Code PIN'}
             </h3>
 
-            {pinError && (
+            {isPinLockedOut && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-center space-y-0.5">
+                <p className="text-xs font-bold text-rose-800">Saisie temporairement bloquée</p>
+                <p className="text-xs text-rose-700">
+                  Réessayez dans{' '}
+                  <span className="font-mono font-extrabold">
+                    {formatLockoutCountdown(remainingPinLockoutSeconds)}
+                  </span>
+                </p>
+              </div>
+            )}
+
+            {!isPinLockedOut && pinError && (
               <p className="text-xs font-semibold text-rose-600 bg-rose-50 p-2 rounded-xl">
                 {pinError}
               </p>
             )}
 
-            <form onSubmit={handleSavePin} className="space-y-3">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Code PIN (4 chiffres)
-                </label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={newPin}
-                  onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="••••"
-                  required
-                  className="w-full text-center tracking-widest text-xl font-bold py-2.5 rounded-xl border border-slate-200 font-mono"
-                />
-              </div>
+            <form onSubmit={handleSubmitPinModal} className="space-y-3">
+              {(pinModalMode === 'change' || pinModalMode === 'disable') && (
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Code PIN actuel (4 chiffres)
+                  </label>
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    maxLength={4}
+                    disabled={isPinLockedOut || isPinSubmitting}
+                    value={currentPin}
+                    onChange={(e) => {
+                      setCurrentPin(e.target.value.replace(/\D/g, ''));
+                      setPinError('');
+                    }}
+                    placeholder="••••"
+                    required
+                    className="w-full text-center tracking-widest text-xl font-bold py-2.5 rounded-xl border border-slate-200 font-mono disabled:opacity-50"
+                  />
+                </div>
+              )}
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Confirmer le code PIN
-                </label>
-                <input
-                  type="password"
-                  inputMode="numeric"
-                  maxLength={4}
-                  value={confirmPin}
-                  onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
-                  placeholder="••••"
-                  required
-                  className="w-full text-center tracking-widest text-xl font-bold py-2.5 rounded-xl border border-slate-200 font-mono"
-                />
-              </div>
+              {(pinModalMode === 'create' || pinModalMode === 'change') && (
+                <>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      {pinModalMode === 'change'
+                        ? 'Nouveau code PIN (4 chiffres)'
+                        : 'Code PIN (4 chiffres)'}
+                    </label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      disabled={isPinLockedOut || isPinSubmitting}
+                      value={newPin}
+                      onChange={(e) => {
+                        setNewPin(e.target.value.replace(/\D/g, ''));
+                        setPinError('');
+                      }}
+                      placeholder="••••"
+                      required
+                      className="w-full text-center tracking-widest text-xl font-bold py-2.5 rounded-xl border border-slate-200 font-mono disabled:opacity-50"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      {pinModalMode === 'change'
+                        ? 'Confirmer le nouveau code PIN'
+                        : 'Confirmer le code PIN'}
+                    </label>
+                    <input
+                      type="password"
+                      inputMode="numeric"
+                      maxLength={4}
+                      disabled={isPinLockedOut || isPinSubmitting}
+                      value={confirmPin}
+                      onChange={(e) => {
+                        setConfirmPin(e.target.value.replace(/\D/g, ''));
+                        setPinError('');
+                      }}
+                      placeholder="••••"
+                      required
+                      className="w-full text-center tracking-widest text-xl font-bold py-2.5 rounded-xl border border-slate-200 font-mono disabled:opacity-50"
+                    />
+                  </div>
+                </>
+              )}
 
               <div className="pt-2 flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsPinModalOpen(false)}
+                  onClick={closePinModal}
                   className="flex-1 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 min-h-[44px]"
                 >
                   Annuler
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-teal-700 text-white text-xs font-bold hover:bg-teal-800 min-h-[44px]"
+                  disabled={isPinLockedOut || isPinSubmitting}
+                  className={`flex-1 py-2.5 rounded-xl text-white text-xs font-bold min-h-[44px] disabled:opacity-50 ${
+                    pinModalMode === 'disable'
+                      ? 'bg-rose-600 hover:bg-rose-700'
+                      : 'bg-teal-700 hover:bg-teal-800'
+                  }`}
                 >
-                  Activer
+                  {pinModalMode === 'create'
+                    ? 'Activer'
+                    : pinModalMode === 'change'
+                    ? 'Enregistrer'
+                    : 'Désactiver'}
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
+
+      {/* One-time Recovery Code Modal after creating or changing PIN */}
+      <RecoveryCodeModal
+        code={generatedRecoveryCode}
+        onConfirmNoted={() => setGeneratedRecoveryCode(null)}
+      />
 
       {/* Restore Mode Choice Modal */}
       {isRestoreModalOpen && (
@@ -2054,7 +2333,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
               <button
                 type="button"
-                onClick={() => handleExecuteRestore('replace')}
+                onClick={() => {
+                  setIsRestoreModalOpen(false);
+                  setIsReplaceConfirmOpen(true);
+                }}
                 className="w-full text-left p-3 rounded-2xl border border-rose-200 bg-rose-50/70 hover:bg-rose-100 transition-all min-h-[44px]"
               >
                 <span className="text-xs font-bold text-rose-900 block">
@@ -2079,6 +2361,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Confirmation protégée pour la restauration en mode Remplacer */}
+      <ConfirmModal
+        isOpen={isReplaceConfirmOpen}
+        title="Remplacer toutes les données ?"
+        message="Efface les données actuelles pour restaurer exactement le fichier de sauvegarde. Cette action est irréversible."
+        confirmLabel="Remplacer totalement"
+        cancelLabel="Annuler"
+        isDanger={true}
+        onConfirm={() => {
+          setIsReplaceConfirmOpen(false);
+          handleExecuteRestore('replace');
+        }}
+        onCancel={() => {
+          setIsReplaceConfirmOpen(false);
+          setPendingRestoreContent(null);
+        }}
+      />
     </div>
   );
 };
