@@ -33,6 +33,8 @@ interface ReceiptSettingsSectionProps {
   products: Product[];
   onSettingsUpdated: (newSettings: AppSettings) => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
+  mode?: 'all' | 'receipts' | 'wholesale';
+  onOpenLogoSettings?: () => void;
 }
 
 const RECEIPT_PRESET_COLORS = [
@@ -57,6 +59,8 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
   products,
   onSettingsUpdated,
   onShowToast,
+  mode = 'all',
+  onOpenLogoSettings,
 }) => {
   const r = settings.receiptSettings || {};
   const currency = settings.currency || 'FC';
@@ -184,11 +188,17 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
       const updatedSettings: AppSettings = {
         ...settings,
         receiptSettings: buildCurrentReceiptSettings(),
-        wholesaleTiers: cleanWholesaleTiers(wholesaleTiers),
+        wholesaleTiers:
+          mode === 'receipts' ? settings.wholesaleTiers : cleanWholesaleTiers(wholesaleTiers),
       };
       await db.settings.put(updatedSettings);
       onSettingsUpdated(updatedSettings);
-      onShowToast('success', 'Réglages des reçus et prix de gros enregistrés.');
+      onShowToast(
+        'success',
+        mode === 'receipts'
+          ? 'Réglages des reçus enregistrés.'
+          : 'Réglages des reçus et prix de gros enregistrés.'
+      );
     } catch (err: any) {
       onShowToast('error', 'Erreur enregistrement : ' + err.message);
     } finally {
@@ -223,7 +233,8 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
     const updatedSettings: AppSettings = {
       ...settings,
       receiptSettings: preservedSettings,
-      wholesaleTiers: cleanWholesaleTiers(wholesaleTiers),
+      wholesaleTiers:
+        mode === 'receipts' ? settings.wholesaleTiers : cleanWholesaleTiers(wholesaleTiers),
     };
     await db.settings.put(updatedSettings);
     onSettingsUpdated(updatedSettings);
@@ -309,7 +320,8 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
 
     const updatedSettings: AppSettings = {
       ...settings,
-      receiptSettings: buildCurrentReceiptSettings(),
+      receiptSettings:
+        mode === 'wholesale' ? settings.receiptSettings : buildCurrentReceiptSettings(),
       wholesaleTiers: cleanWholesaleTiers(nextWholesale),
     };
     await db.settings.put(updatedSettings);
@@ -329,7 +341,8 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
 
     const updatedSettings: AppSettings = {
       ...settings,
-      receiptSettings: buildCurrentReceiptSettings(),
+      receiptSettings:
+        mode === 'wholesale' ? settings.receiptSettings : buildCurrentReceiptSettings(),
       wholesaleTiers: cleanWholesaleTiers(nextWholesale),
     };
     await db.settings.put(updatedSettings);
@@ -377,7 +390,8 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
       const updatedSettingsBeforePrint: AppSettings = {
         ...settings,
         receiptSettings: currentReceiptCfg,
-        wholesaleTiers: cleanWholesaleTiers(wholesaleTiers),
+        wholesaleTiers:
+          mode === 'receipts' ? settings.wholesaleTiers : cleanWholesaleTiers(wholesaleTiers),
       };
       await db.settings.put(updatedSettingsBeforePrint);
       onSettingsUpdated(updatedSettingsBeforePrint);
@@ -410,7 +424,8 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
     const updatedSettings: AppSettings = {
       ...settings,
       receiptSettings: buildCurrentReceiptSettings(newPrintedUpTo),
-      wholesaleTiers: cleanWholesaleTiers(wholesaleTiers),
+      wholesaleTiers:
+        mode === 'receipts' ? settings.wholesaleTiers : cleanWholesaleTiers(wholesaleTiers),
     };
     await db.settings.put(updatedSettings);
     onSettingsUpdated(updatedSettings);
@@ -438,13 +453,126 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
     (p) => p.isActive || (wholesaleTiers[p.id] && wholesaleTiers[p.id].length > 0)
   );
 
+  const wholesaleTiersContent = (
+    <>
+      <div>
+        <span className="text-xs font-bold text-slate-800 block">Prix de gros par produit</span>
+        <span className="text-[10px] text-slate-400 block">
+          Paliers dégressifs selon la quantité prise (vide par défaut).
+        </span>
+      </div>
+
+      {catalogueProducts.length === 0 ? (
+        <p className="text-xs text-slate-400 italic">Aucun produit actif dans le catalogue.</p>
+      ) : (
+        <div className="space-y-2.5">
+          {catalogueProducts.map((prod) => {
+            const tiers = wholesaleTiers[prod.id] || [];
+            return (
+              <div
+                key={prod.id}
+                className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold text-slate-900">{prod.name}</span>
+                  <span className="text-[11px] font-mono text-slate-500">
+                    Prix normal : {formatFC(prod.defaultPrice, currency)}
+                  </span>
+                </div>
+
+                {tiers.length > 0 && (
+                  <div className="space-y-1">
+                    {tiers.map((tier) => (
+                      <div
+                        key={tier.minQty}
+                        className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs"
+                      >
+                        <span className="text-slate-800 font-semibold">
+                          à partir de <strong className="font-mono">{formatNumber(tier.minQty)}</strong> :{' '}
+                          <strong className="font-mono text-teal-800">
+                            {formatFC(tier.priceFC, currency)}
+                          </strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteWholesaleTier(prod.id, tier.minQty)}
+                          className="p-1 text-slate-400 hover:text-rose-600 rounded"
+                          title="Supprimer ce palier"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Ligne d'ajout : à partir de [quantité] : [prix unitaire] FC */}
+                <div className="flex items-center gap-1.5 pt-0.5">
+                  <span className="text-[11px] text-slate-600 font-semibold shrink-0">
+                    à partir de
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Qté"
+                    value={tierDraftQty[prod.id] || ''}
+                    onChange={(e) =>
+                      setTierDraftQty((prev) => ({
+                        ...prev,
+                        [prod.id]: e.target.value.replace(/[^0-9]/g, ''),
+                      }))
+                    }
+                    className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold font-mono text-center text-slate-800 min-h-[34px]"
+                  />
+                  <span className="text-[11px] text-slate-600 font-semibold shrink-0">:</span>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="Prix"
+                    value={tierDraftPrice[prod.id] || ''}
+                    onChange={(e) =>
+                      setTierDraftPrice((prev) => ({
+                        ...prev,
+                        [prod.id]: e.target.value.replace(/[^0-9.,]/g, ''),
+                      }))
+                    }
+                    className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold font-mono text-slate-800 min-h-[34px]"
+                  />
+                  <span className="text-[11px] text-slate-500 font-bold shrink-0">
+                    {currency}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleAddWholesaleTier(prod.id)}
+                    className="p-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white shrink-0 min-h-[34px] min-w-[34px] flex items-center justify-center"
+                    title="Ajouter ce prix de gros"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </>
+  );
+
+  if (mode === 'wholesale') {
+    return (
+      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
+        {wholesaleTiersContent}
+      </div>
+    );
+  }
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-100 pb-3">
         <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-800 flex items-center gap-1.5">
           <FileText className="w-4 h-4 text-amber-700" />
-          <span>Reçus & Prix de gros (PDF)</span>
+          <span>{mode === 'receipts' ? 'Reçus (PDF)' : 'Reçus & Prix de gros (PDF)'}</span>
         </h3>
         <span className="text-[10px] text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md font-bold">
           4 reçus / A4
@@ -993,7 +1121,19 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
           </svg>
         </div>
         <p className="text-[10px] text-slate-400">
-          Le logo utilisé est automatiquement celui de l’application (modifiable plus haut dans Paramètres).
+          Le logo utilisé est automatiquement celui de l’application (
+          {onOpenLogoSettings ? (
+            <button
+              type="button"
+              onClick={onOpenLogoSettings}
+              className="underline font-semibold text-teal-700 hover:text-teal-800"
+            >
+              modifiable dans Mon business
+            </button>
+          ) : (
+            'modifiable plus haut dans Paramètres'
+          )}
+          ).
         </p>
       </div>
 
@@ -1329,108 +1469,9 @@ export const ReceiptSettingsSection: React.FC<ReceiptSettingsSectionProps> = ({
       </div>
 
       {/* 6. TABLEAU "PRIX DE GROS" PAR PRODUIT */}
-      <div className="space-y-2.5 pt-2 border-t border-slate-100">
-        <div>
-          <span className="text-xs font-bold text-slate-800 block">Prix de gros par produit</span>
-          <span className="text-[10px] text-slate-400 block">
-            Paliers dégressifs selon la quantité prise (vide par défaut).
-          </span>
-        </div>
-
-        {catalogueProducts.length === 0 ? (
-          <p className="text-xs text-slate-400 italic">Aucun produit actif dans le catalogue.</p>
-        ) : (
-          <div className="space-y-2.5">
-            {catalogueProducts.map((prod) => {
-              const tiers = wholesaleTiers[prod.id] || [];
-              return (
-                <div
-                  key={prod.id}
-                  className="p-3 rounded-xl bg-slate-50 border border-slate-200 space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-extrabold text-slate-900">{prod.name}</span>
-                    <span className="text-[11px] font-mono text-slate-500">
-                      Prix normal : {formatFC(prod.defaultPrice, currency)}
-                    </span>
-                  </div>
-
-                  {tiers.length > 0 && (
-                    <div className="space-y-1">
-                      {tiers.map((tier) => (
-                        <div
-                          key={tier.minQty}
-                          className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-white border border-slate-200 text-xs"
-                        >
-                          <span className="text-slate-800 font-semibold">
-                            à partir de <strong className="font-mono">{formatNumber(tier.minQty)}</strong> :{' '}
-                            <strong className="font-mono text-teal-800">
-                              {formatFC(tier.priceFC, currency)}
-                            </strong>
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteWholesaleTier(prod.id, tier.minQty)}
-                            className="p-1 text-slate-400 hover:text-rose-600 rounded"
-                            title="Supprimer ce palier"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Ligne d'ajout : à partir de [quantité] : [prix unitaire] FC */}
-                  <div className="flex items-center gap-1.5 pt-0.5">
-                    <span className="text-[11px] text-slate-600 font-semibold shrink-0">
-                      à partir de
-                    </span>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      placeholder="Qté"
-                      value={tierDraftQty[prod.id] || ''}
-                      onChange={(e) =>
-                        setTierDraftQty((prev) => ({
-                          ...prev,
-                          [prod.id]: e.target.value.replace(/[^0-9]/g, ''),
-                        }))
-                      }
-                      className="w-16 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold font-mono text-center text-slate-800 min-h-[34px]"
-                    />
-                    <span className="text-[11px] text-slate-600 font-semibold shrink-0">:</span>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Prix"
-                      value={tierDraftPrice[prod.id] || ''}
-                      onChange={(e) =>
-                        setTierDraftPrice((prev) => ({
-                          ...prev,
-                          [prod.id]: e.target.value.replace(/[^0-9.,]/g, ''),
-                        }))
-                      }
-                      className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 bg-white text-xs font-bold font-mono text-slate-800 min-h-[34px]"
-                    />
-                    <span className="text-[11px] text-slate-500 font-bold shrink-0">
-                      {currency}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => handleAddWholesaleTier(prod.id)}
-                      className="p-2 rounded-lg bg-teal-700 hover:bg-teal-800 text-white shrink-0 min-h-[34px] min-w-[34px] flex items-center justify-center"
-                      title="Ajouter ce prix de gros"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {mode !== 'receipts' && (
+        <div className="space-y-2.5 pt-2 border-t border-slate-100">{wholesaleTiersContent}</div>
+      )}
 
       {/* 7. BOUTONS D'ENREGISTREMENT */}
       <div className="pt-2 border-t border-slate-100 space-y-2">

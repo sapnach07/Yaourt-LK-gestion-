@@ -13,14 +13,18 @@ import {
   Check,
   Package,
   Layers,
-  AlertTriangle,
   Smartphone,
   Wallet,
-  Calendar,
   RotateCcw,
   UserCheck,
   Calculator,
   ChevronRight,
+  ChevronDown,
+  Search,
+  X,
+  ArrowLeft,
+  FileText,
+  Store,
 } from 'lucide-react';
 import { db } from '../../db/db';
 import {
@@ -30,24 +34,126 @@ import {
   exportExpensesToCSV,
 } from '../../utils/exportImport';
 import { calculateMonthResteNormale } from '../../utils/reserveCalculator';
-import { formatFC, formatDate, formatPercent, parseLocaleNumber, formatNumber } from '../../utils/formatters';
-import { ConfirmModal } from '../../components/ConfirmModal';
+import {
+  computeSuggestedSaleReceiptNo,
+  formatReceiptNumber,
+} from '../../utils/receiptPdfGenerator';
+import { formatFC, formatDate, parseLocaleNumber, formatNumber } from '../../utils/formatters';
 import { PWAInstallButton } from '../../components/PWAInstallButton';
 import { PayslipSettingsSection } from './PayslipSettingsSection';
 import { ReceiptSettingsSection } from './ReceiptSettingsSection';
 import type {
   AppSettings,
   Product,
+  PersonalSale,
   CostItem,
   ProductCostConfig,
   ProductPackagingLine,
 } from '../../types';
+
+export type SettingsThemeId =
+  | 'business'
+  | 'products'
+  | 'documents'
+  | 'costing'
+  | 'expenses'
+  | 'security'
+  | 'backup';
+
+export type SettingsSectionId =
+  | 'business_general'
+  | 'business_personal'
+  | 'products_catalogue'
+  | 'products_wholesale'
+  | 'documents_payslip'
+  | 'documents_receipts'
+  | 'costing_items'
+  | 'costing_stock'
+  | 'expenses_categories'
+  | 'expenses_caisses'
+  | 'backup_data'
+  | 'backup_pwa';
+
+const THEME_SECTIONS_MAP: Record<SettingsThemeId, SettingsSectionId[]> = {
+  business: ['business_general', 'business_personal'],
+  products: ['products_catalogue', 'products_wholesale'],
+  documents: ['documents_payslip', 'documents_receipts'],
+  costing: ['costing_items', 'costing_stock'],
+  expenses: ['expenses_categories', 'expenses_caisses'],
+  security: [],
+  backup: ['backup_data', 'backup_pwa'],
+};
+
+const DEFAULT_OPEN_SECTIONS: Record<SettingsSectionId, boolean> = {
+  business_general: true,
+  business_personal: false,
+  products_catalogue: true,
+  products_wholesale: false,
+  documents_payslip: true,
+  documents_receipts: false,
+  costing_items: true,
+  costing_stock: false,
+  expenses_categories: true,
+  expenses_caisses: false,
+  backup_data: true,
+  backup_pwa: false,
+};
+
+function normalizeSearchText(str: string): string {
+  return str
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+interface CollapsibleSettingsSectionProps {
+  title: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}
+
+const CollapsibleSettingsSection: React.FC<CollapsibleSettingsSectionProps> = ({
+  title,
+  isOpen,
+  onToggle,
+  children,
+}) => {
+  return (
+    <div className="rounded-2xl border border-slate-200/90 bg-slate-100/70 overflow-hidden shadow-2xs">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        className="w-full px-4 py-3.5 bg-white hover:bg-slate-50 flex items-center justify-between gap-3 text-left transition-colors min-h-[50px]"
+      >
+        <span className="text-xs font-extrabold text-slate-800 tracking-tight">{title}</span>
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-slate-500 shrink-0">
+          <span>{isOpen ? 'Replier' : 'Ouvrir'}</span>
+          <ChevronDown
+            className={`w-4 h-4 text-slate-400 transition-transform duration-200 ${
+              isOpen ? 'rotate-180 text-teal-700' : ''
+            }`}
+          />
+        </span>
+      </button>
+      <div className={isOpen ? 'p-2 border-t border-slate-200/70 space-y-3' : 'hidden'}>
+        {children}
+      </div>
+    </div>
+  );
+};
 
 interface SettingsViewProps {
   settings: AppSettings;
   onSettingsUpdated: (newSettings: AppSettings) => void;
   onShowToast: (type: 'success' | 'error' | 'info', message: string, title?: string) => void;
   onOpenIngredientStock?: () => void;
+  initialTheme?: SettingsThemeId | null;
+  initialSection?: SettingsSectionId;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
@@ -55,7 +161,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   onSettingsUpdated,
   onShowToast,
   onOpenIngredientStock,
+  initialTheme = null,
+  initialSection,
 }) => {
+  // Visual navigation & search state (in-memory only, never stored in DB)
+  const [activeTheme, setActiveTheme] = useState<SettingsThemeId | null>(initialTheme);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [openSections, setOpenSections] = useState<Record<SettingsSectionId, boolean>>(() => {
+    if (initialTheme && initialSection) {
+      const next = { ...DEFAULT_OPEN_SECTIONS };
+      for (const secId of THEME_SECTIONS_MAP[initialTheme]) {
+        next[secId] = secId === initialSection;
+      }
+      return next;
+    }
+    return { ...DEFAULT_OPEN_SECTIONS };
+  });
+  const hasPushedHistoryRef = useRef(false);
+
   // Local settings form state
   const [businessName, setBusinessName] = useState(settings.businessName || 'Yaourt Gestion');
   const [appLogoBase64, setAppLogoBase64] = useState<string | undefined>(settings.appLogoBase64);
@@ -73,8 +196,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     setAppLogoBase64(settings.appLogoBase64);
   }, [settings.appLogoBase64]);
 
-  // Products state
+  // Products & personal sales (for receipt summary) state
   const [products, setProducts] = useState<Product[]>([]);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
   const [newProductName, setNewProductName] = useState('');
   const [newProductPrice, setNewProductPrice] = useState('1000');
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -125,9 +249,70 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   useEffect(() => {
     loadProducts();
+    loadPersonalSales();
     checkPersistence();
     loadSuggestedStartingPoint();
   }, []);
+
+  // Support deep-link prop updates if parent ever specifies initialTheme / initialSection
+  useEffect(() => {
+    if (initialTheme) {
+      openTheme(initialTheme, initialSection ? [initialSection] : undefined);
+    }
+  }, [initialTheme, initialSection]);
+
+  // Phone / browser back button returns to Settings home without leaving Settings tab or losing drafts
+  useEffect(() => {
+    const handlePopState = () => {
+      if (hasPushedHistoryRef.current) {
+        hasPushedHistoryRef.current = false;
+        setActiveTheme(null);
+        window.scrollTo(0, 0);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, []);
+
+  const toggleSection = (sectionId: SettingsSectionId) => {
+    setOpenSections((prev) => ({
+      ...prev,
+      [sectionId]: !prev[sectionId],
+    }));
+  };
+
+  const openTheme = (themeId: SettingsThemeId, focusSections?: SettingsSectionId[]) => {
+    if (focusSections && focusSections.length > 0) {
+      const themeSecs = THEME_SECTIONS_MAP[themeId];
+      if (themeSecs.length > 0) {
+        setOpenSections((prev) => {
+          const next = { ...prev };
+          for (const secId of themeSecs) {
+            next[secId] = focusSections.includes(secId);
+          }
+          return next;
+        });
+      }
+    }
+
+    if (!hasPushedHistoryRef.current) {
+      window.history.pushState({ settingsTheme: themeId }, '');
+      hasPushedHistoryRef.current = true;
+    }
+    setActiveTheme(themeId);
+    window.scrollTo(0, 0);
+  };
+
+  const handleBackToHome = () => {
+    if (hasPushedHistoryRef.current) {
+      window.history.back();
+    } else {
+      setActiveTheme(null);
+      window.scrollTo(0, 0);
+    }
+  };
 
   const loadSuggestedStartingPoint = async () => {
     try {
@@ -158,6 +343,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const loadProducts = async () => {
     const list = await db.products.orderBy('sortOrder').toArray();
     setProducts(list);
+  };
+
+  const loadPersonalSales = async () => {
+    const list = await db.personalSales.toArray();
+    setPersonalSales(list);
   };
 
   const checkPersistence = async () => {
@@ -469,720 +659,1293 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     if (res.success) {
       const reloadedSettings = (await db.settings.get('app_settings')) || settings;
       onSettingsUpdated(reloadedSettings);
-      await loadProducts();
+      setCategories(reloadedSettings.expenseCategories || []);
+      await Promise.all([loadProducts(), loadPersonalSales()]);
       onShowToast('success', res.message);
     } else {
       onShowToast('error', res.message);
     }
   };
 
+  // Computed real-time summaries for the 7 themes
+  const activeProductsCount = products.filter((p) => p.isActive).length;
+  const nextReceiptNumberFormatted = formatReceiptNumber(
+    computeSuggestedSaleReceiptNo(personalSales, settings.receiptSettings)
+  );
+  const trackedCostItemsCount = (settings.costItems ?? []).filter(
+    (it) => it.isActive !== false && it.trackStock !== false
+  ).length;
+
+  interface SearchableSettingEntry {
+    label: string;
+    sectionId?: SettingsSectionId;
+    keywords: string[];
+  }
+
+  interface ThemeCardDescriptor {
+    id: SettingsThemeId;
+    title: string;
+    summary: string;
+    icon: React.ReactNode;
+    iconBgClass: string;
+    entries: SearchableSettingEntry[];
+  }
+
+  const themeCards: ThemeCardDescriptor[] = [
+    {
+      id: 'business',
+      title: 'Mon business',
+      summary: settings.businessName || 'Yaourt Gestion',
+      icon: <Store className="w-5 h-5 text-teal-700" />,
+      iconBgClass: 'bg-teal-50 border-teal-200/70',
+      entries: [
+        {
+          label: 'Nom du business',
+          sectionId: 'business_general',
+          keywords: ['nom', 'business', 'entreprise', 'boutique', settings.businessName || ''],
+        },
+        {
+          label: 'Logo de l’application',
+          sectionId: 'business_general',
+          keywords: ['logo', 'image', 'icone', 'photo'],
+        },
+        {
+          label: 'Devise',
+          sectionId: 'business_general',
+          keywords: ['devise', 'monnaie', 'fc', 'cdf', 'usd', settings.currency || ''],
+        },
+        {
+          label: 'Objectif mensuel',
+          sectionId: 'business_general',
+          keywords: ['objectif', 'mensuel', 'cible'],
+        },
+        {
+          label: 'Réserve dépenses (%) & alerte perte',
+          sectionId: 'business_general',
+          keywords: ['ratio', 'ratios', 'reserve', 'perte', 'alerte perte', 'seuil'],
+        },
+        {
+          label: 'Ma commission (ventes personnelles)',
+          sectionId: 'business_personal',
+          keywords: ['commission', 'ventes personnelles', 'gerant'],
+        },
+        {
+          label: 'Part payée pour ma consommation',
+          sectionId: 'business_personal',
+          keywords: ['consommation', 'part payee', 'marge', 'ventes personnelles'],
+        },
+        {
+          label: 'Délai de rappel des dettes',
+          sectionId: 'business_personal',
+          keywords: ['dette', 'dettes', 'rappel', 'delai', 'retard', 'credit'],
+        },
+      ],
+    },
+    {
+      id: 'products',
+      title: 'Produits & prix',
+      summary: `${activeProductsCount} ${
+        activeProductsCount > 1 ? 'produits actifs' : 'produit actif'
+      }`,
+      icon: <Package className="w-5 h-5 text-teal-700" />,
+      iconBgClass: 'bg-teal-50 border-teal-200/70',
+      entries: [
+        {
+          label: 'Catalogue produits & prix',
+          sectionId: 'products_catalogue',
+          keywords: [
+            'produit',
+            'produits',
+            'catalogue',
+            'prix',
+            'tarif',
+            'yaourt',
+            'ajouter produit',
+            'desactiver',
+            ...products.map((p) => p.name),
+          ],
+        },
+        {
+          label: 'Prix de gros par produit',
+          sectionId: 'products_wholesale',
+          keywords: ['prix de gros', 'gros', 'palier', 'paliers', 'remise', 'reduction'],
+        },
+      ],
+    },
+    {
+      id: 'documents',
+      title: 'Documents',
+      summary: `Reçus : prochain n° ${nextReceiptNumberFormatted}`,
+      icon: <FileText className="w-5 h-5 text-amber-700" />,
+      iconBgClass: 'bg-amber-50 border-amber-200/70',
+      entries: [
+        {
+          label: 'Fiche de paie des vendeur(se)s (PDF)',
+          sectionId: 'documents_payslip',
+          keywords: [
+            'fiche de paie',
+            'paie',
+            'salaire',
+            'vendeur',
+            'vendeuse',
+            'vendeurs',
+            'bulletin',
+            'signature',
+            'cachet',
+            'pdf',
+          ],
+        },
+        {
+          label: 'Reçus & impression de reçus vierges (PDF)',
+          sectionId: 'documents_receipts',
+          keywords: [
+            'recu',
+            'recus',
+            'facture',
+            'carnet',
+            'souche',
+            'imprimer',
+            'impression',
+            'vierge',
+            'vierges',
+            'numero',
+            'numerotation',
+            'annule',
+            'id nat',
+            'rccm',
+            'impot',
+            'slogan',
+            'adresse',
+            'whatsapp',
+            'email',
+            'remerciement',
+            'pied de recu',
+            'pdf',
+          ],
+        },
+      ],
+    },
+    {
+      id: 'costing',
+      title: 'Coût de revient & stock',
+      summary: `${trackedCostItemsCount} ${
+        trackedCostItemsCount > 1 ? 'éléments suivis' : 'élément suivi'
+      }`,
+      icon: <Calculator className="w-5 h-5 text-teal-700" />,
+      iconBgClass: 'bg-teal-50 border-teal-200/70',
+      entries: [
+        {
+          label: 'Coût de revient : ingrédients et emballages',
+          sectionId: 'costing_items',
+          keywords: [
+            'cout de revient',
+            'cout',
+            'revient',
+            'ingredient',
+            'ingredients',
+            'emballage',
+            'emballages',
+            'bouteille',
+            'sachet',
+            'etiquette',
+            'bouchon',
+            'volume relatif',
+            'unite',
+            ...(settings.costItems ?? []).map((it) => it.name),
+          ],
+        },
+        {
+          label: 'Stock de départ & alertes (ingrédients)',
+          sectionId: 'costing_stock',
+          keywords: [
+            'stock',
+            'stock d ingredients',
+            'stock de depart',
+            'alerte stock',
+            'stock bas',
+            'fournee',
+            'fournees',
+            'hausse de prix',
+            'alerte de prix',
+            'inventaire',
+            'liste d achats',
+          ],
+        },
+      ],
+    },
+    {
+      id: 'expenses',
+      title: 'Dépenses & caisses',
+      summary: `${categories.length} ${categories.length > 1 ? 'catégories' : 'catégorie'}`,
+      icon: <Wallet className="w-5 h-5 text-teal-700" />,
+      iconBgClass: 'bg-teal-50 border-teal-200/70',
+      entries: [
+        {
+          label: 'Catégories de dépenses',
+          sectionId: 'expenses_categories',
+          keywords: ['categorie', 'categories', 'depense', 'depenses', ...categories],
+        },
+        {
+          label: 'Point de départ des caisses',
+          sectionId: 'expenses_caisses',
+          keywords: [
+            'point de depart',
+            'caisse',
+            'caisses',
+            'caisse normale',
+            'capital',
+            'cloturer',
+            'solde de depart',
+          ],
+        },
+      ],
+    },
+    {
+      id: 'security',
+      title: 'Sécurité',
+      summary: settings.pinCode ? 'Code PIN activé' : 'Code PIN désactivé',
+      icon: settings.pinCode ? (
+        <Lock className="w-5 h-5 text-emerald-700" />
+      ) : (
+        <Unlock className="w-5 h-5 text-slate-600" />
+      ),
+      iconBgClass: settings.pinCode
+        ? 'bg-emerald-50 border-emerald-200/70'
+        : 'bg-slate-100 border-slate-200/70',
+      entries: [
+        {
+          label: 'Code PIN de verrouillage (4 chiffres)',
+          keywords: [
+            'pin',
+            'code pin',
+            'securite',
+            'verrouillage',
+            'verrouiller',
+            'mot de passe',
+            'code',
+            'acces',
+          ],
+        },
+      ],
+    },
+    {
+      id: 'backup',
+      title: 'Sauvegarde & application',
+      summary: settings.lastBackupDate
+        ? `Dernière sauvegarde : ${formatDate(settings.lastBackupDate)}`
+        : 'Jamais sauvegardé',
+      icon: <Download className="w-5 h-5 text-teal-700" />,
+      iconBgClass: 'bg-teal-50 border-teal-200/70',
+      entries: [
+        {
+          label: 'Sauvegarde & restauration (JSON / CSV)',
+          sectionId: 'backup_data',
+          keywords: [
+            'sauvegarde',
+            'sauvegarder',
+            'restauration',
+            'restaurer',
+            'json',
+            'csv',
+            'export',
+            'exporter',
+            'importer',
+            'fichier',
+            'transfert',
+          ],
+        },
+        {
+          label: 'Application mobile (PWA & hors ligne)',
+          sectionId: 'backup_pwa',
+          keywords: [
+            'application',
+            'mobile',
+            'pwa',
+            'installer',
+            'installation',
+            'hors ligne',
+            'offline',
+            'apk',
+            'stockage',
+            'telephone',
+          ],
+        },
+      ],
+    },
+  ];
+
+  const normalizedQuery = normalizeSearchText(searchQuery);
+  const queryTokens = normalizedQuery ? normalizedQuery.split(' ').filter(Boolean) : [];
+  const isSearching = queryTokens.length > 0;
+
+  const filteredThemes = themeCards
+    .map((theme) => {
+      if (!isSearching) {
+        return {
+          theme,
+          matchedLabels: [] as string[],
+          matchedSections: [] as SettingsSectionId[],
+        };
+      }
+
+      const matchedEntries = theme.entries.filter((entry) => {
+        const entryHaystack = normalizeSearchText([entry.label, ...entry.keywords].join(' '));
+        return queryTokens.every((token) => entryHaystack.includes(token));
+      });
+
+      const titleHaystack = normalizeSearchText(theme.title);
+      const titleMatches = queryTokens.every((token) => titleHaystack.includes(token));
+
+      if (matchedEntries.length === 0 && !titleMatches) {
+        return null;
+      }
+
+      const matchedLabels =
+        matchedEntries.length > 0
+          ? matchedEntries.map((e) => e.label)
+          : theme.entries.map((e) => e.label);
+
+      const matchedSections = Array.from(
+        new Set(
+          matchedEntries
+            .map((e) => e.sectionId)
+            .filter((secId): secId is SettingsSectionId => Boolean(secId))
+        )
+      );
+
+      return {
+        theme,
+        matchedLabels,
+        matchedSections,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+
+  const activeThemeMeta = activeTheme
+    ? themeCards.find((t) => t.id === activeTheme) || null
+    : null;
+
   return (
-    <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-5">
-      {/* Page Header */}
-      <div>
-        <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
-          Paramètres & Sauvegardes
-        </h2>
-        <p className="text-xs text-slate-500">
-          Configuration du business, produits, sécurité et exports
-        </p>
-      </div>
-
-      {/* Shortcut Button: Stock d'ingrédients */}
-      {onOpenIngredientStock && (
-        <button
-          type="button"
-          onClick={onOpenIngredientStock}
-          className="w-full p-4 rounded-2xl bg-teal-800 hover:bg-teal-900 active:scale-[0.99] text-white shadow-sm flex items-center justify-between gap-3 transition-all text-left"
-        >
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
-              <Package className="w-5 h-5 text-white" />
-            </div>
-            <div className="min-w-0">
-              <span className="text-sm font-extrabold block leading-tight">
-                Stock d’ingrédients
-              </span>
-              <span className="text-[11px] text-teal-100 block truncate mt-0.5">
-                Stock calculé, historique des prix, ajustements et liste d’achats
-              </span>
-            </div>
-          </div>
-          <ChevronRight className="w-5 h-5 text-teal-200 shrink-0" />
-        </button>
-      )}
-
-      {/* Storage persistence notification */}
-      <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-200/70 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-5 h-5 text-teal-700 shrink-0" />
-          <div>
-            <span className="text-xs font-bold text-slate-900 block leading-tight">
-              Stockage local persistant
-            </span>
-            <span className="text-[11px] text-slate-600">
-              {isPersisted
-                ? 'Données protégées par le système contre la suppression.'
-                : 'Stockage IndexedDB local actif pour APK hors ligne.'}
-            </span>
-          </div>
+    <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-4">
+      {/* =================================================================== */}
+      {/* 1. PAGE D'ACCUEIL DES PARAMÈTRES                                    */}
+      {/* =================================================================== */}
+      <div className={activeTheme === null ? 'space-y-4' : 'hidden'}>
+        {/* Page Header */}
+        <div>
+          <h2 className="text-lg font-extrabold text-slate-900 tracking-tight">
+            Paramètres & Sauvegardes
+          </h2>
+          <p className="text-xs text-slate-500">
+            Configuration du business, produits, sécurité et exports
+          </p>
         </div>
-        <span className="text-[10px] font-extrabold text-teal-800 bg-white px-2 py-1 rounded-md border border-teal-200">
-          HORS LIGNE
-        </span>
-      </div>
 
-      {/* PWA Mobile Installation Section */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-2.5">
-        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-          <Smartphone className="w-4 h-4 text-teal-700" />
-          <span>Application Mobile (PWA & Hors Ligne)</span>
-        </h3>
-        <p className="text-xs text-slate-600 leading-relaxed">
-          Yaourt Gestion est configurée pour fonctionner à 100 % hors ligne avec mise en cache locale intégrale de tous les fichiers.
-        </p>
-        <div className="pt-1">
-          <PWAInstallButton variant="full" logoBase64={settings.appLogoBase64} />
-        </div>
-      </div>
-
-      {/* Section 1: Business & Calculation Parameters */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
-        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-          <Settings className="w-4 h-4 text-teal-700" />
-          <span>Paramètres de gestion & Ratios</span>
-        </h3>
-
-        <form onSubmit={handleSaveGeneralSettings} className="space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Nom du business
-            </label>
-            <input
-              type="text"
-              value={businessName}
-              onChange={(e) => setBusinessName(e.target.value)}
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-            />
-          </div>
-
-          {/* Logo de l'application */}
-          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="block text-xs font-bold text-slate-800">
-                  Logo de l'application
-                </label>
-                <p className="text-[11px] text-slate-500">
-                  Affiché dans l'en-tête, sur l'écran de verrouillage et au chargement.
-                </p>
-              </div>
-              {appLogoBase64 && (
-                <button
-                  type="button"
-                  onClick={handleRemoveAppLogo}
-                  className="text-[11px] text-rose-600 hover:text-rose-700 font-semibold inline-flex items-center gap-1"
-                >
-                  <Trash2 className="w-3 h-3" />
-                  Supprimer
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200/90 shadow-xs flex items-center justify-center p-1 overflow-hidden shrink-0">
-                {appLogoBase64 ? (
-                  <img
-                    src={appLogoBase64}
-                    alt="Logo actuel"
-                    className="w-full h-full object-contain rounded-xl"
-                  />
-                ) : (
-                  <img
-                    src="/pwa-192x192.png"
-                    alt="Logo par défaut"
-                    className="w-full h-full object-contain rounded-xl"
-                  />
-                )}
-              </div>
-
-              <div className="flex-1 space-y-1">
-                <input
-                  type="file"
-                  ref={appLogoInputRef}
-                  accept="image/png,image/jpeg,image/webp,image/svg+xml"
-                  onChange={handleAppLogoUpload}
-                  className="hidden"
-                />
-                <button
-                  type="button"
-                  onClick={() => appLogoInputRef.current?.click()}
-                  className="w-full py-2 px-3 rounded-xl bg-white border border-slate-300 hover:border-teal-600 text-slate-800 hover:text-teal-700 text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
-                >
-                  <Upload className="w-3.5 h-3.5 text-teal-700" />
-                  <span>{appLogoBase64 ? 'Remplacer le logo' : 'Choisir un logo dans le téléphone'}</span>
-                </button>
-                <span className="text-[10px] text-slate-400 block text-center">
-                  PNG, JPG, WebP ou SVG (taille optimisée automatiquement)
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Devise
-              </label>
-              <input
-                type="text"
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Réserve dépenses (%)
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={expenseReservePct}
-                  onChange={(e) => setExpenseReservePct(e.target.value.replace(/[^0-9.,]/g, ''))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
-                />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                  %
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Objectif mensuel ({currency})
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={monthlySalesTargetFC}
-                onChange={(e) => setMonthlySalesTargetFC(e.target.value.replace(/[^0-9.,]/g, ''))}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Alerte perte max (%)
-              </label>
-              <div className="relative">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={lossAlertThresholdPct}
-                  onChange={(e) => setLossAlertThresholdPct(e.target.value.replace(/[^0-9.,]/g, ''))}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
-                />
-                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                  %
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
-          >
-            Enregistrer les ratios
-          </button>
-        </form>
-      </div>
-
-      {/* Section : Point de départ des caisses */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-            <Wallet className="w-4 h-4 text-teal-700" />
-            <span>Point de départ des caisses</span>
-          </h3>
-          {settings.caisseStartDate && (
-            <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-mono">
-              Actif ({formatDate(settings.caisseStartDate)})
-            </span>
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Chercher un réglage"
+            aria-label="Chercher un réglage"
+            className="w-full pl-10 pr-9 py-2.5 rounded-2xl bg-white border border-slate-200/90 text-xs font-semibold text-slate-800 placeholder:text-slate-400 shadow-2xs focus:outline-teal-700 min-h-[44px]"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              title="Effacer la recherche"
+              aria-label="Effacer la recherche"
+            >
+              <X className="w-4 h-4" />
+            </button>
           )}
         </div>
 
-        <p className="text-[11px] text-slate-500 leading-snug">
-          Permet de clôturer les mois passés et de démarrer les caisses à une date précise avec des soldes définis.
-          Les mois antérieurs seront clôturés en un seul bloc, sans utiliser la Caisse Capital.
-        </p>
-
-        <form onSubmit={handleSaveCaisseStartingPoint} className="space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
-              <span>Date de départ (début des nouvelles caisses) *</span>
-              {caisseStartDate && (
-                <span className="text-[10px] font-normal text-slate-400 font-mono">
-                  {formatDate(caisseStartDate)}
-                </span>
-              )}
-            </label>
-            <div className="relative">
-              <input
-                type="date"
-                value={caisseStartDate}
-                onChange={(e) => {
-                  setCaisseStartDate(e.target.value);
-                  // Si l'utilisateur choisit une date et qu'aucun solde normale n'est saisi, proposer le reste suggéré
-                  if (suggestedNormaleFC !== null && !caisseStartNormaleFC) {
-                    setCaisseStartNormaleFC(formatNumber(suggestedNormaleFC));
-                  }
-                }}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-              />
-            </div>
-            {!caisseStartDate && (
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                Vide par défaut. Entrez par exemple le 01/10/2026 pour clôturer septembre 2026 et avant.
-              </p>
-            )}
+        {/* Theme Rows List */}
+        {filteredThemes.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-8 text-center shadow-2xs">
+            <p className="text-xs font-bold text-slate-500">Aucun réglage trouvé</p>
           </div>
-
-          <div className="grid grid-cols-2 gap-2.5">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Solde Caisse normale ({currency})
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder={suggestedNormaleFC !== null ? `${formatNumber(suggestedNormaleFC)} (suggéré)` : '0'}
-                value={caisseStartNormaleFC}
-                onChange={(e) => setCaisseStartNormaleFC(e.target.value.replace(/[^0-9.,]/g, ''))}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-              />
-              {suggestedNormaleFC !== null && (
-                <div className="mt-1 flex items-center justify-between text-[10px]">
-                  <span className="text-slate-400">Reste dernier mois :</span>
-                  <button
-                    type="button"
-                    onClick={() => setCaisseStartNormaleFC(formatNumber(suggestedNormaleFC))}
-                    className="font-bold text-teal-700 hover:text-teal-800 underline"
-                  >
-                    {formatFC(suggestedNormaleFC, currency)}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Solde Caisse Capital ({currency})
-              </label>
-              <input
-                type="text"
-                inputMode="decimal"
-                placeholder="0"
-                value={caisseStartCapitalFC}
-                onChange={(e) => setCaisseStartCapitalFC(e.target.value.replace(/[^0-9.,]/g, ''))}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-              />
-              <span className="text-[10px] text-slate-400 block mt-1">
-                0 {currency} par défaut
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2 pt-1">
-            <button
-              type="submit"
-              className="flex-1 py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
-            >
-              Enregistrer le point de départ
-            </button>
-
-            {settings.caisseStartDate && (
+        ) : (
+          <div className="space-y-2.5">
+            {filteredThemes.map(({ theme, matchedLabels, matchedSections }) => (
               <button
+                key={theme.id}
                 type="button"
-                onClick={handleRemoveCaisseStartingPoint}
-                className="py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold active:scale-95 transition-all min-h-[42px] flex items-center gap-1.5"
-                title="Revenir au calcul sur tout l'historique"
+                onClick={() =>
+                  openTheme(
+                    theme.id,
+                    isSearching && matchedSections.length > 0 ? matchedSections : undefined
+                  )
+                }
+                className="w-full p-3.5 rounded-2xl bg-white hover:bg-slate-50/80 active:scale-[0.99] border border-slate-200/80 shadow-xs flex items-center justify-between gap-3 transition-all text-left"
               >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>Retirer</span>
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <div
+                    className={`w-10 h-10 rounded-xl border flex items-center justify-center shrink-0 ${theme.iconBgClass}`}
+                  >
+                    {theme.icon}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-sm font-extrabold text-slate-900 block leading-snug truncate">
+                      {theme.title}
+                    </span>
+                    <span className="text-xs text-slate-500 block truncate mt-0.5">
+                      {theme.summary}
+                    </span>
+                    {isSearching && matchedLabels.length > 0 && (
+                      <span className="text-[11px] font-semibold text-teal-800 block mt-1 leading-snug">
+                        {matchedLabels.join(' · ')}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <ChevronRight className="w-5 h-5 text-slate-400 shrink-0" />
               </button>
-            )}
+            ))}
           </div>
-        </form>
+        )}
       </div>
 
-      {/* Section : Ventes personnelles */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
-        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
-          <UserCheck className="w-4 h-4 text-teal-700" />
-          <span>Ventes personnelles</span>
-        </h3>
-        <p className="text-[11px] text-slate-500 leading-snug">
-          Configurez votre commission de vendeur par défaut pour les ventes directes du gérant sans intermédiaire.
-        </p>
-
-        <form onSubmit={handleSavePersonalSalesSettings} className="space-y-3">
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Ma commission (%)
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={ownerCommissionPct}
-                onChange={(e) => setOwnerCommissionPct(e.target.value.replace(/[^0-9.,]/g, ''))}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
-              />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                %
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">
-              0 % par défaut. Sera proposée automatiquement lors de la création d'une vente personnelle.
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Part payée pour ma consommation (%)
-            </label>
-            <div className="relative">
-              <input
-                type="text"
-                inputMode="decimal"
-                value={consumptionPaidPct}
-                onChange={(e) => setConsumptionPaidPct(e.target.value.replace(/[^0-9.,]/g, ''))}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
-              />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
-                %
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-400 mt-1">
-              Par défaut égale à la part de la Réserve : je ne paie que le coût, pas ma propre marge
-            </p>
-          </div>
-
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Délai avant alerte de retard sur une dette (jours)
-            </label>
-            <input
-              type="text"
-              inputMode="numeric"
-              value={debtReminderDays}
-              onChange={(e) => setDebtReminderDays(e.target.value.replace(/[^0-9]/g, ''))}
-              placeholder="2"
-              className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-            />
-            <p className="text-[10px] text-slate-400 mt-1">
-              2 jours par défaut. Au-delà de ce délai, la dette est signalée en retard.
-            </p>
-          </div>
-
+      {/* =================================================================== */}
+      {/* 2. EN-TÊTE COMMUN D'UN SOUS-ÉCRAN DE THÈME                          */}
+      {/* =================================================================== */}
+      {activeThemeMeta && (
+        <div className="flex items-center gap-3 pb-1">
           <button
-            type="submit"
-            className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
+            type="button"
+            onClick={handleBackToHome}
+            className="w-10 h-10 rounded-xl bg-white border border-slate-200/90 hover:bg-slate-50 active:scale-95 text-slate-800 font-extrabold flex items-center justify-center shadow-2xs shrink-0 transition-all"
+            aria-label="Retour aux paramètres"
+            title="Retour"
           >
-            Enregistrer
+            <ArrowLeft className="w-5 h-5 text-slate-800" />
           </button>
-        </form>
-      </div>
-
-      {/* Section 2: Products & Prices */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-            <Package className="w-4 h-4 text-teal-700" />
-            <span>Catalogue Produits & Prix</span>
-          </h3>
+          <div className="min-w-0 flex-1">
+            <h2 className="text-base font-extrabold text-slate-900 tracking-tight truncate">
+              {activeThemeMeta.title}
+            </h2>
+            <p className="text-[11px] text-slate-500 truncate">{activeThemeMeta.summary}</p>
+          </div>
         </div>
+      )}
 
-        {/* Existing Products List */}
-        <div className="space-y-2">
-          {products.map((prod) => (
-            <div
-              key={prod.id}
-              className={`p-3 rounded-xl border flex items-center justify-between gap-2 ${
-                prod.isActive ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-60'
-              }`}
-            >
+      {/* =================================================================== */}
+      {/* THÈME A : MON BUSINESS                                              */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'business' ? 'space-y-3.5' : 'hidden'}>
+        <CollapsibleSettingsSection
+          title="Paramètres de gestion & Ratios"
+          isOpen={openSections.business_general}
+          onToggle={() => toggleSection('business_general')}
+        >
+          {/* Section 1: Business & Calculation Parameters */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Settings className="w-4 h-4 text-teal-700" />
+              <span>Paramètres de gestion & Ratios</span>
+            </h3>
+
+            <form onSubmit={handleSaveGeneralSettings} className="space-y-3">
               <div>
-                <span className="text-xs font-bold text-slate-900 block">{prod.name}</span>
-                <span className="text-[11px] font-mono text-teal-700 font-extrabold">
-                  {formatFC(prod.defaultPrice, currency)}
-                </span>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Nom du business
+                </label>
+                <input
+                  type="text"
+                  value={businessName}
+                  onChange={(e) => setBusinessName(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                />
               </div>
 
-              <div className="flex items-center gap-1.5">
-                {editingProduct?.id === prod.id ? (
-                  <div className="flex items-center gap-1">
+              {/* Logo de l'application */}
+              <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-800">
+                      Logo de l'application
+                    </label>
+                    <p className="text-[11px] text-slate-500">
+                      Affiché dans l'en-tête, sur l'écran de verrouillage et au chargement.
+                    </p>
+                  </div>
+                  {appLogoBase64 && (
+                    <button
+                      type="button"
+                      onClick={handleRemoveAppLogo}
+                      className="text-[11px] text-rose-600 hover:text-rose-700 font-semibold inline-flex items-center gap-1"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Supprimer
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200/90 shadow-xs flex items-center justify-center p-1 overflow-hidden shrink-0">
+                    {appLogoBase64 ? (
+                      <img
+                        src={appLogoBase64}
+                        alt="Logo actuel"
+                        className="w-full h-full object-contain rounded-xl"
+                      />
+                    ) : (
+                      <img
+                        src="/pwa-192x192.png"
+                        alt="Logo par défaut"
+                        className="w-full h-full object-contain rounded-xl"
+                      />
+                    )}
+                  </div>
+
+                  <div className="flex-1 space-y-1">
                     <input
-                      type="text"
-                      inputMode="decimal"
-                      defaultValue={formatNumber(prod.defaultPrice)}
-                      id={`price_input_${prod.id}`}
-                      className="w-20 px-2 py-1 rounded-lg border border-teal-500 text-xs font-bold font-mono"
+                      type="file"
+                      ref={appLogoInputRef}
+                      accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                      onChange={handleAppLogoUpload}
+                      className="hidden"
                     />
                     <button
                       type="button"
-                      onClick={() => {
-                        const input = document.getElementById(
-                          `price_input_${prod.id}`
-                        ) as HTMLInputElement;
-                        if (input) handleUpdateProductPrice(prod, input.value);
-                      }}
-                      className="p-1.5 bg-teal-700 text-white rounded-lg text-xs font-bold"
+                      onClick={() => appLogoInputRef.current?.click()}
+                      className="w-full py-2 px-3 rounded-xl bg-white border border-slate-300 hover:border-teal-600 text-slate-800 hover:text-teal-700 text-xs font-bold shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
                     >
-                      <Check className="w-3.5 h-3.5" />
+                      <Upload className="w-3.5 h-3.5 text-teal-700" />
+                      <span>{appLogoBase64 ? 'Remplacer le logo' : 'Choisir un logo dans le téléphone'}</span>
                     </button>
+                    <span className="text-[10px] text-slate-400 block text-center">
+                      PNG, JPG, WebP ou SVG (taille optimisée automatiquement)
+                    </span>
                   </div>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => setEditingProduct(prod)}
-                    className="p-1.5 text-slate-500 hover:text-slate-800 rounded-lg min-w-[32px] min-h-[32px] flex items-center justify-center"
-                    title="Modifier le prix"
-                  >
-                    <Edit2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
+                </div>
+              </div>
 
-                <button
-                  type="button"
-                  onClick={() => handleToggleProductActive(prod)}
-                  className={`px-2 py-1 rounded-lg text-[10px] font-bold min-h-[32px] ${
-                    prod.isActive
-                      ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                      : 'bg-emerald-100 text-emerald-800'
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Devise
+                  </label>
+                  <input
+                    type="text"
+                    value={currency}
+                    onChange={(e) => setCurrency(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Réserve dépenses (%)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={expenseReservePct}
+                      onChange={(e) => setExpenseReservePct(e.target.value.replace(/[^0-9.,]/g, ''))}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                      %
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Objectif mensuel ({currency})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={monthlySalesTargetFC}
+                    onChange={(e) => setMonthlySalesTargetFC(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Alerte perte max (%)
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={lossAlertThresholdPct}
+                      onChange={(e) => setLossAlertThresholdPct(e.target.value.replace(/[^0-9.,]/g, ''))}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                    />
+                    <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                      %
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[44px]"
+              >
+                Enregistrer les ratios
+              </button>
+            </form>
+          </div>
+        </CollapsibleSettingsSection>
+
+        <CollapsibleSettingsSection
+          title="Ventes personnelles"
+          isOpen={openSections.business_personal}
+          onToggle={() => toggleSection('business_personal')}
+        >
+          {/* Section : Ventes personnelles */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+              <UserCheck className="w-4 h-4 text-teal-700" />
+              <span>Ventes personnelles</span>
+            </h3>
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Configurez votre commission de vendeur par défaut pour les ventes directes du gérant sans intermédiaire.
+            </p>
+
+            <form onSubmit={handleSavePersonalSalesSettings} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Ma commission (%)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={ownerCommissionPct}
+                    onChange={(e) => setOwnerCommissionPct(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    %
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  0 % par défaut. Sera proposée automatiquement lors de la création d'une vente personnelle.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Part payée pour ma consommation (%)
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={consumptionPaidPct}
+                    onChange={(e) => setConsumptionPaidPct(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white pr-7"
+                  />
+                  <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-400">
+                    %
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-1">
+                  Par défaut égale à la part de la Réserve : je ne paie que le coût, pas ma propre marge
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Délai avant alerte de retard sur une dette (jours)
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={debtReminderDays}
+                  onChange={(e) => setDebtReminderDays(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="2"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  2 jours par défaut. Au-delà de ce délai, la dette est signalée en retard.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
+              >
+                Enregistrer
+              </button>
+            </form>
+          </div>
+        </CollapsibleSettingsSection>
+      </div>
+
+      {/* =================================================================== */}
+      {/* THÈME B : PRODUITS & PRIX                                           */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'products' ? 'space-y-3.5' : 'hidden'}>
+        <CollapsibleSettingsSection
+          title="Catalogue Produits & Prix"
+          isOpen={openSections.products_catalogue}
+          onToggle={() => toggleSection('products_catalogue')}
+        >
+          {/* Section 2: Products & Prices */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+                <Package className="w-4 h-4 text-teal-700" />
+                <span>Catalogue Produits & Prix</span>
+              </h3>
+            </div>
+
+            {/* Existing Products List */}
+            <div className="space-y-2">
+              {products.map((prod) => (
+                <div
+                  key={prod.id}
+                  className={`p-3 rounded-xl border flex items-center justify-between gap-2 ${
+                    prod.isActive ? 'bg-slate-50 border-slate-200' : 'bg-slate-100 border-slate-200 opacity-60'
                   }`}
                 >
-                  {prod.isActive ? 'Désactiver' : 'Activer'}
-                </button>
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">{prod.name}</span>
+                    <span className="text-[11px] font-mono text-teal-700 font-extrabold">
+                      {formatFC(prod.defaultPrice, currency)}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    {editingProduct?.id === prod.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          defaultValue={formatNumber(prod.defaultPrice)}
+                          id={`price_input_${prod.id}`}
+                          className="w-20 px-2 py-1 rounded-lg border border-teal-500 text-xs font-bold font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const input = document.getElementById(
+                              `price_input_${prod.id}`
+                            ) as HTMLInputElement;
+                            if (input) handleUpdateProductPrice(prod, input.value);
+                          }}
+                          className="p-1.5 bg-teal-700 text-white rounded-lg text-xs font-bold"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setEditingProduct(prod)}
+                        className="p-1.5 text-slate-500 hover:text-slate-800 rounded-lg min-w-[32px] min-h-[32px] flex items-center justify-center"
+                        title="Modifier le prix"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => handleToggleProductActive(prod)}
+                      className={`px-2 py-1 rounded-lg text-[10px] font-bold min-h-[32px] ${
+                        prod.isActive
+                          ? 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+                          : 'bg-emerald-100 text-emerald-800'
+                      }`}
+                    >
+                      {prod.isActive ? 'Désactiver' : 'Activer'}
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Add Product Form */}
+            <form onSubmit={handleAddProduct} className="pt-2 border-t border-slate-100 flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Nom du nouveau produit"
+                value={newProductName}
+                onChange={(e) => setNewProductName(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
+              />
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="Prix FC"
+                value={newProductPrice}
+                onChange={(e) => setNewProductPrice(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-24 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 text-center"
+              />
+              <button
+                type="submit"
+                className="p-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white min-h-[40px] min-w-[40px] flex items-center justify-center shadow-xs"
+                title="Ajouter produit"
+              >
+                <Plus className="w-4 h-4" />
+              </button>
+            </form>
+          </div>
+        </CollapsibleSettingsSection>
+
+        <CollapsibleSettingsSection
+          title="Prix de gros par produit"
+          isOpen={openSections.products_wholesale}
+          onToggle={() => toggleSection('products_wholesale')}
+        >
+          <ReceiptSettingsSection
+            mode="wholesale"
+            settings={settings}
+            products={products}
+            onSettingsUpdated={onSettingsUpdated}
+            onShowToast={onShowToast}
+          />
+        </CollapsibleSettingsSection>
+      </div>
+
+      {/* =================================================================== */}
+      {/* THÈME C : DOCUMENTS                                                 */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'documents' ? 'space-y-3.5' : 'hidden'}>
+        <CollapsibleSettingsSection
+          title="Fiche de paie des vendeur(se)s (PDF)"
+          isOpen={openSections.documents_payslip}
+          onToggle={() => toggleSection('documents_payslip')}
+        >
+          {/* Section: Fiche de Paie (Personnalisation PDF) */}
+          <PayslipSettingsSection
+            settings={settings}
+            onSettingsUpdated={onSettingsUpdated}
+            onShowToast={onShowToast}
+          />
+        </CollapsibleSettingsSection>
+
+        <CollapsibleSettingsSection
+          title="Reçus (PDF)"
+          isOpen={openSections.documents_receipts}
+          onToggle={() => toggleSection('documents_receipts')}
+        >
+          {/* Section: Reçus (Personnalisation & Impression PDF) */}
+          <ReceiptSettingsSection
+            mode="receipts"
+            settings={settings}
+            products={products}
+            onSettingsUpdated={onSettingsUpdated}
+            onShowToast={onShowToast}
+            onOpenLogoSettings={() => openTheme('business', ['business_general'])}
+          />
+        </CollapsibleSettingsSection>
+      </div>
+
+      {/* =================================================================== */}
+      {/* THÈME D : COÛT DE REVIENT & STOCK                                   */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'costing' ? 'space-y-3.5' : 'hidden'}>
+        {/* Shortcut Button: Stock d'ingrédients */}
+        {onOpenIngredientStock && (
+          <button
+            type="button"
+            onClick={onOpenIngredientStock}
+            className="w-full p-4 rounded-2xl bg-teal-800 hover:bg-teal-900 active:scale-[0.99] text-white shadow-sm flex items-center justify-between gap-3 transition-all text-left"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
+                <Package className="w-5 h-5 text-white" />
+              </div>
+              <div className="min-w-0">
+                <span className="text-sm font-extrabold block leading-tight">
+                  Stock d’ingrédients
+                </span>
+                <span className="text-[11px] text-teal-100 block truncate mt-0.5">
+                  Stock calculé, historique des prix, ajustements et liste d’achats
+                </span>
               </div>
             </div>
-          ))}
-        </div>
-
-        {/* Add Product Form */}
-        <form onSubmit={handleAddProduct} className="pt-2 border-t border-slate-100 flex items-center gap-2">
-          <input
-            type="text"
-            placeholder="Nom du nouveau produit"
-            value={newProductName}
-            onChange={(e) => setNewProductName(e.target.value)}
-            className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
-          />
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="Prix FC"
-            value={newProductPrice}
-            onChange={(e) => setNewProductPrice(e.target.value.replace(/[^0-9.,]/g, ''))}
-            className="w-24 px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 text-center"
-          />
-          <button
-            type="submit"
-            className="p-2.5 rounded-xl bg-teal-700 hover:bg-teal-800 text-white min-h-[40px] min-w-[40px] flex items-center justify-center shadow-xs"
-            title="Ajouter produit"
-          >
-            <Plus className="w-4 h-4" />
+            <ChevronRight className="w-5 h-5 text-teal-200 shrink-0" />
           </button>
-        </form>
+        )}
+
+        <CollapsibleSettingsSection
+          title="Coût de revient : ingrédients et emballages"
+          isOpen={openSections.costing_items}
+          onToggle={() => toggleSection('costing_items')}
+        >
+          {/* Section: Coût de revient : ingrédients et emballages */}
+          <CostingSettingsSection
+            settings={settings}
+            products={products}
+            onSettingsUpdated={onSettingsUpdated}
+            onShowToast={onShowToast}
+          />
+        </CollapsibleSettingsSection>
+
+        <CollapsibleSettingsSection
+          title="Stock de départ & alertes (ingrédients)"
+          isOpen={openSections.costing_stock}
+          onToggle={() => toggleSection('costing_stock')}
+        >
+          {/* Section: Stock de départ & alertes (ingrédients et emballages) */}
+          <IngredientStockSettingsSection
+            settings={settings}
+            onSettingsUpdated={onSettingsUpdated}
+            onShowToast={onShowToast}
+          />
+        </CollapsibleSettingsSection>
       </div>
 
-      {/* Section: Coût de revient : ingrédients et emballages */}
-      <CostingSettingsSection
-        settings={settings}
-        products={products}
-        onSettingsUpdated={onSettingsUpdated}
-        onShowToast={onShowToast}
-      />
+      {/* =================================================================== */}
+      {/* THÈME E : DÉPENSES & CAISSES                                        */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'expenses' ? 'space-y-3.5' : 'hidden'}>
+        <CollapsibleSettingsSection
+          title="Catégories de Dépenses"
+          isOpen={openSections.expenses_categories}
+          onToggle={() => toggleSection('expenses_categories')}
+        >
+          {/* Section 3: Expense Categories */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Layers className="w-4 h-4 text-teal-700" />
+              <span>Catégories de Dépenses</span>
+            </h3>
 
-      {/* Section: Stock de départ & alertes (ingrédients et emballages) */}
-      <IngredientStockSettingsSection
-        settings={settings}
-        onSettingsUpdated={onSettingsUpdated}
-        onShowToast={onShowToast}
-      />
-
-      {/* Section 3: Expense Categories */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
-        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-          <Layers className="w-4 h-4 text-teal-700" />
-          <span>Catégories de Dépenses</span>
-        </h3>
-
-        <div className="flex flex-wrap gap-1.5">
-          {categories.map((cat) => (
-            <span
-              key={cat}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-800 text-xs font-medium border border-slate-200/60"
-            >
-              <span>{cat}</span>
-              {categories.length > 1 && (
-                <button
-                  type="button"
-                  onClick={() => handleDeleteCategory(cat)}
-                  className="text-slate-400 hover:text-rose-600 p-0.5"
-                  title="Supprimer"
+            <div className="flex flex-wrap gap-1.5">
+              {categories.map((cat) => (
+                <span
+                  key={cat}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-100 text-slate-800 text-xs font-medium border border-slate-200/60"
                 >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </span>
-          ))}
-        </div>
+                  <span>{cat}</span>
+                  {categories.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCategory(cat)}
+                      className="text-slate-400 hover:text-rose-600 p-0.5"
+                      title="Supprimer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
 
-        <div className="flex items-center gap-2 pt-1">
-          <input
-            type="text"
-            placeholder="Nouvelle catégorie (ex : Transport, Sucre...)"
-            value={newCategoryName}
-            onChange={(e) => setNewCategoryName(e.target.value)}
-            className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
-          />
-          <button
-            type="button"
-            onClick={handleAddCategory}
-            className="px-3.5 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-900 min-h-[40px]"
-          >
-            Ajouter
-          </button>
-        </div>
-      </div>
-
-      {/* Section 4: Security & PIN Code */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {settings.pinCode ? (
-              <Lock className="w-4 h-4 text-emerald-600" />
-            ) : (
-              <Unlock className="w-4 h-4 text-slate-400" />
-            )}
-            <div>
-              <h3 className="text-xs font-bold text-slate-900">
-                Code PIN de verrouillage (4 chiffres)
-              </h3>
-              <p className="text-[11px] text-slate-500">
-                {settings.pinCode
-                  ? 'Code PIN actif à l’ouverture de l’application'
-                  : 'Aucun code PIN (accès libre)'}
-              </p>
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                type="text"
+                placeholder="Nouvelle catégorie (ex : Transport, Sucre...)"
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                className="flex-1 px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-800"
+              />
+              <button
+                type="button"
+                onClick={handleAddCategory}
+                className="px-3.5 py-2 rounded-xl bg-slate-800 text-white text-xs font-bold hover:bg-slate-900 min-h-[40px]"
+              >
+                Ajouter
+              </button>
             </div>
           </div>
+        </CollapsibleSettingsSection>
 
-          {settings.pinCode ? (
-            <button
-              type="button"
-              onClick={handleDisablePin}
-              className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold border border-rose-200 min-h-[38px]"
-            >
-              Désactiver
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setIsPinModalOpen(true)}
-              className="px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-100 text-xs font-bold border border-teal-200 min-h-[38px]"
-            >
-              Activer un PIN
-            </button>
-          )}
+        <CollapsibleSettingsSection
+          title="Point de départ des caisses"
+          isOpen={openSections.expenses_caisses}
+          onToggle={() => toggleSection('expenses_caisses')}
+        >
+          {/* Section : Point de départ des caisses */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3.5">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                <Wallet className="w-4 h-4 text-teal-700" />
+                <span>Point de départ des caisses</span>
+              </h3>
+              {settings.caisseStartDate && (
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-mono">
+                  Actif ({formatDate(settings.caisseStartDate)})
+                </span>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Permet de clôturer les mois passés et de démarrer les caisses à une date précise avec des soldes définis.
+              Les mois antérieurs seront clôturés en un seul bloc, sans utiliser la Caisse Capital.
+            </p>
+
+            <form onSubmit={handleSaveCaisseStartingPoint} className="space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center justify-between">
+                  <span>Date de départ (début des nouvelles caisses) *</span>
+                  {caisseStartDate && (
+                    <span className="text-[10px] font-normal text-slate-400 font-mono">
+                      {formatDate(caisseStartDate)}
+                    </span>
+                  )}
+                </label>
+                <div className="relative">
+                  <input
+                    type="date"
+                    value={caisseStartDate}
+                    onChange={(e) => {
+                      setCaisseStartDate(e.target.value);
+                      // Si l'utilisateur choisit une date et qu'aucun solde normale n'est saisi, proposer le reste suggéré
+                      if (suggestedNormaleFC !== null && !caisseStartNormaleFC) {
+                        setCaisseStartNormaleFC(formatNumber(suggestedNormaleFC));
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                  />
+                </div>
+                {!caisseStartDate && (
+                  <p className="text-[10px] text-slate-400 mt-0.5">
+                    Vide par défaut. Entrez par exemple le 01/10/2026 pour clôturer septembre 2026 et avant.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Solde Caisse normale ({currency})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={suggestedNormaleFC !== null ? `${formatNumber(suggestedNormaleFC)} (suggéré)` : '0'}
+                    value={caisseStartNormaleFC}
+                    onChange={(e) => setCaisseStartNormaleFC(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                  />
+                  {suggestedNormaleFC !== null && (
+                    <div className="mt-1 flex items-center justify-between text-[10px]">
+                      <span className="text-slate-400">Reste dernier mois :</span>
+                      <button
+                        type="button"
+                        onClick={() => setCaisseStartNormaleFC(formatNumber(suggestedNormaleFC))}
+                        className="font-bold text-teal-700 hover:text-teal-800 underline"
+                      >
+                        {formatFC(suggestedNormaleFC, currency)}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Solde Caisse Capital ({currency})
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0"
+                    value={caisseStartCapitalFC}
+                    onChange={(e) => setCaisseStartCapitalFC(e.target.value.replace(/[^0-9.,]/g, ''))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                  />
+                  <span className="text-[10px] text-slate-400 block mt-1">
+                    0 {currency} par défaut
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold shadow-xs active:scale-95 transition-all min-h-[42px]"
+                >
+                  Enregistrer le point de départ
+                </button>
+
+                {settings.caisseStartDate && (
+                  <button
+                    type="button"
+                    onClick={handleRemoveCaisseStartingPoint}
+                    className="py-2.5 px-3 rounded-xl border border-rose-200 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold active:scale-95 transition-all min-h-[42px] flex items-center gap-1.5"
+                    title="Revenir au calcul sur tout l'historique"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                    <span>Retirer</span>
+                  </button>
+                )}
+              </div>
+            </form>
+          </div>
+        </CollapsibleSettingsSection>
+      </div>
+
+      {/* =================================================================== */}
+      {/* THÈME F : SÉCURITÉ                                                  */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'security' ? 'space-y-3.5' : 'hidden'}>
+        {/* Section 4: Security & PIN Code */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {settings.pinCode ? (
+                <Lock className="w-4 h-4 text-emerald-600" />
+              ) : (
+                <Unlock className="w-4 h-4 text-slate-400" />
+              )}
+              <div>
+                <h3 className="text-xs font-bold text-slate-900">
+                  Code PIN de verrouillage (4 chiffres)
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  {settings.pinCode
+                    ? 'Code PIN actif à l’ouverture de l’application'
+                    : 'Aucun code PIN (accès libre)'}
+                </p>
+              </div>
+            </div>
+
+            {settings.pinCode ? (
+              <button
+                type="button"
+                onClick={handleDisablePin}
+                className="px-3 py-1.5 rounded-xl bg-rose-50 text-rose-700 hover:bg-rose-100 text-xs font-bold border border-rose-200 min-h-[38px]"
+              >
+                Désactiver
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setIsPinModalOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-teal-50 text-teal-700 hover:bg-teal-100 text-xs font-bold border border-teal-200 min-h-[38px]"
+              >
+                Activer un PIN
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Section: Fiche de Paie (Personnalisation PDF) */}
-      <PayslipSettingsSection
-        settings={settings}
-        onSettingsUpdated={onSettingsUpdated}
-        onShowToast={onShowToast}
-      />
+      {/* =================================================================== */}
+      {/* THÈME G : SAUVEGARDE & APPLICATION                                  */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'backup' ? 'space-y-3.5' : 'hidden'}>
+        <CollapsibleSettingsSection
+          title="Sauvegarde & Restauration (Hors ligne)"
+          isOpen={openSections.backup_data}
+          onToggle={() => toggleSection('backup_data')}
+        >
+          {/* Section 5: Backup & Restore */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Download className="w-4 h-4 text-teal-700" />
+              <span>Sauvegarde & Restauration (Hors ligne)</span>
+            </h3>
 
-      {/* Section: Reçus & Prix de gros (Personnalisation & Impression PDF) */}
-      <ReceiptSettingsSection
-        settings={settings}
-        products={products}
-        onSettingsUpdated={onSettingsUpdated}
-        onShowToast={onShowToast}
-      />
+            <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">Dernière sauvegarde :</span>
+                <span className="font-bold text-slate-800 font-mono">
+                  {settings.lastBackupDate ? formatDate(settings.lastBackupDate) : 'Jamais'}
+                </span>
+              </div>
+              {!settings.lastBackupDate && (
+                <p className="text-amber-700 font-medium text-[11px]">
+                  Pensez à faire une sauvegarde régulière de vos données pour éviter toute perte en cas de changement de téléphone.
+                </p>
+              )}
+            </div>
 
-      {/* Section 5: Backup & Restore */}
-      <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-3">
-        <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
-          <Download className="w-4 h-4 text-teal-700" />
-          <span>Sauvegarde & Restauration (Hors ligne)</span>
-        </h3>
+            {/* JSON Buttons */}
+            <div className="grid grid-cols-2 gap-2 pt-1">
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="py-3 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition-all min-h-[44px]"
+              >
+                <Download className="w-4 h-4" />
+                <span>Sauvegarder (JSON)</span>
+              </button>
 
-        <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-600 space-y-1">
-          <div className="flex items-center justify-between">
-            <span className="font-semibold">Dernière sauvegarde :</span>
-            <span className="font-bold text-slate-800 font-mono">
-              {settings.lastBackupDate ? formatDate(settings.lastBackupDate) : 'Jamais'}
+              <label className="py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200 active:scale-95 transition-all min-h-[44px]">
+                <Upload className="w-4 h-4 text-teal-700" />
+                <span>Restaurer (JSON)</span>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept=".json"
+                  onChange={handleFileSelected}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            {/* CSV Export Buttons */}
+            <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={exportSalesToCSV}
+                className="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 flex items-center justify-center gap-1.5 min-h-[40px]"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
+                <span>Export Ventes CSV</span>
+              </button>
+              <button
+                type="button"
+                onClick={exportExpensesToCSV}
+                className="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 flex items-center justify-center gap-1.5 min-h-[40px]"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-teal-700" />
+                <span>Export Dépenses CSV</span>
+              </button>
+            </div>
+          </div>
+        </CollapsibleSettingsSection>
+
+        <CollapsibleSettingsSection
+          title="Application Mobile (PWA & Hors Ligne)"
+          isOpen={openSections.backup_pwa}
+          onToggle={() => toggleSection('backup_pwa')}
+        >
+          {/* Storage persistence notification */}
+          <div className="p-3.5 rounded-2xl bg-teal-50/80 border border-teal-200/70 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ShieldCheck className="w-5 h-5 text-teal-700 shrink-0" />
+              <div>
+                <span className="text-xs font-bold text-slate-900 block leading-tight">
+                  Stockage local persistant
+                </span>
+                <span className="text-[11px] text-slate-600">
+                  {isPersisted
+                    ? 'Données protégées par le système contre la suppression.'
+                    : 'Stockage IndexedDB local actif pour APK hors ligne.'}
+                </span>
+              </div>
+            </div>
+            <span className="text-[10px] font-extrabold text-teal-800 bg-white px-2 py-1 rounded-md border border-teal-200">
+              HORS LIGNE
             </span>
           </div>
-          {!settings.lastBackupDate && (
-            <p className="text-amber-700 font-medium text-[11px]">
-              Pensez à faire une sauvegarde régulière de vos données pour éviter toute perte en cas de changement de téléphone.
+
+          {/* PWA Mobile Installation Section */}
+          <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-xs space-y-2.5">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Smartphone className="w-4 h-4 text-teal-700" />
+              <span>Application Mobile (PWA & Hors Ligne)</span>
+            </h3>
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Yaourt Gestion est configurée pour fonctionner à 100 % hors ligne avec mise en cache locale intégrale de tous les fichiers.
             </p>
-          )}
-        </div>
-
-        {/* JSON Buttons */}
-        <div className="grid grid-cols-2 gap-2 pt-1">
-          <button
-            type="button"
-            onClick={handleExportJSON}
-            className="py-3 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs active:scale-95 transition-all min-h-[44px]"
-          >
-            <Download className="w-4 h-4" />
-            <span>Sauvegarder (JSON)</span>
-          </button>
-
-          <label className="py-3 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer border border-slate-200 active:scale-95 transition-all min-h-[44px]">
-            <Upload className="w-4 h-4 text-teal-700" />
-            <span>Restaurer (JSON)</span>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".json"
-              onChange={handleFileSelected}
-              className="hidden"
-            />
-          </label>
-        </div>
-
-        {/* CSV Export Buttons */}
-        <div className="pt-2 border-t border-slate-100 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={exportSalesToCSV}
-            className="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 flex items-center justify-center gap-1.5 min-h-[40px]"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-700" />
-            <span>Export Ventes CSV</span>
-          </button>
-          <button
-            type="button"
-            onClick={exportExpensesToCSV}
-            className="flex-1 py-2 px-3 rounded-xl bg-white border border-slate-200 text-slate-700 text-xs font-bold hover:bg-slate-50 flex items-center justify-center gap-1.5 min-h-[40px]"
-          >
-            <FileSpreadsheet className="w-3.5 h-3.5 text-teal-700" />
-            <span>Export Dépenses CSV</span>
-          </button>
-        </div>
+            <div className="pt-1">
+              <PWAInstallButton variant="full" logoBase64={settings.appLogoBase64} />
+            </div>
+          </div>
+        </CollapsibleSettingsSection>
       </div>
 
       {/* PIN Setup Modal */}
