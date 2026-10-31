@@ -30,10 +30,14 @@ import { db } from '../../db/db';
 import {
   formatFC,
   formatDate,
+  formatDateWithTime,
   formatNumber,
   formatPercent,
   parseLocaleNumber,
   toISODate,
+  toLocalTimeStr,
+  normalizeTimeStr,
+  compareRecordsByDateTimeDesc,
 } from '../../utils/formatters';
 import {
   STOCK_ADJUSTMENT_REASON_LABELS,
@@ -108,6 +112,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
   const [editingAdj, setEditingAdj] = useState<StockAdjustment | null>(null);
   const [adjItemId, setAdjItemId] = useState('');
   const [adjDate, setAdjDate] = useState(toISODate(new Date()));
+  const [adjTime, setAdjTime] = useState(() => toLocalTimeStr());
   const [adjMode, setAdjMode] = useState<AdjustmentInputMode>('delta');
   const [adjSign, setAdjSign] = useState<'remove' | 'add'>('remove');
   const [adjQtyStr, setAdjQtyStr] = useState('');
@@ -288,6 +293,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
     setEditingAdj(null);
     setAdjItemId(firstId);
     setAdjDate(toISODate(new Date()));
+    setAdjTime(toLocalTimeStr());
     setAdjMode('delta');
     setAdjSign('remove');
     setAdjQtyStr('');
@@ -302,6 +308,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
     setEditingAdj(adj);
     setAdjItemId(adj.itemId);
     setAdjDate(adj.date);
+    setAdjTime(adj.time || '');
     setAdjMode('delta');
     setAdjSign(adj.qtyDelta >= 0 ? 'add' : 'remove');
     setAdjQtyStr(formatNumber(Math.abs(adj.qtyDelta), 4));
@@ -381,16 +388,21 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
     }
 
     const trimmedNote = adjNote.trim();
+    const normalizedAdjTime = normalizeTimeStr(adjTime);
 
     if (editingAdj) {
       const updated: StockAdjustment = {
         ...editingAdj,
         itemId: item.id,
         date: adjDate,
+        time: normalizedAdjTime,
         qtyDelta: finalDelta,
         reason: adjReason,
         note: trimmedNote || undefined,
       };
+      if (!normalizedAdjTime) {
+        delete updated.time;
+      }
       await db.stockAdjustments.put(updated);
       setIsAdjModalOpen(false);
       onShowToast('success', 'Ajustement de stock mis à jour.');
@@ -399,6 +411,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
         id: 'adj_' + Date.now().toString() + '_' + Math.random().toString(36).slice(2, 6),
         itemId: item.id,
         date: adjDate,
+        ...(normalizedAdjTime ? { time: normalizedAdjTime } : {}),
         qtyDelta: finalDelta,
         reason: adjReason,
         note: trimmedNote || undefined,
@@ -419,9 +432,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
 
   // Sorted adjustments for Ajustements tab
   const sortedAdjustments = useMemo(() => {
-    return [...stockAdjustments].sort(
-      (a, b) => b.date.localeCompare(a.date) || (b.createdAt || 0) - (a.createdAt || 0)
-    );
+    return [...stockAdjustments].sort(compareRecordsByDateTimeDesc);
   }, [stockAdjustments]);
 
   // Shopping list rows & totals
@@ -621,26 +632,30 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
 
               {showMissingProdList && (
                 <div className="pt-2 border-t border-amber-200/80 space-y-1.5">
-                  {stockResult.productionsWithoutIngredients.map((prod) => {
-                    const summary = (prod.items || [])
-                      .filter((i) => i.producedQty > 0)
-                      .map((i) => {
-                        const pName = productsById.get(i.productId)?.name || 'Produit';
-                        return `${formatNumber(i.producedQty)} ${pName}`;
-                      })
-                      .join(', ');
-                    return (
-                      <div
-                        key={prod.id}
-                        className="flex items-center justify-between gap-2 text-[11px] bg-white/80 px-2.5 py-1.5 rounded-lg border border-amber-200/60"
-                      >
-                        <span className="font-bold text-slate-800">{formatDate(prod.date)}</span>
-                        <span className="text-slate-600 truncate">
-                          {summary || 'Production enregistrée'}
-                        </span>
-                      </div>
-                    );
-                  })}
+                  {[...stockResult.productionsWithoutIngredients]
+                    .sort(compareRecordsByDateTimeDesc)
+                    .map((prod) => {
+                      const summary = (prod.items || [])
+                        .filter((i) => i.producedQty > 0)
+                        .map((i) => {
+                          const pName = productsById.get(i.productId)?.name || 'Produit';
+                          return `${formatNumber(i.producedQty)} ${pName}`;
+                        })
+                        .join(', ');
+                      return (
+                        <div
+                          key={prod.id}
+                          className="flex items-center justify-between gap-2 text-[11px] bg-white/80 px-2.5 py-1.5 rounded-lg border border-amber-200/60"
+                        >
+                          <span className="font-bold text-slate-800 shrink-0">
+                            {formatDateWithTime(prod.date, prod.time)}
+                          </span>
+                          <span className="text-slate-600 truncate">
+                            {summary || 'Production enregistrée'}
+                          </span>
+                        </div>
+                      );
+                    })}
                 </div>
               )}
             </div>
@@ -823,11 +838,11 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
                 const chartData = purchases.map((pt, idx) => ({
                   idx: idx + 1,
                   label: formatDate(pt.date).slice(0, 5),
-                  fullDate: formatDate(pt.date),
+                  fullDate: formatDateWithTime(pt.date, pt.time),
                   price: Math.round(pt.unitPurchasePriceFC * 100) / 100,
                 }));
 
-                const reversedPurchases = [...purchases].reverse();
+                const reversedPurchases = [...purchases].sort(compareRecordsByDateTimeDesc);
 
                 return (
                   <div
@@ -1050,7 +1065,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
                                 <div className="min-w-0">
                                   <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-bold text-slate-900">
-                                      {formatDate(pt.date)}
+                                      {formatDateWithTime(pt.date, pt.time)}
                                     </span>
                                     <span className="text-[11px] text-slate-500">
                                       • {pt.supplier || 'Lieu non précisé'}
@@ -1161,7 +1176,7 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
                           </span>
                         </div>
                         <span className="text-[11px] text-slate-500 block mt-0.5">
-                          {formatDate(adj.date)}
+                          {formatDateWithTime(adj.date, adj.time)}
                           {isBeforeStart ? ' (avant stock de départ)' : ''}
                         </span>
                       </div>
@@ -1359,16 +1374,38 @@ export const IngredientStockView: React.FC<IngredientStockViewProps> = ({
                 </select>
               </div>
 
-              {/* Date */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">Date</label>
-                <input
-                  type="date"
-                  value={adjDate}
-                  onChange={(e) => setAdjDate(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 min-h-[42px]"
-                />
+              {/* Date & Heure */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={adjDate}
+                    onChange={(e) => setAdjDate(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold text-slate-900 min-h-[42px]"
+                  />
+                </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">Heure</label>
+                    {adjTime && (
+                      <button
+                        type="button"
+                        onClick={() => setAdjTime('')}
+                        className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                      >
+                        Effacer
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="time"
+                    value={adjTime}
+                    onChange={(e) => setAdjTime(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-xs font-bold font-mono text-slate-900 min-h-[42px]"
+                  />
+                </div>
               </div>
 
               {/* Mode: Ajouter / Retirer OR Compter le stock */}

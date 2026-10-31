@@ -15,6 +15,9 @@ import { liveQuery } from 'dexie';
 import { db } from '../../db/db';
 import {
   formatDate,
+  formatDateWithTime,
+  formatDeliveryReturnTimes,
+  formatTimeFromTimestamp,
   formatFC,
   formatNumber,
   toISODate,
@@ -64,6 +67,11 @@ function normalizeText(val: string): string {
     .trim();
 }
 
+function getOriginalRecordTime(item: TrashItem): string | undefined {
+  if (item.kind === 'customer') return undefined;
+  return (item.payload as { time?: string } | undefined)?.time;
+}
+
 export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
   settings,
   onBack,
@@ -86,7 +94,12 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
   useEffect(() => {
     const sub = liveQuery(() => db.trash.toArray()).subscribe({
       next: (list) => {
-        const sorted = [...list].sort((a, b) => b.deletedAt - a.deletedAt);
+        const sorted = [...list]
+          .map((it) => ({
+            ...it,
+            time: it.time || formatTimeFromTimestamp(it.deletedAt),
+          }))
+          .sort((a, b) => b.deletedAt - a.deletedAt);
         setTrashItems(sorted);
       },
       error: (err) => {
@@ -140,7 +153,10 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
           item.label,
           TRASH_KIND_LABELS[item.kind],
           item.originalDate,
-          formatDate(item.originalDate),
+          item.kind === 'customer'
+            ? formatDate(item.originalDate)
+            : formatDateWithTime(item.originalDate, getOriginalRecordTime(item)),
+          item.time || '',
           formatDateTimeFR(item.deletedAt),
           item.restoredAt ? formatDateTimeFR(item.restoredAt) : '',
           item.amountFC !== undefined ? String(item.amountFC) : '',
@@ -197,6 +213,7 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
     switch (item.kind) {
       case 'dailyEntry': {
         const p = item.payload as DailyEntry;
+        const deliveryReturnLabel = formatDeliveryReturnTimes(p.deliveryTime, p.returnTime);
         return (
           <div className="space-y-2.5 text-xs">
             <div className="grid grid-cols-2 gap-2">
@@ -211,6 +228,11 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
                 </span>
               </div>
             </div>
+            {deliveryReturnLabel && (
+              <div className="p-2 rounded-xl bg-slate-50 border border-slate-200 font-mono text-[11px] font-semibold text-slate-700">
+                {deliveryReturnLabel}
+              </div>
+            )}
             {Array.isArray(p.items) && p.items.length > 0 && (
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <table className="w-full text-[11px] text-left">
@@ -297,7 +319,8 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
             )}
             {p.receipt && (
               <div className="p-2.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-semibold">
-                Reçu attaché : N° {formatReceiptNumber(p.receipt.no)}
+                Reçu attaché : N° {formatReceiptNumber(p.receipt.no)} (
+                {formatDateWithTime(p.receipt.date, p.receipt.time)})
               </div>
             )}
             {p.notes && (
@@ -397,6 +420,8 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
             ? 'Avance'
             : p.paymentType === 'final'
             ? 'Solde final'
+            : p.paymentType === 'by_days'
+            ? 'Paiement par jours'
             : 'Règlement';
         return (
           <div className="space-y-2.5 text-xs">
@@ -412,6 +437,15 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
                 </span>
               </div>
             </div>
+            {Array.isArray(p.coveredItems) && p.coveredItems.length > 0 && p.periodFrom && p.periodTo && (
+              <p className="text-slate-700 font-medium bg-slate-50 p-2.5 rounded-xl border border-slate-200">
+                Période couverte :{' '}
+                {p.periodFrom === p.periodTo
+                  ? formatDate(p.periodFrom)
+                  : `du ${formatDate(p.periodFrom)} au ${formatDate(p.periodTo)}`}{' '}
+                ({p.coveredItems.length} {p.coveredItems.length > 1 ? 'jours' : 'jour'})
+              </p>
+            )}
             {p.notes && (
               <p className="text-slate-600 italic bg-slate-50 p-2.5 rounded-xl border border-slate-200">
                 Note : « {p.notes} »
@@ -454,7 +488,9 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
           <div className="space-y-2.5 text-xs">
             <div className="p-2.5 rounded-xl bg-slate-50 border border-slate-200">
               <span className="text-[11px] text-slate-500 block">Date du paiement</span>
-              <span className="font-bold text-slate-900">{formatDate(p.date)}</span>
+              <span className="font-bold text-slate-900">
+                {formatDateWithTime(p.date, p.time)}
+              </span>
             </div>
             {p.note && (
               <p className="text-slate-600 italic bg-slate-50 p-2.5 rounded-xl border border-slate-200">
@@ -694,7 +730,10 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
                 <div className="text-[11px] text-slate-500 space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="font-semibold text-slate-700">
-                      Date d’origine : {formatDate(item.originalDate)}
+                      Date d’origine :{' '}
+                      {item.kind === 'customer'
+                        ? formatDate(item.originalDate)
+                        : formatDateWithTime(item.originalDate, getOriginalRecordTime(item))}
                     </span>
                   </div>
                   <div className="flex items-center gap-1.5 text-slate-500">
@@ -783,7 +822,12 @@ export const TrashHistoryView: React.FC<TrashHistoryViewProps> = ({
                 <div className="text-slate-600 flex items-center justify-between">
                   <span>Date d’origine :</span>
                   <span className="font-bold text-slate-900">
-                    {formatDate(detailItem.originalDate)}
+                    {detailItem.kind === 'customer'
+                      ? formatDate(detailItem.originalDate)
+                      : formatDateWithTime(
+                          detailItem.originalDate,
+                          getOriginalRecordTime(detailItem)
+                        )}
                   </span>
                 </div>
                 {detailItem.amountFC !== undefined && (

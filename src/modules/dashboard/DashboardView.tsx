@@ -44,6 +44,7 @@ import {
   toISOMonth,
   formatMonthName,
   getFrenchDayName,
+  normalizeTimeStr,
 } from '../../utils/formatters';
 import { generateMonthlyManagementReportPDF } from '../../utils/pdfGenerator';
 import { EmptyState } from '../../components/EmptyState';
@@ -60,6 +61,8 @@ import {
   calculateIngredientsStock,
   calculateItemsPriceAnalytics,
 } from '../../utils/ingredientStockCalculator';
+import { computeUnpaidDaysReminder } from '../../utils/sellerPayroll';
+import { PaymentsHistoryModal } from '../employees/PaymentsHistoryModal';
 import type {
   DailyEntry,
   Expense,
@@ -125,6 +128,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
   const [isMonthlyClosureModalOpen, setIsMonthlyClosureModalOpen] = useState(false);
   const [selectedStockProductModalId, setSelectedStockProductModalId] = useState<string>('all');
+  const [isPaymentsHistoryOpen, setIsPaymentsHistoryOpen] = useState(false);
+  const [paymentsInitialEmployeeId, setPaymentsInitialEmployeeId] = useState<string | undefined>(
+    undefined
+  );
+  const [hourlyMetricMode, setHourlyMetricMode] = useState<'amount' | 'count'>('amount');
 
   useEffect(() => {
     loadData();
@@ -769,6 +777,85 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     });
   }, [dailyChartData]);
 
+  // Ventes par heure (0 h à 23 h) — basé uniquement sur les ventes personnelles à des clients qui ont une heure
+  const hourlySalesAnalysis = useMemo(() => {
+    const buckets = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      label: `${hour} h`,
+      montantFC: 0,
+      nbVentes: 0,
+    }));
+
+    let timedSalesCount = 0;
+    let withoutTimeCount = 0;
+
+    for (const p of currentPersonalSales) {
+      // Uniquement les ventes personnelles à des clients (pas les consommations, pas les anciennes dettes d'ouverture)
+      if ((p.kind || 'vente') === 'consommation' || p.isOpeningDebt) continue;
+
+      let saleAmountFC = Math.round(p.totalSalesFC || 0);
+      if (selectedProductId !== 'all') {
+        let filteredAmount = 0;
+        for (const item of p.items || []) {
+          if (item.productId === selectedProductId) {
+            filteredAmount += item.soldQty * item.unitPrice;
+          }
+        }
+        if (filteredAmount <= 0) continue;
+        saleAmountFC = Math.round(filteredAmount);
+      }
+
+      const validTime = normalizeTimeStr(p.time);
+      if (!validTime) {
+        withoutTimeCount += 1;
+        continue;
+      }
+
+      const hour = parseInt(validTime.slice(0, 2), 10);
+      if (hour >= 0 && hour <= 23) {
+        buckets[hour].nbVentes += 1;
+        buckets[hour].montantFC += saleAmountFC;
+        timedSalesCount += 1;
+      } else {
+        withoutTimeCount += 1;
+      }
+    }
+
+    let bestStartHour = 0;
+    let bestAmountFC = -1;
+    let bestCount = -1;
+
+    if (timedSalesCount > 0) {
+      for (let h = 0; h <= 22; h++) {
+        const wAmount = buckets[h].montantFC + buckets[h + 1].montantFC;
+        const wCount = buckets[h].nbVentes + buckets[h + 1].nbVentes;
+        if (
+          wAmount > bestAmountFC ||
+          (wAmount === bestAmountFC && wCount > bestCount)
+        ) {
+          bestStartHour = h;
+          bestAmountFC = wAmount;
+          bestCount = wCount;
+        }
+      }
+    }
+
+    return {
+      buckets,
+      timedSalesCount,
+      withoutTimeCount,
+      bestRange:
+        timedSalesCount > 0
+          ? {
+              startHour: bestStartHour,
+              endHour: bestStartHour + 2,
+              amountFC: bestAmountFC,
+              count: bestCount,
+            }
+          : null,
+    };
+  }, [currentPersonalSales, selectedProductId]);
+
   // Managerial Insights:
   // Best day, worst day, best day of week
   const { bestDay, worstDay, bestWeekdayName, avgSalesPerDay } = useMemo(() => {
@@ -870,29 +957,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
     });
 
-    // 4. End of month payment due check
-    const currentMonthStr = toISOMonth(new Date());
-    employees
-      .filter((e) => !e.isArchived)
-      .forEach((emp) => {
-        const empEntries = dailyEntries.filter(
-          (d) => d.employeeId === emp.id && d.date.startsWith(currentMonthStr)
-        );
-        const earnedComm = empEntries.reduce((acc, d) => acc + (d.employeeCommissionFC || 0), 0);
-        const empPayments = payments.filter(
-          (p) => p.employeeId === emp.id && p.month === currentMonthStr
-        );
-        const paidComm = empPayments.reduce((acc, p) => acc + (p.amountFC || 0), 0);
-        const balance = earnedComm - paidComm;
-        if (balance > 0 && new Date().getDate() >= 25) {
-          alerts.push({
-            id: `pay_due_${emp.id}`,
-            type: 'warning',
-            title: `Règlement dû pour ${emp.name}`,
-            message: `Fin de mois proche : ${formatFC(balance, settings.currency)} reste à verser sur sa commission.`,
-          });
-        }
-      });
+    // 4. Rappel des jours non payés géré par la bannière cliquable dédiée (unpaidDaysReminderData)
 
     // 5. Old backup reminder
     if (!settings.lastBackupDate) {
@@ -917,6 +982,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   ]);
 
   const currency = settings.currency || 'FC';
+
+  // Rappel : X jour(s) non payé(s) depuis plus de N jours
+  const unpaidDaysReminderData = useMemo(() => {
+    return computeUnpaidDaysReminder({
+      dailyEntries,
+      payments,
+      employees,
+      unpaidDaysReminder: settings.unpaidDaysReminder,
+      payrollClosures: settings.payrollClosures,
+      caisseStartDate: settings.caisseStartDate,
+    });
+  }, [
+    dailyEntries,
+    payments,
+    employees,
+    settings.unpaidDaysReminder,
+    settings.payrollClosures,
+    settings.caisseStartDate,
+  ]);
 
   // Export Monthly Management Report PDF
   const handleExportMonthReportPDF = async () => {
@@ -1065,6 +1149,56 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <ChevronRight className="w-3.5 h-3.5" />
             </span>
           )}
+        </div>
+      )}
+
+      {/* BANNIÈRE ORANGE : jours non payés des vendeur(se)s depuis plus de N jours */}
+      {unpaidDaysReminderData && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setPaymentsInitialEmployeeId(unpaidDaysReminderData.sellers[0]?.employeeId);
+            setIsPaymentsHistoryOpen(true);
+          }}
+          className="p-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white shadow-md flex flex-col gap-2 text-xs cursor-pointer active:scale-[0.99] transition-all"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Users className="w-5 h-5 shrink-0 text-white" />
+              <span className="font-extrabold leading-snug">
+                {unpaidDaysReminderData.totalDays}{' '}
+                {unpaidDaysReminderData.totalDays > 1 ? 'jours non payés' : 'jour non payé'} depuis
+                plus de {unpaidDaysReminderData.thresholdDays}{' '}
+                {unpaidDaysReminderData.thresholdDays > 1 ? 'jours' : 'jour'}
+              </span>
+            </div>
+            <span className="px-2.5 py-1.5 rounded-xl bg-white text-amber-800 font-extrabold shrink-0 text-xs shadow-xs flex items-center gap-1">
+              <span>Par jours</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 pl-7">
+            {unpaidDaysReminderData.sellers.map((s) => (
+              <button
+                key={s.employeeId}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPaymentsInitialEmployeeId(s.employeeId);
+                  setIsPaymentsHistoryOpen(true);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-700/50 hover:bg-amber-800/70 border border-amber-300/40 text-white font-bold text-[11px] inline-flex items-center gap-1.5 transition-colors"
+              >
+                <span>{s.employeeName} :</span>
+                <span className="font-mono">
+                  {s.daysCount} {s.daysCount > 1 ? 'jours' : 'jour'} ·{' '}
+                  {formatFC(s.amountFC, currency)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -2004,18 +2138,144 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <XAxis dataKey="displayDate" tick={{ fontSize: 10 }} />
                   <YAxis tick={{ fontSize: 10 }} tickFormatter={(v) => `${Math.round(v / 1000)}k`} />
                   <Tooltip formatter={(val: any) => [formatFC(Number(val), currency), 'Cumul']} />
-                  <Line
-                    type="monotone"
-                    dataKey="beneficeCumule"
-                    stroke="#047857"
-                    strokeWidth={2.5}
-                    dot={false}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+                    <Line
+                      type="monotone"
+                      dataKey="beneficeCumule"
+                      stroke="#047857"
+                      strokeWidth={2.5}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
             </div>
+          )}
+
+        {/* 6. Bar Chart: Ventes par heure (0 h à 23 h, ventes personnelles clients avec heure) */}
+        <div className="bg-white rounded-2xl border border-slate-200/80 p-4 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h4 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-teal-700" />
+                <span>Ventes par heure</span>
+              </h4>
+              <span className="text-[10px] text-slate-400 block">
+                Ventes personnelles clients ayant une heure (0 h à 23 h)
+              </span>
+            </div>
+
+            {hourlySalesAnalysis.timedSalesCount > 0 && (
+              <div className="inline-flex items-center rounded-xl bg-slate-100 p-0.5 text-[10px] font-bold shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setHourlyMetricMode('amount')}
+                  className={`px-2 py-1 rounded-lg transition-all ${
+                    hourlyMetricMode === 'amount'
+                      ? 'bg-white text-teal-800 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Montant
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHourlyMetricMode('count')}
+                  className={`px-2 py-1 rounded-lg transition-all ${
+                    hourlyMetricMode === 'count'
+                      ? 'bg-white text-teal-800 shadow-2xs'
+                      : 'text-slate-500 hover:text-slate-800'
+                  }`}
+                >
+                  Ventes
+                </button>
+              </div>
+            )}
           </div>
-        )}
+
+          {hourlySalesAnalysis.timedSalesCount === 0 ? (
+            <div className="py-10 text-center space-y-1">
+              <p className="text-xs text-slate-400">
+                {"Pas encore d'heures enregistrées"}
+              </p>
+              {hourlySalesAnalysis.withoutTimeCount > 0 && (
+                <p className="text-[11px] text-slate-400">
+                  {hourlySalesAnalysis.withoutTimeCount}{' '}
+                  {hourlySalesAnalysis.withoutTimeCount > 1 ? 'ventes' : 'vente'} sans heure non{' '}
+                  {hourlySalesAnalysis.withoutTimeCount > 1 ? 'comptées' : 'comptée'}
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
+              <div className="h-44 w-full pt-2">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={hourlySalesAnalysis.buckets}
+                    margin={{ top: 5, right: 5, left: -20, bottom: 0 }}
+                  >
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={2} />
+                    {hourlyMetricMode === 'amount' ? (
+                      <YAxis
+                        tick={{ fontSize: 10 }}
+                        tickFormatter={(v) =>
+                          v >= 1000 ? `${Math.round(v / 1000)}k` : `${v}`
+                        }
+                      />
+                    ) : (
+                      <YAxis tick={{ fontSize: 10 }} allowDecimals={false} />
+                    )}
+                    <Tooltip
+                      content={({ active, payload }) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const row = payload[0].payload as {
+                          hour: number;
+                          montantFC: number;
+                          nbVentes: number;
+                        };
+                        return (
+                          <div className="rounded-xl bg-slate-900/95 text-white px-3 py-2 text-[11px] shadow-lg space-y-0.5">
+                            <p className="font-extrabold text-teal-300 font-mono">
+                              {row.hour} h – {row.hour + 1} h
+                            </p>
+                            <p className="font-mono font-bold">
+                              Montant : {formatFC(row.montantFC, currency)}
+                            </p>
+                            <p className="text-slate-300 font-semibold">
+                              Nombre : {row.nbVentes}{' '}
+                              {row.nbVentes > 1 ? 'ventes' : 'vente'}
+                            </p>
+                          </div>
+                        );
+                      }}
+                    />
+                    <Bar
+                      dataKey={hourlyMetricMode === 'amount' ? 'montantFC' : 'nbVentes'}
+                      fill="#0d9488"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+
+              <div className="pt-2 border-t border-slate-100 space-y-1 text-[11px]">
+                {hourlySalesAnalysis.bestRange && (
+                  <p className="font-bold text-slate-800">
+                    Plage la plus active : {hourlySalesAnalysis.bestRange.startHour} h–
+                    {hourlySalesAnalysis.bestRange.endHour} h (
+                    {formatFC(hourlySalesAnalysis.bestRange.amountFC, currency)},{' '}
+                    {hourlySalesAnalysis.bestRange.count}{' '}
+                    {hourlySalesAnalysis.bestRange.count > 1 ? 'ventes' : 'vente'})
+                  </p>
+                )}
+                <p className="text-slate-500 font-medium">
+                  {hourlySalesAnalysis.withoutTimeCount}{' '}
+                  {hourlySalesAnalysis.withoutTimeCount > 1 ? 'ventes' : 'vente'} sans heure non{' '}
+                  {hourlySalesAnalysis.withoutTimeCount > 1 ? 'comptées' : 'comptée'}
+                </p>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* SECTION C: MANAGERIAL INSIGHTS */}
@@ -2198,6 +2458,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           setSelectedStockProductModalId('all');
           setIsMonthlyClosureModalOpen(false);
           setIsStockModalOpen(true);
+        }}
+      />
+
+      {/* Paiements des Vendeur(se)s (ouvert sur "Par jours" depuis la bannière de rappel) */}
+      <PaymentsHistoryModal
+        isOpen={isPaymentsHistoryOpen}
+        initialTab="days"
+        initialEmployeeId={paymentsInitialEmployeeId}
+        onClose={() => setIsPaymentsHistoryOpen(false)}
+        employees={employees}
+        dailyEntries={dailyEntries}
+        payments={payments}
+        settings={settings}
+        onSettingsUpdated={onSettingsUpdated}
+        onShowToast={onShowToast}
+        onPaymentsChanged={async () => {
+          await loadData();
         }}
       />
     </div>

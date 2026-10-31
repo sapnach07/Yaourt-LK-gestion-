@@ -33,6 +33,9 @@ export interface DailyEntryItem {
 export interface DailyEntry {
   id: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
+  deliveryTime?: string; // HH:mm (heure de livraison optionnelle)
+  returnTime?: string; // HH:mm (heure de retour optionnelle)
   employeeId: string;
   employeeName: string;
   employeeCommissionRate: number; // frozen at entry time (e.g. 25%)
@@ -114,6 +117,7 @@ export interface ProductionCosting {
 export interface ProductionEntry {
   id: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   items: ProductionItem[];
   notes?: string;
   costing?: ProductionCosting;
@@ -131,6 +135,7 @@ export interface ExpenseIngredientLine {
 export interface Expense {
   id: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   amountFC: number;
   category: string;
   detail: string;
@@ -143,6 +148,7 @@ export interface Expense {
 export interface ReserveMovement {
   id: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   amountFC: number; // nombre positif
   type: 'ajout' | 'retrait';
   reason: string; // motif, texte libre
@@ -151,14 +157,36 @@ export interface ReserveMovement {
   createdAt: number;
 }
 
+export type SellerPaymentType = 'advance' | 'salary' | 'final' | 'by_days';
+
+export type SellerPaymentMode = 'especes' | 'mobile_money' | 'autre';
+
+export interface PaymentCoveredItem {
+  entryId: string;
+  date: string; // YYYY-MM-DD
+  commissionFC: number; // commission de la saisie figée au moment du paiement
+}
+
+export interface PayrollClosure {
+  employeeId: string;
+  month: string; // YYYY-MM
+  closedAt: number;
+  forgivenFC?: number;
+}
+
 export interface Payment {
   id: string;
   employeeId: string;
   employeeName: string;
   month: string; // YYYY-MM
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   amountFC: number;
-  paymentType: 'advance' | 'salary' | 'final'; // Avance ou Règlement complet
+  paymentType: SellerPaymentType; // Avance, Règlement, Solde final ou Paiement par jours
+  paymentMode?: SellerPaymentMode; // Espèces, Mobile money, Autre (optionnel)
+  coveredItems?: PaymentCoveredItem[]; // Saisies payées par ce paiement
+  periodFrom?: string; // YYYY-MM-DD (première date couverte)
+  periodTo?: string; // YYYY-MM-DD (dernière date couverte)
   notes?: string;
   createdAt: number;
 }
@@ -182,6 +210,7 @@ export interface DebtPayment {
   id: string;
   customerId: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   amountFC: number;
   note?: string;
   createdAt: number;
@@ -192,6 +221,7 @@ export type ReceiptPaymentMode = 'especes' | 'mobile_money' | 'credit';
 export interface PersonalSaleReceipt {
   no: number;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   phone?: string;
   paymentMode: ReceiptPaymentMode; // Espèces, Mobile money, À crédit (information seulement)
   paidNotedFC: number; // Payé noté sur le reçu (information seulement)
@@ -201,6 +231,7 @@ export interface PersonalSaleReceipt {
 export interface PersonalSale {
   id: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   items: PersonalSaleItem[];
   totalSalesFC: number;
   ownerCommissionRate: number; // ma commission %
@@ -234,6 +265,7 @@ export interface StockAdjustment {
   id: string;
   itemId: string;
   date: string; // YYYY-MM-DD
+  time?: string; // HH:mm (heure locale 24h)
   qtyDelta: number; // en unités d'utilisation, positif ou négatif
   reason: StockAdjustmentReason;
   note?: string;
@@ -296,6 +328,10 @@ export interface AppSettings {
   consumptionPaidPct?: number;
   // Délai avant rappel de dette en jours (par défaut 2)
   debtReminderDays?: number;
+  // Rappel : jours non payés des vendeur(se)s depuis plus de N jours (par défaut 7)
+  unpaidDaysReminder?: number;
+  // Clôtures mensuelles de paie des vendeur(se)s (optionnel)
+  payrollClosures?: Record<string, PayrollClosure> | PayrollClosure[];
   // Logo personnalisé de l'application (base64)
   appLogoBase64?: string;
   // Coût de revient : ingrédients et emballages (estimation uniquement, optionnel)
@@ -380,6 +416,7 @@ export interface TrashItem<T = any> {
   originalId: string;
   label: string;
   originalDate: string; // YYYY-MM-DD
+  time?: string; // HH:mm calculé à partir de deletedAt (affichage seulement)
   amountFC?: number;
   payload: T;
   deletedAt: number;

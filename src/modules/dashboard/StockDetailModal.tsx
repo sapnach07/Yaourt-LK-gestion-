@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import {
   formatDate,
+  formatDateWithTime,
+  formatDeliveryReturnTimes,
+  compareRecordsByDateTimeDesc,
   formatFC,
   formatNumber,
   formatPercent,
@@ -331,6 +334,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
     const list: Array<{
       id: string;
       date: string;
+      time?: string;
+      deliveryReturnLabel?: string | null;
       type: 'production' | 'delivery' | 'personal_sale';
       title: string;
       subtitle: string;
@@ -349,6 +354,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         list.push({
           id: p.id,
           date: p.date,
+          time: p.time,
           type: 'production',
           title: 'Production réalisée',
           subtitle: p.notes ? `Note : ${p.notes}` : 'Entrée en stock maison',
@@ -369,6 +375,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         list.push({
           id: d.id,
           date: d.date,
+          time: d.time,
+          deliveryReturnLabel: formatDeliveryReturnTimes(d.deliveryTime, d.returnTime),
           type: 'delivery',
           title: `Livraison à ${d.employeeName}`,
           subtitle: `Ventes : ${d.items.reduce((acc, it) => acc + (it.sold || 0), 0)} · Abîmés : ${d.items.reduce((acc, it) => acc + (it.damaged || 0), 0)}`,
@@ -389,6 +397,7 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
         list.push({
           id: ps.id,
           date: ps.date,
+          time: ps.time,
           type: 'personal_sale',
           title: ps.kind === 'consommation' ? 'Consommation personnelle' : 'Vente directe par le gérant',
           subtitle: ps.notes
@@ -402,11 +411,8 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
       }
     });
 
-    // Sort by date descending, then createdAt descending
-    return list.sort((a, b) => {
-      if (a.date !== b.date) return b.date.localeCompare(a.date);
-      return b.createdAt - a.createdAt;
-    });
+    // Sort by date descending, then time descending (with time before without time), then createdAt descending
+    return list.sort(compareRecordsByDateTimeDesc);
   }, [periodProductions, periodDailyEntries, periodPersonalSales, selectedProductId]);
 
   if (!isOpen) return null;
@@ -995,14 +1001,19 @@ export const StockDetailModal: React.FC<StockDetailModalProps> = ({
                       </div>
 
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <h5 className="text-xs font-bold text-slate-900 leading-tight">
                             {evt.title}
                           </h5>
-                          <span className="text-[10px] font-mono text-slate-500">
-                            {formatDate(evt.date)}
+                          <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                            {formatDateWithTime(evt.date, evt.time)}
                           </span>
                         </div>
+                        {evt.deliveryReturnLabel && (
+                          <p className="text-[10px] font-semibold text-slate-500 font-mono mt-0.5">
+                            {evt.deliveryReturnLabel}
+                          </p>
+                        )}
                         <p className="text-[11px] text-slate-500 mt-0.5">{evt.subtitle}</p>
 
                         <div className="flex flex-wrap gap-1.5 mt-1.5">

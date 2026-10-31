@@ -1,6 +1,13 @@
 import type { Table } from 'dexie';
 import { db } from '../db/db';
-import { formatDate, formatFC, formatNumber, toISODate } from './formatters';
+import {
+  formatDate,
+  formatDateWithTime,
+  formatFC,
+  formatNumber,
+  toISODate,
+  toLocalTimeStr,
+} from './formatters';
 import { normalizeCustomerName } from './debtCalculator';
 import type {
   DailyEntry,
@@ -102,7 +109,7 @@ async function buildTrashMetadata<K extends TrashKind>(
     case 'dailyEntry': {
       const r = record as DailyEntry;
       return {
-        label: `Saisie de ${r.employeeName} – ${formatDate(r.date)} – ventes ${formatFC(
+        label: `Saisie de ${r.employeeName} – ${formatDateWithTime(r.date, r.time)} – ventes ${formatFC(
           r.totalSalesFC,
           currency
         )}`,
@@ -117,7 +124,7 @@ async function buildTrashMetadata<K extends TrashKind>(
         const paidFC =
           r.consumptionPaidFC !== undefined ? r.consumptionPaidFC : r.consumptionValueFC || 0;
         return {
-          label: `Consommation personnelle – ${formatDate(r.date)} – ${formatFC(
+          label: `Consommation personnelle – ${formatDateWithTime(r.date, r.time)} – ${formatFC(
             paidFC,
             currency
           )}`,
@@ -127,16 +134,18 @@ async function buildTrashMetadata<K extends TrashKind>(
       }
       if (r.isOpeningDebt) {
         return {
-          label: `Ancienne dette${r.customerName ? ` (${r.customerName})` : ''} – ${formatDate(
-            r.date
+          label: `Ancienne dette${r.customerName ? ` (${r.customerName})` : ''} – ${formatDateWithTime(
+            r.date,
+            r.time
           )} – ${formatFC(r.totalSalesFC, currency)}`,
           originalDate: r.date,
           amountFC: r.totalSalesFC,
         };
       }
       return {
-        label: `Vente personnelle${r.customerName ? ` (${r.customerName})` : ''} – ${formatDate(
-          r.date
+        label: `Vente personnelle${r.customerName ? ` (${r.customerName})` : ''} – ${formatDateWithTime(
+          r.date,
+          r.time
         )} – ${formatFC(r.totalSalesFC, currency)}`,
         originalDate: r.date,
         amountFC: r.totalSalesFC,
@@ -150,7 +159,7 @@ async function buildTrashMetadata<K extends TrashKind>(
         .map((it) => `${it.productName} × ${formatNumber(it.producedQty)}`)
         .join(', ');
       return {
-        label: `Production – ${formatDate(r.date)}${itemsSummary ? ` – ${itemsSummary}` : ''}`,
+        label: `Production – ${formatDateWithTime(r.date, r.time)}${itemsSummary ? ` – ${itemsSummary}` : ''}`,
         originalDate: r.date,
         amountFC: undefined,
       };
@@ -159,7 +168,7 @@ async function buildTrashMetadata<K extends TrashKind>(
     case 'expense': {
       const r = record as Expense;
       return {
-        label: `Dépense (${r.category}) – ${formatDate(r.date)} – ${formatFC(
+        label: `Dépense (${r.category}) – ${formatDateWithTime(r.date, r.time)} – ${formatFC(
           r.amountFC,
           currency
         )}${r.detail ? ` – ${r.detail}` : ''}`,
@@ -175,9 +184,11 @@ async function buildTrashMetadata<K extends TrashKind>(
           ? 'Avance'
           : r.paymentType === 'final'
           ? 'Solde final'
+          : r.paymentType === 'by_days'
+          ? 'Paiement par jours'
           : 'Règlement';
       return {
-        label: `${typeName} de ${r.employeeName} – ${formatDate(r.date)} – ${formatFC(
+        label: `${typeName} de ${r.employeeName} – ${formatDateWithTime(r.date, r.time)} – ${formatFC(
           r.amountFC,
           currency
         )}`,
@@ -191,7 +202,7 @@ async function buildTrashMetadata<K extends TrashKind>(
       const caisseLabel = r.caisse === 'benefices' ? 'Bénéfices personnels' : 'Réserve';
       const mvLabel = r.type === 'ajout' ? 'Ajout' : 'Retrait';
       return {
-        label: `${mvLabel} (${caisseLabel}) – ${formatDate(r.date)} – ${formatFC(
+        label: `${mvLabel} (${caisseLabel}) – ${formatDateWithTime(r.date, r.time)} – ${formatFC(
           r.amountFC,
           currency
         )}${r.reason ? ` – ${r.reason}` : ''}`,
@@ -204,8 +215,9 @@ async function buildTrashMetadata<K extends TrashKind>(
       const r = record as DebtPayment;
       const cust = r.customerId ? await db.customers.get(r.customerId) : undefined;
       return {
-        label: `Paiement de dette${cust?.name ? ` de ${cust.name}` : ''} – ${formatDate(
-          r.date
+        label: `Paiement de dette${cust?.name ? ` de ${cust.name}` : ''} – ${formatDateWithTime(
+          r.date,
+          r.time
         )} – ${formatFC(r.amountFC, currency)}`,
         originalDate: r.date,
         amountFC: r.amountFC,
@@ -230,7 +242,7 @@ async function buildTrashMetadata<K extends TrashKind>(
       const unitLabel = costItem?.usageUnit || 'u.';
       const sign = r.qtyDelta > 0 ? '+' : '';
       return {
-        label: `Ajustement stock (${itemName}) – ${formatDate(r.date)} – ${sign}${formatNumber(
+        label: `Ajustement stock (${itemName}) – ${formatDateWithTime(r.date, r.time)} – ${sign}${formatNumber(
           r.qtyDelta,
           4
         )} ${unitLabel}`,
@@ -266,6 +278,7 @@ export async function moveToTrash<K extends TrashKind>(
         originalId: record.id,
         label: meta.label,
         originalDate: meta.originalDate,
+        time: toLocalTimeStr(new Date(now)),
         amountFC: meta.amountFC,
         payload: clonePayload(record),
         deletedAt: now,
@@ -382,6 +395,29 @@ export async function restoreFromTrash(
               return {
                 success: false,
                 message: `Cette vente est rattachée à un client supprimé${custHint}. Veuillez restaurer le client d’abord.`,
+              };
+            }
+          }
+        }
+
+        // Vérification qu'aucun jour couvert par un paiement par jours n'a été payé entre-temps
+        if (item.kind === 'payment') {
+          const pay = item.payload as Payment;
+          if (Array.isArray(pay?.coveredItems) && pay.coveredItems.length > 0) {
+            const activePayments = await db.payments.toArray();
+            const alreadyPaidIds = new Set<string>();
+            for (const ap of activePayments) {
+              for (const ci of ap.coveredItems || []) {
+                if (ci?.entryId) alreadyPaidIds.add(ci.entryId);
+              }
+            }
+            const conflict = pay.coveredItems.find((ci) => alreadyPaidIds.has(ci.entryId));
+            if (conflict) {
+              return {
+                success: false,
+                message: `Restauration refusée : la journée du ${formatDate(
+                  conflict.date
+                )} a déjà été réglée par un autre paiement.`,
               };
             }
           }

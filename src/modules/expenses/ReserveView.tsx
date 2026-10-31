@@ -23,6 +23,10 @@ import {
 import { db } from '../../db/db';
 import {
   formatDate,
+  formatDateWithTime,
+  toLocalTimeStr,
+  normalizeTimeStr,
+  compareRecordsByDateTimeDesc,
   formatFC,
   toISODate,
   toISOMonth,
@@ -46,6 +50,7 @@ import {
   computeBeneficesOutflowsForRange,
 } from '../dashboard/OwnerProfitView';
 import { PaymentsHistoryModal } from '../employees/PaymentsHistoryModal';
+import { computeUnpaidDaysReminder } from '../../utils/sellerPayroll';
 import type {
   ReserveMovement,
   DailyEntry,
@@ -85,6 +90,10 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
   // Sub-screen for payments history
   const [isPaymentsHistoryOpen, setIsPaymentsHistoryOpen] = useState(false);
   const [selectedPaymentsMonth, setSelectedPaymentsMonth] = useState<string>(toISOMonth(new Date()));
+  const [paymentsInitialTab, setPaymentsInitialTab] = useState<'month' | 'days'>('month');
+  const [paymentsInitialEmployeeId, setPaymentsInitialEmployeeId] = useState<string | undefined>(
+    undefined
+  );
 
   // Active caisse tab for movement history ('reserve' | 'benefices')
   const [historyTab, setHistoryTab] = useState<'reserve' | 'benefices'>('reserve');
@@ -97,6 +106,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
   const [editingMovement, setEditingMovement] = useState<ReserveMovement | null>(null);
 
   const [date, setDate] = useState(toISODate(new Date()));
+  const [time, setTime] = useState(toLocalTimeStr());
   const [amount, setAmount] = useState<string>('');
   const [reason, setReason] = useState<string>('');
   const [formError, setFormError] = useState<string>('');
@@ -132,6 +142,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
       setFormType('ajout');
       setFormSource(initialPrefill.source || 'personnel');
       setDate(toISODate(new Date()));
+      setTime(toLocalTimeStr());
       setAmount(formatNumber(initialPrefill.amount));
       setReason(initialPrefill.reason);
       setFormError('');
@@ -151,7 +162,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
         db.employees.toArray(),
         db.debtPayments.toArray(),
       ]);
-      setMovements(movs);
+      setMovements(movs.sort(compareRecordsByDateTimeDesc));
       setDailyEntries(entries);
       setExpenses(exps);
       setPersonalSales(pSales);
@@ -249,59 +260,26 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     movements,
   ]);
 
-  // Rappel de paiement vendeur(se)s (du 25 de chaque mois et pendant les premiers jours du mois suivant)
-  const paymentReminder = useMemo(() => {
-    const now = new Date();
-    const day = now.getDate();
-    const curMonth = toISOMonth(now);
-
-    const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prevMonth = toISOMonth(prevDate);
-
-    const getRemainingForMonth = (mStr: string) => {
-      let earned = 0;
-      let paid = 0;
-      dailyEntries
-        .filter((e) => e.date && e.date.startsWith(mStr))
-        .forEach((e) => {
-          earned += e.employeeCommissionFC || 0;
-        });
-      payments
-        .filter((p) => p.month === mStr)
-        .forEach((p) => {
-          paid += p.amountFC || 0;
-        });
-      return Math.max(0, earned - paid);
-    };
-
-    // Premiers jours du mois suivant (1 à 10) : priorité au mois précédent
-    if (day <= 10) {
-      const remPrev = getRemainingForMonth(prevMonth);
-      if (remPrev > 0) {
-        return { month: prevMonth, remainingFC: remPrev };
-      }
-    }
-
-    // À partir du 25 du mois : mois en cours ou mois précédent
-    if (day >= 25) {
-      const remCur = getRemainingForMonth(curMonth);
-      if (remCur > 0) {
-        return { month: curMonth, remainingFC: remCur };
-      }
-      const remPrev = getRemainingForMonth(prevMonth);
-      if (remPrev > 0) {
-        return { month: prevMonth, remainingFC: remPrev };
-      }
-    }
-
-    // Si mois précédent non soldé et jour <= 15
-    const remPrev = getRemainingForMonth(prevMonth);
-    if (day <= 15 && remPrev > 0) {
-      return { month: prevMonth, remainingFC: remPrev };
-    }
-
-    return null;
-  }, [dailyEntries, payments]);
+  // Rappel : X jour(s) non payé(s) depuis plus de N jours (les mois clôturés et saisies "À compléter" ne déclenchent jamais de rappel)
+  const unpaidDaysReminderData = useMemo(() => {
+    return computeUnpaidDaysReminder({
+      dailyEntries,
+      payments,
+      employees,
+      unpaidDaysReminder: settings.unpaidDaysReminder,
+      payrollClosures: settings.payrollClosures,
+      caisseStartDate: settings.caisseStartDate,
+      todayStr,
+    });
+  }, [
+    dailyEntries,
+    payments,
+    employees,
+    settings.unpaidDaysReminder,
+    settings.payrollClosures,
+    settings.caisseStartDate,
+    todayStr,
+  ]);
 
   // Handlers for Réserve operations
   const handleOpenAddReserve = (source: 'personnel' | 'benefices' = 'personnel', prefilledAmt?: number, prefilledReason?: string) => {
@@ -310,6 +288,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     setFormType('ajout');
     setFormSource(source);
     setDate(toISODate(new Date()));
+    setTime(toLocalTimeStr());
     setAmount(prefilledAmt ? formatNumber(prefilledAmt) : '');
     setReason(prefilledReason || '');
     setFormError('');
@@ -321,6 +300,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     setFormCaisse('reserve');
     setFormType('retrait');
     setDate(toISODate(new Date()));
+    setTime(toLocalTimeStr());
     setAmount('');
     setReason('');
     setFormError('');
@@ -333,6 +313,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     setFormCaisse('benefices');
     setFormType('retrait');
     setDate(toISODate(new Date()));
+    setTime(toLocalTimeStr());
     setAmount('');
     setReason('');
     setFormError('');
@@ -346,6 +327,7 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     setFormType(mov.type);
     setFormSource(mov.source || 'personnel');
     setDate(mov.date);
+    setTime(mov.time || '');
     setAmount(formatNumber(mov.amountFC));
     setReason(mov.reason || '');
     setFormError('');
@@ -399,22 +381,26 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
     }
 
     try {
+      const normalizedTime = normalizeTimeStr(time);
       if (editingMovement) {
         const updated: ReserveMovement = {
           ...editingMovement,
           date,
+          time: normalizedTime,
           amountFC: Math.round(numAmount),
           type: formType,
           caisse: formCaisse,
           source: formCaisse === 'reserve' && formType === 'ajout' ? formSource : undefined,
           reason: reason.trim(),
         };
+        if (!normalizedTime) delete updated.time;
         await db.reserveMovements.put(updated);
         onShowToast('success', 'Mouvement modifié avec succès.');
       } else {
         const newMov: ReserveMovement = {
           id: 'res_' + Date.now().toString() + '_' + Math.random().toString(36).substr(2, 5),
           date,
+          ...(normalizedTime ? { time: normalizedTime } : {}),
           amountFC: Math.round(numAmount),
           type: formType,
           caisse: formCaisse,
@@ -720,32 +706,55 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
         </div>
       )}
 
-      {/* 5. BANNIÈRE ORANGE DE RAPPEL : paiement des vendeurs recommandé */}
-      {paymentReminder && (
-        <div className="p-3.5 rounded-2xl bg-amber-500 text-white shadow-md flex items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <AlertCircle className="w-5 h-5 shrink-0 text-white" />
-            <div>
-              <span className="font-extrabold block">
-                Paiement de {formatMonthName(paymentReminder.month)} recommandé : reste dû{' '}
-                {formatFC(paymentReminder.remainingFC, currency)}
+      {/* 5. BANNIÈRE ORANGE DE RAPPEL : jours non payés depuis plus de N jours */}
+      {unpaidDaysReminderData && (
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            setPaymentsInitialTab('days');
+            setPaymentsInitialEmployeeId(unpaidDaysReminderData.sellers[0]?.employeeId);
+            setIsPaymentsHistoryOpen(true);
+          }}
+          className="p-3.5 rounded-2xl bg-amber-500 hover:bg-amber-600 text-white shadow-md flex flex-col gap-2 text-xs cursor-pointer active:scale-[0.99] transition-all"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <AlertCircle className="w-5 h-5 shrink-0 text-white" />
+              <span className="font-extrabold leading-snug">
+                {unpaidDaysReminderData.totalDays}{' '}
+                {unpaidDaysReminderData.totalDays > 1 ? 'jours non payés' : 'jour non payé'} depuis
+                plus de {unpaidDaysReminderData.thresholdDays}{' '}
+                {unpaidDaysReminderData.thresholdDays > 1 ? 'jours' : 'jour'}
               </span>
-              <p className="text-[11px] text-amber-100 leading-snug">
-                Certains règlements de commissions pour ce mois n'ont pas encore été versés.
-              </p>
             </div>
+            <span className="px-2.5 py-1.5 rounded-xl bg-white text-amber-800 font-extrabold shrink-0 text-xs shadow-xs flex items-center gap-1">
+              <span>Par jours</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              setSelectedPaymentsMonth(paymentReminder.month);
-              setIsPaymentsHistoryOpen(true);
-            }}
-            className="px-3 py-2 rounded-xl bg-white text-amber-800 font-extrabold hover:bg-amber-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1"
-          >
-            <span>Paiements</span>
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+
+          <div className="flex flex-wrap gap-1.5 pl-7">
+            {unpaidDaysReminderData.sellers.map((s) => (
+              <button
+                key={s.employeeId}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setPaymentsInitialTab('days');
+                  setPaymentsInitialEmployeeId(s.employeeId);
+                  setIsPaymentsHistoryOpen(true);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-amber-700/50 hover:bg-amber-800/70 border border-amber-300/40 text-white font-bold text-[11px] inline-flex items-center gap-1.5 transition-colors"
+              >
+                <span>{s.employeeName} :</span>
+                <span className="font-mono">
+                  {s.daysCount} {s.daysCount > 1 ? 'jours' : 'jour'} ·{' '}
+                  {formatFC(s.amountFC, currency)}
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -1217,6 +1226,8 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
               type="button"
               onClick={() => {
                 setSelectedPaymentsMonth(toISOMonth(new Date()));
+                setPaymentsInitialTab('month');
+                setPaymentsInitialEmployeeId(undefined);
                 setIsPaymentsHistoryOpen(true);
               }}
               className="w-full py-2.5 px-3 rounded-xl bg-indigo-700 hover:bg-indigo-800 text-white font-bold text-xs shadow-xs active:scale-95 transition-all flex items-center justify-center gap-1.5"
@@ -1354,7 +1365,9 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5 flex-wrap">
-                          <span className="font-extrabold text-slate-900">{formatDate(mov.date)}</span>
+                          <span className="font-extrabold text-slate-900">
+                            {formatDateWithTime(mov.date, mov.time)}
+                          </span>
                           <span
                             className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
                               isAjout ? 'bg-teal-50 text-teal-800' : 'bg-rose-50 text-rose-800'
@@ -1527,18 +1540,43 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
                 />
               </div>
 
-              {/* Date */}
-              <div>
-                <label className="font-bold text-slate-700 block mb-1">Date *</label>
-                <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-xl border border-slate-200">
-                  <Calendar className="w-4 h-4 text-slate-400 shrink-0" />
-                  <input
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                    required
-                    className="w-full bg-transparent font-medium text-slate-800 text-xs focus:outline-none"
-                  />
+              {/* Date & Heure */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div>
+                  <label className="font-bold text-slate-700 block mb-1">Date *</label>
+                  <div className="flex items-center gap-1.5 bg-slate-50 px-2.5 py-2 rounded-xl border border-slate-200">
+                    <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      required
+                      className="w-full bg-transparent font-medium text-slate-800 text-xs focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="font-bold text-slate-700 block">Heure</label>
+                    {time && (
+                      <button
+                        type="button"
+                        onClick={() => setTime('')}
+                        className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                      >
+                        Effacer
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center bg-slate-50 px-2.5 py-2 rounded-xl border border-slate-200">
+                    <input
+                      type="time"
+                      value={time}
+                      onChange={(e) => setTime(e.target.value)}
+                      className="w-full bg-transparent font-mono font-medium text-slate-800 text-xs focus:outline-none"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -1588,11 +1626,14 @@ export const ReserveView: React.FC<ReserveViewProps> = ({
       <PaymentsHistoryModal
         isOpen={isPaymentsHistoryOpen}
         initialMonth={selectedPaymentsMonth}
+        initialTab={paymentsInitialTab}
+        initialEmployeeId={paymentsInitialEmployeeId}
         onClose={() => setIsPaymentsHistoryOpen(false)}
         employees={employees}
         dailyEntries={dailyEntries}
         payments={payments}
         settings={settings}
+        onSettingsUpdated={onSettingsUpdated}
         onShowToast={onShowToast}
         onPaymentsChanged={async () => {
           await loadData();

@@ -25,6 +25,9 @@ import {
 import { db } from '../../db/db';
 import {
   formatDate,
+  formatDateWithTime,
+  formatDeliveryReturnTimes,
+  compareRecordsByDateTimeDesc,
   formatFC,
   toISODate,
   toISOMonth,
@@ -171,9 +174,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
 
     setEmployees(emps);
     setProducts(prods);
-    setDailyEntries(dEntries);
-    setProductionEntries(pEntries);
-    setPersonalSales(pSales);
+    setDailyEntries(dEntries.sort(compareRecordsByDateTimeDesc));
+    setProductionEntries(pEntries.sort(compareRecordsByDateTimeDesc));
+    setPersonalSales(pSales.sort(compareRecordsByDateTimeDesc));
     setCustomers(custs);
     setDebtPayments(dPays);
   };
@@ -677,6 +680,10 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                 const missingText = entry.missingFields && entry.missingFields.length > 0
                   ? entry.missingFields.map((f) => (f === 'sold' ? 'Vendu' : 'Abîmé')).join(', ')
                   : 'Vendu, Abîmé';
+                const deliveryReturnLabel = formatDeliveryReturnTimes(
+                  entry.deliveryTime,
+                  entry.returnTime
+                );
 
                 return (
                   <div
@@ -692,7 +699,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-extrabold text-slate-900">
-                            {formatDate(entry.date)}
+                            {formatDateWithTime(entry.date, entry.time)}
                           </span>
                           <span className="text-xs font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-lg border border-teal-200/50">
                             {entry.employeeName}
@@ -721,6 +728,11 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                             </>
                           )}
                         </div>
+                        {deliveryReturnLabel && (
+                          <div className="mt-0.5 text-[11px] font-semibold text-slate-500 font-mono">
+                            {deliveryReturnLabel}
+                          </div>
+                        )}
                         {isIncomplete && (
                           <div className="mt-1 text-xs font-bold text-amber-800 flex items-center gap-1">
                             <span>Manque : {missingText}</span>
@@ -1238,7 +1250,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                         <div className="flex items-center gap-2">
                           <Calendar className="w-3.5 h-3.5 text-slate-400" />
                           <span className="text-xs font-bold text-slate-900">
-                            {formatDate(prod.date)}
+                            {formatDateWithTime(prod.date, prod.time)}
                           </span>
                           <span className="text-xs font-extrabold text-teal-700 font-mono bg-teal-50 px-2 py-0.5 rounded-md">
                             {formatNumber(totalProduced)} unités
@@ -1519,7 +1531,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                                 N° {formatReceiptNumber(r.no)}
                               </span>
                               <span className="text-xs font-bold text-slate-600">
-                                {formatDate(r.date)}
+                                {formatDateWithTime(r.date, r.time)}
                               </span>
                               <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700">
                                 {RECEIPT_PAYMENT_MODE_LABELS[r.paymentMode]}
@@ -1670,7 +1682,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-extrabold text-slate-900">
-                            {formatDate(sale.date)}
+                            {formatDateWithTime(sale.date, sale.time)}
                           </span>
                           {sale.kind === 'consommation' ? (
                             <span className="text-xs font-bold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-lg border border-amber-200/50 flex items-center gap-1">
@@ -2050,8 +2062,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           receiptSaleToDelete?.receipt
             ? `Voulez-vous supprimer le reçu N° ${formatReceiptNumber(
                 receiptSaleToDelete.receipt.no
-              )} ? La vente personnelle du ${formatDate(
-                receiptSaleToDelete.date
+              )} ? La vente personnelle du ${formatDateWithTime(
+                receiptSaleToDelete.date,
+                receiptSaleToDelete.time
               )} (${formatFC(receiptSaleToDelete.totalSalesFC, currency)}) sera conservée.`
             : 'Voulez-vous supprimer ce reçu ? La vente personnelle sera conservée.'
         }
@@ -2121,7 +2134,7 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
                 >
                   <div>
                     <div className="text-xs font-extrabold text-slate-900">
-                      {formatDate(s.date)}
+                      {formatDateWithTime(s.date, s.time)}
                       {s.customerName ? ` · ${s.customerName}` : ''}
                     </div>
                     <div className="text-[11px] text-slate-500">
@@ -2144,8 +2157,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       <ConfirmModal
         isOpen={Boolean(entryToDelete)}
         title="Supprimer cette saisie journalière ?"
-        message={`Voulez-vous supprimer la saisie du ${formatDate(
-          entryToDelete?.date
+        message={`Voulez-vous supprimer la saisie du ${formatDateWithTime(
+          entryToDelete?.date,
+          entryToDelete?.time
         )} pour ${entryToDelete?.employeeName} ? Cette action est irréversible.`}
         confirmLabel="Supprimer"
         cancelLabel="Annuler"
@@ -2158,8 +2172,9 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       <ConfirmModal
         isOpen={Boolean(prodToDelete)}
         title="Supprimer cette production ?"
-        message={`Voulez-vous supprimer la production du ${formatDate(
-          prodToDelete?.date
+        message={`Voulez-vous supprimer la production du ${formatDateWithTime(
+          prodToDelete?.date,
+          prodToDelete?.time
         )} ? Les stocks à la maison seront recalculés automatiquement.`}
         confirmLabel="Supprimer"
         cancelLabel="Annuler"
@@ -2178,16 +2193,18 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
         }
         message={
           saleToDelete?.kind === 'consommation'
-            ? `Voulez-vous supprimer la consommation du ${formatDate(
-                saleToDelete?.date
+            ? `Voulez-vous supprimer la consommation du ${formatDateWithTime(
+                saleToDelete?.date,
+                saleToDelete?.time
               )} d'une valeur payée de ${formatFC(
                 saleToDelete?.consumptionPaidFC !== undefined
                   ? saleToDelete?.consumptionPaidFC
                   : (saleToDelete?.consumptionValueFC || 0),
                 currency
               )} ? Les stocks et la caisse seront recalculés automatiquement.`
-            : `Voulez-vous supprimer la vente directe du ${formatDate(
-                saleToDelete?.date
+            : `Voulez-vous supprimer la vente directe du ${formatDateWithTime(
+                saleToDelete?.date,
+                saleToDelete?.time
               )} d'un montant de ${formatFC(
                 saleToDelete?.totalSalesFC,
                 currency

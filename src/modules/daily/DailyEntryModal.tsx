@@ -1,7 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { X, Check, AlertTriangle, Calculator, Sparkles } from 'lucide-react';
 import { db } from '../../db/db';
-import { toISODate, formatFC, parseLocaleNumber, formatNumber } from '../../utils/formatters';
+import {
+  toISODate,
+  toLocalTimeStr,
+  normalizeTimeStr,
+  formatFC,
+  parseLocaleNumber,
+  formatNumber,
+} from '../../utils/formatters';
 import type { Employee, Product, DailyEntry, DailyEntryItem, AppSettings } from '../../types';
 
 interface DailyEntryModalProps {
@@ -36,6 +43,9 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
   onOpenCalculator,
 }) => {
   const [date, setDate] = useState(toISODate(new Date()));
+  const [time, setTime] = useState(toLocalTimeStr());
+  const [deliveryTime, setDeliveryTime] = useState('');
+  const [returnTime, setReturnTime] = useState('');
   const [selectedEmployeeId, setSelectedEmployeeId] = useState('');
   const [customCommissionRate, setCustomCommissionRate] = useState<string>('20');
   const [productRows, setProductRows] = useState<FormProductState[]>([]);
@@ -50,8 +60,11 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
     if (!isOpen) return;
 
     if (entryToEdit) {
-      // Load from editing entry
+      // Load from editing entry (ne jamais remplir l'heure si absente)
       setDate(entryToEdit.date);
+      setTime(entryToEdit.time || '');
+      setDeliveryTime(entryToEdit.deliveryTime || '');
+      setReturnTime(entryToEdit.returnTime || '');
       setSelectedEmployeeId(entryToEdit.employeeId);
       setCustomCommissionRate(formatNumber(entryToEdit.employeeCommissionRate));
       setNotes(entryToEdit.notes || '');
@@ -101,9 +114,13 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
       // New entry setup: Reste calculé avec la commande du jour, sans hériter des anciennes saisies
       const defaultEmp = activeEmployees[0];
       const initialEmpId = defaultEmp ? defaultEmp.id : '';
+      const now = new Date();
       setSelectedEmployeeId(initialEmpId);
       setCustomCommissionRate(defaultEmp ? formatNumber(defaultEmp.commissionRate) : '20');
-      setDate(toISODate(new Date()));
+      setDate(toISODate(now));
+      setTime(toLocalTimeStr(now));
+      setDeliveryTime('');
+      setReturnTime('');
       setNotes('');
 
       // Build pristine product rows without auto-importing old entries' rests
@@ -251,9 +268,16 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
 
     const status: 'validated' | 'incomplete' = missingFields.length === 0 ? 'validated' : 'incomplete';
 
+    const normalizedTime = normalizeTimeStr(time);
+    const normalizedDeliveryTime = normalizeTimeStr(deliveryTime);
+    const normalizedReturnTime = normalizeTimeStr(returnTime);
+
     const entry: DailyEntry = {
       id: entryToEdit ? entryToEdit.id : 'entry_' + Date.now().toString(),
       date,
+      ...(normalizedTime ? { time: normalizedTime } : {}),
+      ...(normalizedDeliveryTime ? { deliveryTime: normalizedDeliveryTime } : {}),
+      ...(normalizedReturnTime ? { returnTime: normalizedReturnTime } : {}),
       employeeId: selectedEmployeeId,
       employeeName: currentEmployee.name,
       employeeCommissionRate: commissionRateNum,
@@ -339,19 +363,44 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
             </div>
           )}
 
-          {/* Date & Employee Pickers */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">
-                Date de la saisie *
-              </label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                required
-                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-              />
+          {/* Date, Time & Employee Pickers */}
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Date de la saisie *
+                </label>
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  required
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Heure de saisie
+                  </label>
+                  {time && (
+                    <button
+                      type="button"
+                      onClick={() => setTime('')}
+                      className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="time"
+                  value={time}
+                  onChange={(e) => setTime(e.target.value)}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
             </div>
 
             <div>
@@ -374,6 +423,55 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
                   ))
                 )}
               </select>
+            </div>
+
+            {/* Heure de livraison & Heure de retour (optionnels, vides par défaut) */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-600">
+                    Heure de livraison
+                  </label>
+                  {deliveryTime && (
+                    <button
+                      type="button"
+                      onClick={() => setDeliveryTime('')}
+                      className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="time"
+                  value={deliveryTime}
+                  onChange={(e) => setDeliveryTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-600">
+                    Heure de retour
+                  </label>
+                  {returnTime && (
+                    <button
+                      type="button"
+                      onClick={() => setReturnTime('')}
+                      className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="time"
+                  value={returnTime}
+                  onChange={(e) => setReturnTime(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                />
+              </div>
             </div>
           </div>
 

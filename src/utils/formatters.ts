@@ -138,6 +138,93 @@ export function toISOMonth(d: Date = new Date()): string {
 }
 
 /**
+ * Formats a Date object to local 24-hour time "HH:mm"
+ */
+export function toLocalTimeStr(d: Date = new Date()): string {
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Validates and normalizes a 24h time string ("HH:mm" or "HH:mm:ss") to "HH:mm".
+ * Returns undefined if empty or invalid.
+ */
+export function normalizeTimeStr(val: unknown): string | undefined {
+  if (typeof val !== 'string') return undefined;
+  const trimmed = val.trim();
+  if (!trimmed) return undefined;
+  if (/^([01]\d|2[0-3]):[0-5]\d$/.test(trimmed)) {
+    return trimmed;
+  }
+  if (/^([01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(trimmed)) {
+    return trimmed.slice(0, 5);
+  }
+  return undefined;
+}
+
+/**
+ * Computes "HH:mm" local time from a millisecond timestamp (e.g. deletedAt).
+ */
+export function formatTimeFromTimestamp(ts?: number | null): string | undefined {
+  if (ts === null || ts === undefined || !Number.isFinite(ts)) return undefined;
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return undefined;
+  return toLocalTimeStr(d);
+}
+
+/**
+ * Formats an individual record's date and optional time as "jj/mm/aaaa · HH:mm"
+ * or "jj/mm/aaaa · —" when time is absent (never invents a time).
+ */
+export function formatDateWithTime(
+  dateStr: string | null | undefined,
+  timeStr?: string | null
+): string {
+  if (!dateStr) return '-';
+  const validTime = normalizeTimeStr(timeStr);
+  return `${formatDate(dateStr)} · ${validTime || '—'}`;
+}
+
+/**
+ * Formats optional delivery & return times for a DailyEntry card:
+ * "Livré HH:mm · Retour HH:mm" (using "—" when one of the two is absent).
+ * Returns null if neither deliveryTime nor returnTime is present.
+ */
+export function formatDeliveryReturnTimes(
+  deliveryTime?: string | null,
+  returnTime?: string | null
+): string | null {
+  const dt = normalizeTimeStr(deliveryTime);
+  const rt = normalizeTimeStr(returnTime);
+  if (!dt && !rt) return null;
+  return `Livré ${dt || '—'} · Retour ${rt || '—'}`;
+}
+
+/**
+ * Comparator for lists sorted by date (newest first):
+ * 1) date descending
+ * 2) records WITH time come BEFORE records WITHOUT time on the same date
+ * 3) time descending ("16:30" before "09:15")
+ * 4) createdAt descending
+ */
+export function compareRecordsByDateTimeDesc(
+  a: { date?: string; time?: string | null; createdAt?: number },
+  b: { date?: string; time?: string | null; createdAt?: number }
+): number {
+  const dCmp = String(b.date || '').localeCompare(String(a.date || ''));
+  if (dCmp !== 0) return dCmp;
+  const aTime = normalizeTimeStr(a.time);
+  const bTime = normalizeTimeStr(b.time);
+  if (aTime && !bTime) return -1;
+  if (!aTime && bTime) return 1;
+  if (aTime && bTime && aTime !== bTime) {
+    return bTime.localeCompare(aTime);
+  }
+  return (b.createdAt || 0) - (a.createdAt || 0);
+}
+
+/**
  * Gets human-readable month name in French (e.g. "Octobre 2026")
  */
 export function formatMonthName(yearMonth: string): string {

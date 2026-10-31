@@ -23,6 +23,10 @@ import { liveQuery } from 'dexie';
 import { db } from '../../db/db';
 import {
   formatDate,
+  formatDateWithTime,
+  toLocalTimeStr,
+  normalizeTimeStr,
+  compareRecordsByDateTimeDesc,
   formatFC,
   toISODate,
   parseLocaleNumber,
@@ -68,6 +72,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [editingPayment, setEditingPayment] = useState<DebtPayment | null>(null);
   const [payAmountStr, setPayAmountStr] = useState('');
   const [payDate, setPayDate] = useState(toISODate(new Date()));
+  const [payTime, setPayTime] = useState(toLocalTimeStr());
   const [payNote, setPayNote] = useState('');
   const [payError, setPayError] = useState('');
   const [overpayConfirmed, setOverpayConfirmed] = useState(false);
@@ -81,6 +86,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
   const [odNewCustPhone, setOdNewCustPhone] = useState('');
   const [odAmountStr, setOdAmountStr] = useState('');
   const [odDate, setOdDate] = useState(toISODate(new Date()));
+  const [odTime, setOdTime] = useState(toLocalTimeStr());
   const [odNote, setOdNote] = useState('');
   const [odError, setOdError] = useState('');
 
@@ -178,6 +184,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
         : ''
     );
     setPayDate(toISODate(new Date()));
+    setPayTime(toLocalTimeStr());
     setPayNote('');
     setPayError('');
     setOverpayConfirmed(false);
@@ -188,6 +195,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     setEditingPayment(pay);
     setPayAmountStr(formatNumber(pay.amountFC));
     setPayDate(pay.date);
+    setPayTime(pay.time || '');
     setPayNote(pay.note || '');
     setPayError('');
     setOverpayConfirmed(false);
@@ -230,10 +238,12 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     }
 
     try {
+      const normalizedPayTime = normalizeTimeStr(payTime);
       const record: DebtPayment = {
         id: editingPayment ? editingPayment.id : crypto.randomUUID(),
         customerId: selectedCustomerSummary.customer.id,
         date: payDate.trim(),
+        ...(normalizedPayTime ? { time: normalizedPayTime } : {}),
         amountFC: amt,
         note: payNote.trim() || undefined,
         createdAt: editingPayment ? editingPayment.createdAt : Date.now(),
@@ -316,6 +326,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
     setOdNewCustPhone('');
     setOdAmountStr('');
     setOdDate(toISODate(new Date()));
+    setOdTime(toLocalTimeStr());
     setOdNote('');
     setOdError('');
     setIsOpeningDebtModalOpen(true);
@@ -365,9 +376,11 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
 
     try {
       const reservePartFC = Math.round((amt * reserveRate) / 100);
+      const normalizedOdTime = normalizeTimeStr(odTime);
       const openingSale: PersonalSale = {
         id: crypto.randomUUID(),
         date: odDate.trim(),
+        ...(normalizedOdTime ? { time: normalizedOdTime } : {}),
         items: [],
         totalSalesFC: amt,
         ownerCommissionRate: 0,
@@ -688,7 +701,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </div>
           ) : (
             <div className="space-y-2.5">
-              {[...sales].reverse().map((st) => {
+              {[...sales]
+                .sort((a, b) => compareRecordsByDateTimeDesc(a.sale, b.sale))
+                .map((st) => {
                 const { sale } = st;
                 const saleDays =
                   st.remainingFC > 0
@@ -705,7 +720,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                       <div>
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-sm font-extrabold text-slate-900">
-                            {formatDate(sale.date)}
+                            {formatDateWithTime(sale.date, sale.time)}
                           </span>
                           {sale.isOpeningDebt && (
                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 border border-slate-200">
@@ -835,7 +850,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
             </div>
           ) : (
             <div className="space-y-2">
-              {[...payments].reverse().map((pay) => (
+              {[...payments].sort(compareRecordsByDateTimeDesc).map((pay) => (
                 <div
                   key={pay.id}
                   className="bg-white rounded-2xl border border-slate-200/90 p-3.5 shadow-2xs flex items-center justify-between gap-2"
@@ -843,7 +858,7 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-extrabold text-slate-900">
-                        {formatDate(pay.date)}
+                        {formatDateWithTime(pay.date, pay.time)}
                       </span>
                       <span className="text-sm font-black font-mono text-emerald-700">
                         +{formatFC(pay.amountFC, currency)}
@@ -955,17 +970,42 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   />
                 </div>
 
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">
-                    Date du paiement *
-                  </label>
-                  <input
-                    type="date"
-                    required
-                    value={payDate}
-                    onChange={(e) => setPayDate(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-                  />
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">
+                      Date du paiement *
+                    </label>
+                    <input
+                      type="date"
+                      required
+                      value={payDate}
+                      onChange={(e) => setPayDate(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">
+                        Heure
+                      </label>
+                      {payTime && (
+                        <button
+                          type="button"
+                          onClick={() => setPayTime('')}
+                          className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                        >
+                          Effacer
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="time"
+                      value={payTime}
+                      onChange={(e) => setPayTime(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold font-mono text-slate-900 bg-white"
+                    />
+                  </div>
                 </div>
 
                 <div>
@@ -1083,8 +1123,9 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
           message={`Le paiement de ${formatFC(
             paymentToDelete?.amountFC || 0,
             currency
-          )} du ${formatDate(
-            paymentToDelete?.date
+          )} du ${formatDateWithTime(
+            paymentToDelete?.date,
+            paymentToDelete?.time
           )} sera retiré des caisses et le reste dû du client augmentera d'autant.`}
           pinCode={settings.pinCode}
           confirmWord="SUPPRIMER"
@@ -1251,21 +1292,21 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
               )}
             </div>
 
-            <div className="grid grid-cols-2 gap-2.5">
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Montant dû ({currency}) *
-                </label>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  placeholder="Ex : 5000"
-                  value={odAmountStr}
-                  onChange={(e) => setOdAmountStr(e.target.value.replace(/[^0-9.,]/g, ''))}
-                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-extrabold font-mono text-slate-900 bg-white"
-                />
-              </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Montant dû ({currency}) *
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                placeholder="Ex : 5000"
+                value={odAmountStr}
+                onChange={(e) => setOdAmountStr(e.target.value.replace(/[^0-9.,]/g, ''))}
+                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-extrabold font-mono text-slate-900 bg-white"
+              />
+            </div>
 
+            <div className="grid grid-cols-2 gap-2.5">
               <div>
                 <label className="block text-xs font-bold text-slate-700 mb-1">
                   Date de la dette *
@@ -1276,6 +1317,29 @@ export const DebtsView: React.FC<DebtsViewProps> = ({
                   value={odDate}
                   onChange={(e) => setOdDate(e.target.value)}
                   className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">
+                    Heure
+                  </label>
+                  {odTime && (
+                    <button
+                      type="button"
+                      onClick={() => setOdTime('')}
+                      className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="time"
+                  value={odTime}
+                  onChange={(e) => setOdTime(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold font-mono text-slate-900 bg-white"
                 />
               </div>
             </div>

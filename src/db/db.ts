@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   ownerCommissionPct: 0,
   consumptionPaidPct: 50,
   debtReminderDays: 2,
+  unpaidDaysReminder: 7,
 };
 
 export class YaourtDatabase extends Dexie {

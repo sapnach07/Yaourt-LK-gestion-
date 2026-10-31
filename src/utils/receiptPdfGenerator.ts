@@ -1,5 +1,12 @@
 import { jsPDF } from 'jspdf';
-import { formatDate, formatFC, formatNumber, toISODate } from './formatters';
+import {
+  formatDate,
+  formatDateWithTime,
+  formatFC,
+  formatNumber,
+  normalizeTimeStr,
+  toISODate,
+} from './formatters';
 import type {
   AppSettings,
   PersonalSale,
@@ -34,14 +41,6 @@ function formatAmountPlain(amount: number): string {
   return Math.round(amount)
     .toString()
     .replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-}
-
-function formatDateSpacedSlash(dateStr: string): string {
-  const parts = (dateStr || '').split('-');
-  if (parts.length === 3) {
-    return `${parts[2]} / ${parts[1]} / ${parts[0]}`;
-  }
-  return formatDate(dateStr);
 }
 
 export function hexToRgbTuple(
@@ -200,6 +199,7 @@ export interface FilledReceiptLine {
 
 export interface FilledReceiptData {
   dateStr: string; // YYYY-MM-DD
+  timeStr?: string; // HH:mm (optional)
   clientName: string;
   phone?: string;
   lines: FilledReceiptLine[];
@@ -270,9 +270,10 @@ export function buildReceiptPlainText(
   const remainingFC = Math.max(0, totalFC - paidNotedFC);
   const modeLabel = RECEIPT_PAYMENT_MODE_LABELS[receipt.paymentMode] || 'Espèces';
 
+  const effectiveTime = normalizeTimeStr(receipt.time) || normalizeTimeStr(sale.time);
   const out: string[] = [];
   out.push(`*${businessTitle.toUpperCase()} — REÇU N° ${formatReceiptNumber(receipt.no)}*`);
-  out.push(`Date : ${formatDate(receipt.date)}`);
+  out.push(`Date : ${formatDateWithTime(receipt.date || sale.date, effectiveTime)}`);
   out.push(`Client : ${sale.customerName || 'Client'}`);
   if (receipt.phone && receipt.phone.trim()) {
     out.push(`Téléphone : ${receipt.phone.trim()}`);
@@ -502,18 +503,19 @@ function drawReceipt(
   doc.setTextColor(255, 255, 255);
   doc.text(`N° ${formattedNo}`, rx + 25, ry + 17.5 + 4.15, { align: 'center' });
 
-  // Champs Date, Client, Total, Payé, Reste demi-gras 6,8 pt à x = 4, y = 30 ; 37,6 ; 45,2 ; 52,8 ; 60,4
+  // Champs Date, Heure, Client, Total, Payé, Reste demi-gras 6,8 pt à x = 4, y = 29 ; 35,8 ; 42,6 ; 49,4 ; 56,2 ; 63,0
   const stubFields: Array<{
-    key: 'date' | 'client' | 'total' | 'paid' | 'rest';
+    key: 'date' | 'time' | 'client' | 'total' | 'paid' | 'rest';
     label: string;
     y: number;
     hasFC: boolean;
   }> = [
-    { key: 'date', label: 'Date :', y: 30, hasFC: false },
-    { key: 'client', label: 'Client :', y: 37.6, hasFC: false },
-    { key: 'total', label: 'Total :', y: 45.2, hasFC: true },
-    { key: 'paid', label: 'Payé :', y: 52.8, hasFC: true },
-    { key: 'rest', label: 'Reste :', y: 60.4, hasFC: true },
+    { key: 'date', label: 'Date :', y: 29, hasFC: false },
+    { key: 'time', label: 'Heure :', y: 35.8, hasFC: false },
+    { key: 'client', label: 'Client :', y: 42.6, hasFC: false },
+    { key: 'total', label: 'Total :', y: 49.4, hasFC: true },
+    { key: 'paid', label: 'Payé :', y: 56.2, hasFC: true },
+    { key: 'rest', label: 'Reste :', y: 63.0, hasFC: true },
   ];
 
   for (const sf of stubFields) {
@@ -544,6 +546,19 @@ function drawReceipt(
         doc.setTextColor(...TEXT_RGB);
         doc.text(
           fitTextToWidth(doc, formatDate(filledData.dateStr), rx + 45.5 - startValX),
+          startValX,
+          ry + sf.y
+        );
+      } else if (sf.key === 'time') {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        doc.setTextColor(...TEXT_RGB);
+        doc.text(
+          fitTextToWidth(
+            doc,
+            normalizeTimeStr(filledData.timeStr) || '—',
+            rx + 45.5 - startValX
+          ),
           startValX,
           ry + sf.y
         );
@@ -625,10 +640,23 @@ function drawReceipt(
   doc.setTextColor(...TEXT_RGB);
   doc.text(
     filledData
-      ? `Date : ${formatDateSpacedSlash(filledData.dateStr)}`
+      ? `Date : ${formatDate(filledData.dateStr)}`
       : 'Date : ___ / ___ / 20___',
     rx + 196,
     ry + 14.3,
+    { align: 'right' }
+  );
+
+  // Sous la ligne Date, aligné à droite en x = 196, y = 19,5 : "Heure : ___ : ___" (6,5 pt)
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(6.5);
+  doc.setTextColor(...TEXT_RGB);
+  doc.text(
+    filledData
+      ? `Heure : ${normalizeTimeStr(filledData.timeStr) || '—'}`
+      : 'Heure : ___ : ___',
+    rx + 196,
+    ry + 19.5,
     { align: 'right' }
   );
 
@@ -1021,8 +1049,11 @@ export async function generateFilledReceiptPDF({
   const remainingFC = Math.max(0, totalFC - paidNotedFC);
   const lines = orderSaleItemsForReceipt(sale, products, r.printedProductIds);
 
+  const effectiveTime = normalizeTimeStr(receipt.time) || normalizeTimeStr(sale.time);
+
   const filledData: FilledReceiptData = {
     dateStr: receipt.date || sale.date,
+    timeStr: effectiveTime,
     clientName: sale.customerName || 'Client',
     phone: receipt.phone,
     lines,

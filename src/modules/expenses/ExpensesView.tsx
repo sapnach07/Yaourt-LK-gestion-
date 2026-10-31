@@ -14,6 +14,10 @@ import {
 import { db } from '../../db/db';
 import {
   formatDate,
+  formatDateWithTime,
+  toLocalTimeStr,
+  normalizeTimeStr,
+  compareRecordsByDateTimeDesc,
   formatFC,
   formatPercent,
   toISODate,
@@ -107,6 +111,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const [date, setDate] = useState(toISODate(new Date()));
+  const [time, setTime] = useState(toLocalTimeStr());
   const [amount, setAmount] = useState<string>('');
   const [category, setCategory] = useState<string>(settings.expenseCategories[0] || 'Lait concentré');
   const [categoryManuallyChanged, setCategoryManuallyChanged] = useState(false);
@@ -201,7 +206,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       db.payments.toArray(),
       db.employees.toArray(),
     ]);
-    setExpenses(exps);
+    setExpenses(exps.sort(compareRecordsByDateTimeDesc));
     setDailyEntries(entries);
     setReserveMovements(movs);
     setPersonalSales(pSales);
@@ -213,6 +218,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleOpenAdd = () => {
     setEditingExpense(null);
     setDate(toISODate(new Date()));
+    setTime(toLocalTimeStr());
     setAmount('');
     setCategory(settings.expenseCategories[0] || 'Lait concentré');
     setCategoryManuallyChanged(false);
@@ -227,6 +233,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const handleOpenEdit = (exp: Expense) => {
     setEditingExpense(exp);
     setDate(exp.date);
+    setTime(exp.time || '');
     setAmount(formatNumber(exp.amountFC));
     setCategory(exp.category);
     setCategoryManuallyChanged(true);
@@ -552,10 +559,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     }
 
     try {
+      const normalizedTime = normalizeTimeStr(time);
       if (editingExpense) {
         const updated: Expense = {
           ...editingExpense,
           date,
+          time: normalizedTime,
           amountFC: finalAmountFC,
           category,
           detail: finalDetail,
@@ -563,6 +572,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           otherFeesFC: finalOtherFeesFC,
           supplier: finalSupplier,
         };
+        if (!normalizedTime) delete updated.time;
         if (!finalIngredientLines) delete updated.ingredientLines;
         if (finalOtherFeesFC === undefined) delete updated.otherFeesFC;
         if (!finalSupplier) delete updated.supplier;
@@ -573,6 +583,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
         const newExp: Expense = {
           id: 'exp_' + Date.now().toString(),
           date,
+          ...(normalizedTime ? { time: normalizedTime } : {}),
           amountFC: finalAmountFC,
           category,
           detail: finalDetail,
@@ -1035,7 +1046,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold text-slate-900">
-                        {formatDate(exp.date)}
+                        {formatDateWithTime(exp.date, exp.time)}
                       </span>
                       <span className="text-[11px] font-semibold text-teal-800 bg-teal-50 px-2 py-0.5 rounded-md border border-teal-200/40">
                         {exp.category}
@@ -1136,17 +1147,42 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                 </div>
               )}
 
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-1">
-                  Date de la dépense *
-                </label>
-                <input
-                  type="date"
-                  value={date}
-                  onChange={(e) => setDate(e.target.value)}
-                  required
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-                />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 mb-1">
+                    Date de la dépense *
+                  </label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    required
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-bold text-slate-700">
+                      Heure
+                    </label>
+                    {time && (
+                      <button
+                        type="button"
+                        onClick={() => setTime('')}
+                        className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                      >
+                        Effacer
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="time"
+                    value={time}
+                    onChange={(e) => setTime(e.target.value)}
+                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold font-mono text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  />
+                </div>
               </div>
 
               {/* Zone facultative : Ingrédients achetés */}
@@ -1532,7 +1568,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                 Détail de la dépense
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                {formatDate(detailExpenseToView.date)} · {detailExpenseToView.category}
+                {formatDateWithTime(detailExpenseToView.date, detailExpenseToView.time)} ·{' '}
+                {detailExpenseToView.category}
               </p>
             </div>
 

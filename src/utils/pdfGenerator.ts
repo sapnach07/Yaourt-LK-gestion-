@@ -1,7 +1,23 @@
 import { jsPDF, GState } from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { formatDate, formatFC, formatPercent, formatMonthName, toISODate, formatNumber } from './formatters';
-import type { DailyEntry, Employee, Payment, AppSettings } from '../types';
+import {
+  formatDate,
+  formatDateWithTime,
+  formatDeliveryReturnTimes,
+  formatFC,
+  formatPercent,
+  formatMonthName,
+  normalizeTimeStr,
+  toISODate,
+  toLocalTimeStr,
+  formatNumber,
+} from './formatters';
+import {
+  formatPaymentModeLabel,
+  formatPaymentTypeLabel,
+  getPaymentShareForMonth,
+} from './sellerPayroll';
+import type { DailyEntry, Employee, Payment, AppSettings, PayslipSettings } from '../types';
 
 export interface MonthlyEmployeeSheetData {
   employee: Employee;
@@ -11,28 +27,25 @@ export interface MonthlyEmployeeSheetData {
   settings: AppSettings;
 }
 
-/**
- * Generates the official monthly verification sheet for an employee.
- * Includes complete daily breakdown, products, commissions, advances/payments,
- * remaining balance to pay, and dual signature zones (Employee & Owner).
- * Returns the jsPDF doc instance or triggers share / download.
- */
-export async function generateEmployeeMonthlyPDF(
-  data: MonthlyEmployeeSheetData,
-  action: 'download' | 'share' = 'download'
-): Promise<boolean> {
-  const { employee, month, entries, payments, settings } = data;
-  const doc = new jsPDF({
-    orientation: 'portrait',
-    unit: 'mm',
-    format: 'a4',
-  });
+export interface PaymentByDaysSheetData {
+  employee: Employee;
+  payment: Payment;
+  dailyEntries: DailyEntry[];
+  settings: AppSettings;
+}
 
+interface ResolvedPayslipTheme {
+  currency: string;
+  payslip: PayslipSettings;
+  primaryColor: [number, number, number];
+  darkTextColor: [number, number, number];
+  mutedTextColor: [number, number, number];
+}
+
+function resolvePayslipTheme(settings: AppSettings): ResolvedPayslipTheme {
   const currency = settings?.currency || 'FC';
-  const monthName = formatMonthName(month);
   const payslip = settings?.payslipSettings || {};
 
-  // Custom primary color or default teal [13, 148, 136]
   let primaryColor: [number, number, number] = [13, 148, 136];
   if (payslip.primaryColorHex) {
     const hex = payslip.primaryColorHex.replace('#', '');
@@ -46,11 +59,17 @@ export async function generateEmployeeMonthlyPDF(
     }
   }
 
-  const darkTextColor: [number, number, number] = [30, 41, 59];
-  const mutedTextColor: [number, number, number] = [100, 116, 139];
+  return {
+    currency,
+    payslip,
+    primaryColor,
+    darkTextColor: [30, 41, 59],
+    mutedTextColor: [100, 116, 139],
+  };
+}
 
-  // Helper to draw background image on any page if configured
-  const drawPageBackground = () => {
+function createPayslipBackgroundDrawer(doc: jsPDF, payslip: PayslipSettings): () => void {
+  return () => {
     if (payslip.bgImageBase64) {
       try {
         const opacity = Math.min(0.4, Math.max(0.05, (payslip.bgOpacityPct ?? 15) / 100));
@@ -64,11 +83,21 @@ export async function generateEmployeeMonthlyPDF(
       }
     }
   };
+}
 
-  // Draw background on page 1
-  drawPageBackground();
+function drawPayslipHeaderAndSellerCard(
+  doc: jsPDF,
+  params: {
+    employee: Employee;
+    settings: AppSettings;
+    theme: ResolvedPayslipTheme;
+    displayTitle: string;
+    extraCardLine?: string;
+  }
+): number {
+  const { employee, settings, theme, displayTitle, extraCardLine } = params;
+  const { payslip, primaryColor, darkTextColor, mutedTextColor } = theme;
 
-  // Logo rendering if provided
   let headerStartY = 18;
   const effectiveLogo = payslip.logoBase64 || settings?.appLogoBase64;
   if (effectiveLogo) {
@@ -90,9 +119,7 @@ export async function generateEmployeeMonthlyPDF(
     }
   }
 
-  // Header texts
   const displayName = payslip.businessName || settings?.businessName || 'Yaourt Gestion';
-  const displayTitle = `${payslip.documentTitle || 'Document officiel de décompte mensuel'} - ${monthName}`;
 
   doc.setFontSize(18);
   doc.setTextColor(...primaryColor);
@@ -110,11 +137,11 @@ export async function generateEmployeeMonthlyPDF(
     headerStartY += 5;
   }
 
-  // Employee Card Box
   const cardBoxY = headerStartY + 10;
+  const cardHeight = extraCardLine ? 30 : 24;
   doc.setFillColor(248, 250, 252);
   doc.setDrawColor(226, 232, 240);
-  doc.roundedRect(14, cardBoxY, 182, 24, 2, 2, 'FD');
+  doc.roundedRect(14, cardBoxY, 182, cardHeight, 2, 2, 'FD');
 
   doc.setFontSize(11);
   doc.setTextColor(...darkTextColor);
@@ -129,7 +156,9 @@ export async function generateEmployeeMonthlyPDF(
   const showCommission = payslip.showCommissionRate ?? true;
 
   const phonePart = showPhone
-    ? employee.phone ? `Tél : ${employee.phone}` : 'Tél : Non renseigné'
+    ? employee.phone
+      ? `Tél : ${employee.phone}`
+      : 'Tél : Non renseigné'
     : '';
   const commPart = showCommission
     ? `Taux commission : ${formatNumber(employee.commissionRate)} %`
@@ -139,7 +168,154 @@ export async function generateEmployeeMonthlyPDF(
   if (subInfo) {
     doc.text(subInfo, 18, cardBoxY + 14);
   }
-  doc.text(`Date d'émission : ${formatDate(toISODate(new Date()))}`, 18, cardBoxY + 20);
+  const now = new Date();
+  doc.text(
+    `Date d'émission : ${formatDateWithTime(toISODate(now), toLocalTimeStr(now))}`,
+    18,
+    cardBoxY + 20
+  );
+
+  if (extraCardLine) {
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...darkTextColor);
+    doc.text(extraCardLine, 18, cardBoxY + 26);
+  }
+
+  return cardBoxY + cardHeight;
+}
+
+function drawPayslipFooterAndSignatures(
+  doc: jsPDF,
+  currentBottomY: number,
+  theme: ResolvedPayslipTheme,
+  drawPageBackground: () => void
+): void {
+  const { payslip, darkTextColor, mutedTextColor } = theme;
+  let bottomY = currentBottomY;
+
+  if (payslip.footerNote?.trim()) {
+    if (bottomY > 265) {
+      doc.addPage();
+      drawPageBackground();
+      bottomY = 20;
+    }
+    bottomY += 4;
+    doc.setFontSize(8);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(...mutedTextColor);
+    const splitNote = doc.splitTextToSize(payslip.footerNote.trim(), 180);
+    doc.text(splitNote, 15, bottomY);
+    bottomY += splitNote.length * 4;
+  }
+
+  const showSignatures = payslip.showSignatureZones ?? true;
+  if (showSignatures) {
+    let signatureY = bottomY + 6;
+    if (signatureY > 260) {
+      doc.addPage();
+      drawPageBackground();
+      signatureY = 25;
+    }
+
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...darkTextColor);
+
+    const empLabel = payslip.employeeSignatureLabel || 'Signature du/de la vendeur(se)';
+    const empSub =
+      payslip.employeeSignatureSubtext || '(Précédé de la mention "Bon pour accord")';
+    doc.text(empLabel, 20, signatureY);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...mutedTextColor);
+    doc.text(empSub, 20, signatureY + 5);
+    doc.setDrawColor(148, 163, 184);
+    doc.line(20, signatureY + 24, 85, signatureY + 24);
+
+    const ownerLabel = payslip.ownerSignatureLabel || 'Signature du gérant / propriétaire';
+    const ownerSub = payslip.ownerSignatureSubtext || '(Précédé de la mention "Payé / Validé")';
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(...darkTextColor);
+    doc.text(ownerLabel, 115, signatureY);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...mutedTextColor);
+    doc.text(ownerSub, 115, signatureY + 5);
+    doc.setDrawColor(148, 163, 184);
+    doc.line(115, signatureY + 24, 180, signatureY + 24);
+  }
+}
+
+async function deliverPayslipPDF(
+  doc: jsPDF,
+  filename: string,
+  action: 'download' | 'share',
+  shareMeta: { title: string; text: string }
+): Promise<boolean> {
+  if (action === 'share' && typeof navigator !== 'undefined' && navigator.share) {
+    try {
+      const pdfBlob = doc.output('blob');
+      const file = new File([pdfBlob], filename, { type: 'application/pdf' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: shareMeta.title,
+          text: shareMeta.text,
+        });
+        return true;
+      }
+    } catch (e) {
+      console.warn('Share non supporté ou annulé, téléchargement direct:', e);
+    }
+  }
+
+  doc.save(filename);
+  return true;
+}
+
+function formatPaymentCoveredPeriod(p: Payment): string {
+  if (p.periodFrom && p.periodTo) {
+    const daysCount = p.coveredItems?.length || 0;
+    const suffix = daysCount > 0 ? ` (${daysCount} j.)` : '';
+    if (p.periodFrom === p.periodTo) {
+      return `Le ${formatDate(p.periodFrom)}${suffix}`;
+    }
+    return `Du ${formatDate(p.periodFrom)} au ${formatDate(p.periodTo)}${suffix}`;
+  }
+  return `${formatMonthName(p.month)} (${formatPaymentTypeLabel(p.paymentType)})`;
+}
+
+/**
+ * Generates the official monthly verification sheet for an employee.
+ * Includes complete daily breakdown, products, commissions, advances/payments,
+ * remaining balance to pay, list of payments of the month, and dual signature zones.
+ */
+export async function generateEmployeeMonthlyPDF(
+  data: MonthlyEmployeeSheetData,
+  action: 'download' | 'share' = 'download'
+): Promise<boolean> {
+  const { employee, month, entries, payments, settings } = data;
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const theme = resolvePayslipTheme(settings);
+  const { currency, payslip, primaryColor, darkTextColor, mutedTextColor } = theme;
+  const monthName = formatMonthName(month);
+
+  const drawPageBackground = createPayslipBackgroundDrawer(doc, payslip);
+  drawPageBackground();
+
+  const displayTitle = `${
+    payslip.documentTitle || 'Document officiel de décompte mensuel'
+  } - ${monthName}`;
+
+  const cardBottomY = drawPayslipHeaderAndSellerCard(doc, {
+    employee,
+    settings,
+    theme,
+    displayTitle,
+  });
 
   // Column visibility options
   const showDelivery = payslip.showDeliveryCol ?? true;
@@ -155,14 +331,20 @@ export async function generateEmployeeMonthlyPDF(
 
   // Prepare table data
   const tableRows: any[] = [];
+  const entryDateCells: Array<{ main: string; sub: string | null }> = [];
   let sumDeliveredFC = 0;
   let sumSoldFC = 0;
   let sumDamagedFC = 0;
   let sumRestFC = 0;
   let sumCommissionFC = 0;
 
-  // Sort entries by date ascending
-  const sortedEntries = [...entries].sort((a, b) => a.date.localeCompare(b.date));
+  // Sort entries chronologically by date, then time (if present), then createdAt
+  const sortedEntries = [...entries].sort(
+    (a, b) =>
+      a.date.localeCompare(b.date) ||
+      (normalizeTimeStr(a.time) || '99:99').localeCompare(normalizeTimeStr(b.time) || '99:99') ||
+      (a.createdAt || 0) - (b.createdAt || 0)
+  );
 
   for (const entry of sortedEntries) {
     let dayDeliveredFC = 0;
@@ -181,7 +363,14 @@ export async function generateEmployeeMonthlyPDF(
     sumRestFC += dayRestFC;
     sumCommissionFC += entry.employeeCommissionFC;
 
-    const row: string[] = [formatDate(entry.date)];
+    const shortDate = formatDate(entry.date).slice(0, 5);
+    const deliveryReturnSubline = formatDeliveryReturnTimes(
+      entry.deliveryTime,
+      entry.returnTime
+    );
+    entryDateCells.push({ main: shortDate, sub: deliveryReturnSubline });
+
+    const row: string[] = [shortDate];
     if (showDelivery) row.push(formatFC(dayDeliveredFC, currency));
     row.push(formatFC(entry.totalSalesFC, currency));
     row.push(formatFC(dayRestFC, currency));
@@ -191,8 +380,8 @@ export async function generateEmployeeMonthlyPDF(
     tableRows.push(row);
   }
 
-  // Calculate payments
-  const totalPaidFC = payments.reduce((acc, p) => acc + (p.amountFC || 0), 0);
+  // Calculate payments for this month (prorated when coveredItems spans multiple months)
+  const totalPaidFC = payments.reduce((acc, p) => acc + getPaymentShareForMonth(p, month), 0);
   const netDueFC = sumCommissionFC - totalPaidFC;
 
   // Table Totals row
@@ -203,8 +392,12 @@ export async function generateEmployeeMonthlyPDF(
   if (showDamaged) totalsRow.push(formatFC(sumDamagedFC, currency));
   totalsRow.push(formatFC(sumCommissionFC, currency));
 
+  const hasAnyDeliveryReturnSubline = entryDateCells.some((c) => Boolean(c.sub));
+
   // Build columnStyles
-  const colStyles: Record<number, any> = { 0: { halign: 'left' } };
+  const colStyles: Record<number, any> = {
+    0: hasAnyDeliveryReturnSubline ? { halign: 'left', cellWidth: 34 } : { halign: 'left' },
+  };
   for (let c = 1; c < headCols.length; c++) {
     colStyles[c] = {
       halign: 'right',
@@ -212,12 +405,10 @@ export async function generateEmployeeMonthlyPDF(
     };
   }
 
-  // Empty fallback row if no entries
   const emptyRow: string[] = headCols.map(() => '-');
 
-  // Add Table using autoTable with hook for background on subsequent pages
   autoTable(doc, {
-    startY: cardBoxY + 28,
+    startY: cardBottomY + 4,
     head: [headCols],
     body: tableRows.length > 0 ? tableRows : [emptyRow],
     theme: 'grid',
@@ -233,6 +424,7 @@ export async function generateEmployeeMonthlyPDF(
       textColor: darkTextColor,
       cellPadding: 2,
       halign: 'center',
+      valign: 'middle',
     },
     columnStyles: colStyles,
     foot: [totalsRow],
@@ -243,8 +435,47 @@ export async function generateEmployeeMonthlyPDF(
       fontSize: 8.5,
       halign: 'center',
     },
+    didParseCell: (dataHook) => {
+      if (
+        dataHook.section === 'body' &&
+        dataHook.column.index === 0 &&
+        tableRows.length > 0 &&
+        entryDateCells[dataHook.row.index]?.sub
+      ) {
+        dataHook.cell.styles.minCellHeight = 8.6;
+      }
+    },
+    willDrawCell: (dataHook) => {
+      if (
+        dataHook.section === 'body' &&
+        dataHook.column.index === 0 &&
+        tableRows.length > 0 &&
+        entryDateCells[dataHook.row.index]?.sub
+      ) {
+        dataHook.cell.text = [''];
+      }
+    },
+    didDrawCell: (dataHook) => {
+      if (dataHook.section === 'body' && dataHook.column.index === 0 && tableRows.length > 0) {
+        const meta = entryDateCells[dataHook.row.index];
+        if (meta?.sub) {
+          const padLeft = dataHook.cell.padding('left');
+          const cellX = dataHook.cell.x + padLeft;
+          const centerY = dataHook.cell.y + dataHook.cell.height / 2;
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(...darkTextColor);
+          doc.text(meta.main, cellX, centerY - 0.6);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(6.2);
+          doc.setTextColor(...mutedTextColor);
+          doc.text(meta.sub, cellX, centerY + 2.5);
+        }
+      }
+    },
     didDrawPage: (dataHook) => {
-      // Draw background if page number > 1
       if (dataHook.pageNumber > 1) {
         drawPageBackground();
       }
@@ -252,7 +483,6 @@ export async function generateEmployeeMonthlyPDF(
   });
 
   // Summary and Payment Box
-  // @ts-ignore
   let finalY = (doc as any).lastAutoTable?.finalY || 180;
   if (finalY > 215) {
     doc.addPage();
@@ -302,82 +532,340 @@ export async function generateEmployeeMonthlyPDF(
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10.5);
-  doc.setTextColor(21, 128, 61); // Vert
+  doc.setTextColor(21, 128, 61);
   doc.text(`RESTE NET À PAYER :`, 18, finalY + 38);
   doc.text(formatFC(netDueFC, currency), 95, finalY + 38);
 
-  // Footer Note if specified
   let currentBottomY = finalY + 44;
-  if (payslip.footerNote?.trim()) {
-    currentBottomY += 4;
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'italic');
-    doc.setTextColor(...mutedTextColor);
-    const splitNote = doc.splitTextToSize(payslip.footerNote.trim(), 180);
-    doc.text(splitNote, 15, currentBottomY);
-    currentBottomY += splitNote.length * 4;
-  }
 
-  // Signatures Section (can be hidden)
-  const showSignatures = payslip.showSignatureZones ?? true;
-  if (showSignatures) {
-    let signatureY = currentBottomY + 6;
-    if (signatureY > 260) {
+  // Liste des paiements du mois en bas de la fiche mensuelle : date, période couverte, montant
+  if (payments.length > 0) {
+    if (currentBottomY > 235) {
       doc.addPage();
       drawPageBackground();
-      signatureY = 25;
+      currentBottomY = 20;
+    } else {
+      currentBottomY += 6;
     }
 
-    doc.setFontSize(9);
+    doc.setFontSize(9.5);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(...darkTextColor);
+    doc.text('LISTE DES PAIEMENTS DU MOIS', 14, currentBottomY);
 
-    // Employee signature box
-    const empLabel = payslip.employeeSignatureLabel || 'Signature du/de la vendeur(se)';
-    const empSub = payslip.employeeSignatureSubtext || '(Précédé de la mention "Bon pour accord")';
-    doc.text(empLabel, 20, signatureY);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...mutedTextColor);
-    doc.text(empSub, 20, signatureY + 5);
-    doc.setDrawColor(148, 163, 184);
-    doc.line(20, signatureY + 24, 85, signatureY + 24);
+    const sortedPayments = [...payments].sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) ||
+        (normalizeTimeStr(a.time) || '99:99').localeCompare(normalizeTimeStr(b.time) || '99:99') ||
+        (a.createdAt || 0) - (b.createdAt || 0)
+    );
 
-    // Owner signature box
-    const ownerLabel = payslip.ownerSignatureLabel || 'Signature du gérant / propriétaire';
-    const ownerSub = payslip.ownerSignatureSubtext || '(Précédé de la mention "Payé / Validé")';
-    doc.setFont('helvetica', 'bold');
-    doc.setTextColor(...darkTextColor);
-    doc.text(ownerLabel, 115, signatureY);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(...mutedTextColor);
-    doc.text(ownerSub, 115, signatureY + 5);
-    doc.setDrawColor(148, 163, 184);
-    doc.line(115, signatureY + 24, 180, signatureY + 24);
+    const paymentRows = sortedPayments.map((p) => {
+      const shareFC = getPaymentShareForMonth(p, month);
+      const amountCell =
+        shareFC !== p.amountFC
+          ? `${formatFC(shareFC, currency)} (sur ${formatFC(p.amountFC, currency)})`
+          : formatFC(p.amountFC, currency);
+      return [formatDateWithTime(p.date, p.time), formatPaymentCoveredPeriod(p), amountCell];
+    });
+
+    autoTable(doc, {
+      startY: currentBottomY + 2.5,
+      head: [['Date', 'Période couverte', 'Montant']],
+      body: paymentRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [71, 85, 105],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+        fontSize: 8,
+        halign: 'left',
+      },
+      styles: {
+        fontSize: 8,
+        textColor: darkTextColor,
+        cellPadding: 1.8,
+      },
+      columnStyles: {
+        0: { halign: 'left', cellWidth: 36 },
+        1: { halign: 'left' },
+        2: { halign: 'right', fontStyle: 'bold', cellWidth: 48 },
+      },
+      didDrawPage: (dataHook) => {
+        if (dataHook.pageNumber > 1) {
+          drawPageBackground();
+        }
+      },
+    });
+
+    currentBottomY = ((doc as any).lastAutoTable?.finalY || currentBottomY + 18) + 2;
   }
+
+  drawPayslipFooterAndSignatures(doc, currentBottomY, theme, drawPageBackground);
 
   const cleanEmpName = employee.name.replace(/[^a-zA-Z0-9]/g, '_');
   const filename = `Fiche_${cleanEmpName}_${month}.pdf`;
 
-  if (action === 'share' && typeof navigator !== 'undefined' && navigator.share) {
-    try {
-      const pdfBlob = doc.output('blob');
-      const file = new File([pdfBlob], filename, { type: 'application/pdf' });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({
-          files: [file],
-          title: `Fiche de paie vendeur(se) - ${employee.name} (${monthName})`,
-          text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Livraisons : ${formatFC(sumDeliveredFC, currency)} | Ventes : ${formatFC(sumSoldFC, currency)} | Commission : ${formatFC(sumCommissionFC, currency)} | Reste à payer : ${formatFC(netDueFC, currency)}.`,
-        });
-        return true;
-      }
-    } catch (e) {
-      console.warn('Share non supporté ou annulé, téléchargement direct:', e);
-    }
+  return deliverPayslipPDF(doc, filename, action, {
+    title: `Fiche de paie vendeur(se) - ${employee.name} (${monthName})`,
+    text: `Bonjour ${employee.name}, voici ton décompte pour le mois de ${monthName}. Livraisons : ${formatFC(sumDeliveredFC, currency)} | Ventes : ${formatFC(sumSoldFC, currency)} | Commission : ${formatFC(sumCommissionFC, currency)} | Reste à payer : ${formatFC(netDueFC, currency)}.`,
+  });
+}
+
+/**
+ * Génère la fiche de paiement PDF d'un paiement par jours (avec coveredItems),
+ * en réutilisant exactement le même style et la même personnalisation (PayslipSettings)
+ * que la fiche de paie mensuelle.
+ */
+export async function generatePaymentByDaysPDF(
+  data: PaymentByDaysSheetData,
+  action: 'download' | 'share' = 'download'
+): Promise<boolean> {
+  const { employee, payment, dailyEntries, settings } = data;
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4',
+  });
+
+  const theme = resolvePayslipTheme(settings);
+  const { currency, payslip, primaryColor, darkTextColor, mutedTextColor } = theme;
+  const drawPageBackground = createPayslipBackgroundDrawer(doc, payslip);
+  drawPageBackground();
+
+  const coveredItems = [...(payment.coveredItems || [])].sort((a, b) =>
+    a.date.localeCompare(b.date)
+  );
+  const periodFrom =
+    payment.periodFrom || (coveredItems.length > 0 ? coveredItems[0].date : payment.date);
+  const periodTo =
+    payment.periodTo ||
+    (coveredItems.length > 0 ? coveredItems[coveredItems.length - 1].date : payment.date);
+
+  const periodLabel =
+    periodFrom === periodTo
+      ? `Le ${formatDate(periodFrom)}`
+      : `Du ${formatDate(periodFrom)} au ${formatDate(periodTo)}`;
+
+  const displayTitle = `Fiche de paiement (${coveredItems.length} ${
+    coveredItems.length > 1 ? 'jours payés' : 'jour payé'
+  }) - ${periodLabel}`;
+
+  const cardBottomY = drawPayslipHeaderAndSellerCard(doc, {
+    employee,
+    settings,
+    theme,
+    displayTitle,
+    extraCardLine: `Période payée : ${periodLabel} (${coveredItems.length} ${
+      coveredItems.length > 1 ? 'jours' : 'jour'
+    })  |  Payé le ${formatDateWithTime(payment.date, payment.time)}`,
+  });
+
+  const entriesById = new Map<string, DailyEntry>();
+  for (const e of dailyEntries) {
+    entriesById.set(e.id, e);
   }
 
-  // Fallback to direct download
-  doc.save(filename);
-  return true;
+  let sumSalesFC = 0;
+  let sumCommissionFC = 0;
+  const dayDateCells: Array<{ main: string; sub: string | null }> = [];
+
+  const tableRows = coveredItems.map((item) => {
+    const entry = entriesById.get(item.entryId);
+    const salesFC = entry ? entry.totalSalesFC || 0 : 0;
+    const rate = entry ? entry.employeeCommissionRate : employee.commissionRate;
+    const commFC = item.commissionFC || 0;
+
+    sumSalesFC += salesFC;
+    sumCommissionFC += commFC;
+
+    const entryTime = normalizeTimeStr(entry?.time);
+    const mainDate = entryTime
+      ? `${formatDate(item.date)} · ${entryTime}`
+      : formatDate(item.date);
+    const deliveryReturnSub = formatDeliveryReturnTimes(
+      entry?.deliveryTime,
+      entry?.returnTime
+    );
+    dayDateCells.push({ main: mainDate, sub: deliveryReturnSub });
+
+    return [
+      mainDate,
+      entry ? formatFC(salesFC, currency) : '-',
+      `${formatNumber(rate)} %`,
+      formatFC(commFC, currency),
+    ];
+  });
+
+  const totalsRow = [
+    'TOTAUX',
+    formatFC(sumSalesFC, currency),
+    '-',
+    formatFC(sumCommissionFC, currency),
+  ];
+
+  autoTable(doc, {
+    startY: cardBottomY + 4,
+    head: [['Date', 'Ventes (FC)', 'Taux (%)', 'Commission (FC)']],
+    body: tableRows.length > 0 ? tableRows : [['-', '-', '-', '-']],
+    theme: 'grid',
+    headStyles: {
+      fillColor: primaryColor,
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 8.5,
+      halign: 'center',
+    },
+    styles: {
+      fontSize: 8,
+      textColor: darkTextColor,
+      cellPadding: 2.2,
+      halign: 'center',
+      valign: 'middle',
+    },
+    columnStyles: {
+      0: { halign: 'left' },
+      1: { halign: 'right', fontStyle: 'bold' },
+      2: { halign: 'center' },
+      3: { halign: 'right', fontStyle: 'bold' },
+    },
+    foot: [totalsRow],
+    footStyles: {
+      fillColor: [241, 245, 249],
+      textColor: darkTextColor,
+      fontStyle: 'bold',
+      fontSize: 8.5,
+      halign: 'right',
+    },
+    didParseCell: (dataHook) => {
+      if (
+        dataHook.section === 'body' &&
+        dataHook.column.index === 0 &&
+        tableRows.length > 0 &&
+        dayDateCells[dataHook.row.index]?.sub
+      ) {
+        dataHook.cell.styles.minCellHeight = 8.6;
+      }
+    },
+    willDrawCell: (dataHook) => {
+      if (
+        dataHook.section === 'body' &&
+        dataHook.column.index === 0 &&
+        tableRows.length > 0 &&
+        dayDateCells[dataHook.row.index]?.sub
+      ) {
+        dataHook.cell.text = [''];
+      }
+    },
+    didDrawCell: (dataHook) => {
+      if (dataHook.section === 'body' && dataHook.column.index === 0 && tableRows.length > 0) {
+        const meta = dayDateCells[dataHook.row.index];
+        if (meta?.sub) {
+          const padLeft = dataHook.cell.padding('left');
+          const cellX = dataHook.cell.x + padLeft;
+          const centerY = dataHook.cell.y + dataHook.cell.height / 2;
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(...darkTextColor);
+          doc.text(meta.main, cellX, centerY - 0.6);
+
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(6.2);
+          doc.setTextColor(...mutedTextColor);
+          doc.text(meta.sub, cellX, centerY + 2.5);
+        }
+      }
+    },
+    didDrawPage: (dataHook) => {
+      if (dataHook.pageNumber > 1) {
+        drawPageBackground();
+      }
+    },
+  });
+
+  let finalY = (doc as any).lastAutoTable?.finalY || 160;
+  const hasGap = Math.round(payment.amountFC) !== Math.round(sumCommissionFC);
+  const hasNote = Boolean(payment.notes?.trim());
+  const boxHeight = 36 + (hasGap ? 6 : 0) + (hasNote ? 6 : 0);
+
+  if (finalY + boxHeight > 240) {
+    doc.addPage();
+    drawPageBackground();
+    finalY = 20;
+  } else {
+    finalY += 8;
+  }
+
+  doc.setFillColor(241, 245, 249);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(14, finalY, 182, boxHeight, 2, 2, 'FD');
+
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkTextColor);
+  doc.text('DÉTAIL DU RÈGLEMENT PAR JOURS', 18, finalY + 7);
+
+  let rowY = finalY + 13;
+  doc.setFontSize(8.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...mutedTextColor);
+  doc.text('Total commissions des jours payés :', 18, rowY);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkTextColor);
+  doc.text(formatFC(sumCommissionFC, currency), 100, rowY);
+
+  rowY += 6;
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...mutedTextColor);
+  doc.text('Date, heure et mode de paiement :', 18, rowY);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(...darkTextColor);
+  doc.text(
+    `${formatDateWithTime(payment.date, payment.time)} — ${formatPaymentModeLabel(payment.paymentMode)}`,
+    100,
+    rowY
+  );
+
+  if (hasGap) {
+    rowY += 6;
+    const diffFC = Math.round(sumCommissionFC) - Math.round(payment.amountFC);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...mutedTextColor);
+    doc.text('Écart (compté dans le reste dû) :', 18, rowY);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(180, 83, 9);
+    doc.text(`${diffFC > 0 ? '+' : ''}${formatFC(diffFC, currency)}`, 100, rowY);
+  }
+
+  if (hasNote) {
+    rowY += 6;
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...mutedTextColor);
+    doc.text('Note :', 18, rowY);
+    doc.setFont('helvetica', 'italic');
+    doc.setTextColor(...darkTextColor);
+    const cleanNote = (payment.notes || '').trim().slice(0, 75);
+    doc.text(cleanNote, 100, rowY);
+  }
+
+  rowY += 7;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10.5);
+  doc.setTextColor(21, 128, 61);
+  doc.text('MONTANT PAYÉ :', 18, rowY);
+  doc.text(formatFC(payment.amountFC, currency), 100, rowY);
+
+  drawPayslipFooterAndSignatures(doc, finalY + boxHeight + 2, theme, drawPageBackground);
+
+  const cleanEmpName = employee.name.replace(/[^a-zA-Z0-9]/g, '_');
+  const filename = `Fiche_Paiement_${cleanEmpName}_${payment.date}.pdf`;
+
+  return deliverPayslipPDF(doc, filename, action, {
+    title: `Fiche de paiement - ${employee.name} (${periodLabel})`,
+    text: `Bonjour ${employee.name}, voici ta fiche de paiement (${periodLabel}). Montant payé : ${formatFC(payment.amountFC, currency)} le ${formatDateWithTime(payment.date, payment.time)} (${formatPaymentModeLabel(payment.paymentMode)}).`,
+  });
 }
 
 export interface MonthlyManagerReportData {
@@ -453,7 +941,12 @@ export async function generateMonthlyManagementReportPDF(
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...mutedTextColor);
-  doc.text(`Généré le ${formatDate(toISODate(new Date()))} | 100% Hors ligne`, startHeaderX, 32);
+  const now = new Date();
+  doc.text(
+    `Généré le ${formatDateWithTime(toISODate(now), toLocalTimeStr(now))} | 100% Hors ligne`,
+    startHeaderX,
+    32
+  );
 
   // KPI Grid
   autoTable(doc, {
@@ -486,7 +979,6 @@ export async function generateMonthlyManagementReportPDF(
     },
   });
 
-  // @ts-ignore
   let nextY = (doc as any).lastAutoTable?.finalY || 100;
   nextY += 8;
 
@@ -521,7 +1013,6 @@ export async function generateMonthlyManagementReportPDF(
     },
   });
 
-  // @ts-ignore
   let expY = (doc as any).lastAutoTable?.finalY || 160;
   if (expY > 210) {
     doc.addPage();

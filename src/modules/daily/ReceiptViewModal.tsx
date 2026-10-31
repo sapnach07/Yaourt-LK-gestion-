@@ -9,7 +9,7 @@ import {
   Check,
   FileText,
 } from 'lucide-react';
-import { formatDate, formatFC, formatNumber } from '../../utils/formatters';
+import { formatDateWithTime, formatFC, formatNumber } from '../../utils/formatters';
 import {
   formatReceiptNumber,
   orderSaleItemsForReceipt,
@@ -183,8 +183,8 @@ export const ReceiptViewModal: React.FC<ReceiptViewModalProps> = ({
               <span className="text-xs font-bold uppercase tracking-wider text-slate-500 block">
                 Date
               </span>
-              <span className="text-xl font-black font-mono text-slate-900 block mt-0.5">
-                {formatDate(receipt.date)}
+              <span className="text-base sm:text-lg font-black font-mono text-slate-900 block mt-1">
+                {formatDateWithTime(receipt.date, receipt.time)}
               </span>
             </div>
           </div>

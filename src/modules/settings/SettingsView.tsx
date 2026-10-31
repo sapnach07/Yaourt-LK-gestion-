@@ -206,6 +206,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [lossAlertThresholdPct, setLossAlertThresholdPct] = useState(
     formatNumber(settings.lossAlertThresholdPct)
   );
+  const [unpaidDaysReminder, setUnpaidDaysReminder] = useState(
+    settings.unpaidDaysReminder !== undefined ? formatNumber(settings.unpaidDaysReminder) : '7'
+  );
 
   useEffect(() => {
     setAppLogoBase64(settings.appLogoBase64);
@@ -414,6 +417,16 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       return;
     }
 
+    const unpaidReminderNum =
+      unpaidDaysReminder.trim() === '' ? 7 : Math.round(parseLocaleNumber(unpaidDaysReminder));
+    if (isNaN(unpaidReminderNum) || unpaidReminderNum < 0 || unpaidReminderNum > 365) {
+      onShowToast(
+        'error',
+        'Le délai de rappel des jours non payés doit être compris entre 0 et 365 jours.'
+      );
+      return;
+    }
+
     const updated: AppSettings = {
       ...settings,
       businessName: businessName.trim() || 'Yaourt Gestion',
@@ -421,6 +434,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       expenseReservePct: reserveNum,
       monthlySalesTargetFC: isNaN(targetNum) ? 1000000 : targetNum,
       lossAlertThresholdPct: isNaN(lossThresholdNum) ? 5.0 : lossThresholdNum,
+      unpaidDaysReminder: unpaidReminderNum,
       expenseCategories: categories,
       appLogoBase64: appLogoBase64,
     };
@@ -846,6 +860,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           label: 'Réserve dépenses (%) & alerte perte',
           sectionId: 'business_general',
           keywords: ['ratio', 'ratios', 'reserve', 'perte', 'alerte perte', 'seuil'],
+        },
+        {
+          label: 'Rappel : jours non payés depuis plus de N jours',
+          sectionId: 'business_general',
+          keywords: [
+            'rappel',
+            'jours non payes',
+            'non paye',
+            'paie',
+            'paiement',
+            'vendeur',
+            'vendeuse',
+            'commission',
+          ],
         },
         {
           label: 'Ma commission (ventes personnelles)',
@@ -1461,6 +1489,23 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                     </span>
                   </div>
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">
+                  Rappel : jours non payés depuis plus de N jours
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={unpaidDaysReminder}
+                  onChange={(e) => setUnpaidDaysReminder(e.target.value.replace(/[^0-9]/g, ''))}
+                  placeholder="7"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">
+                  7 jours par défaut. Signale les journées validées non réglées dépassant ce délai.
+                </p>
               </div>
 
               <button

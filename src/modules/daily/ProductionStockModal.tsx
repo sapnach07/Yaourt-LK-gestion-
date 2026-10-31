@@ -3,9 +3,12 @@ import { X, Check, Plus, Trash2, RotateCcw, AlertTriangle, Calculator } from 'lu
 import { db } from '../../db/db';
 import {
   toISODate,
+  toLocalTimeStr,
+  normalizeTimeStr,
   parseLocaleNumber,
   formatNumber,
-  formatDate,
+  formatDateWithTime,
+  compareRecordsByDateTimeDesc,
 } from '../../utils/formatters';
 import type {
   Product,
@@ -71,6 +74,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
   onSaved,
 }) => {
   const [date, setDate] = useState(toISODate(new Date()));
+  const [time, setTime] = useState(toLocalTimeStr());
   const [items, setItems] = useState<Record<string, string>>({});
   const [notes, setNotes] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -111,7 +115,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
         Array.isArray(pe.costing.lines) &&
         pe.costing.lines.length > 0
     )
-    .sort((a, b) => b.date.localeCompare(a.date) || b.createdAt - a.createdAt)[0] || null;
+    .sort(compareRecordsByDateTimeDesc)[0] || null;
 
   useEffect(() => {
     if (!isOpen) return;
@@ -126,6 +130,7 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
 
     if (entryToEdit) {
       setDate(entryToEdit.date);
+      setTime(entryToEdit.time || '');
       setNotes(entryToEdit.notes || '');
       const stateObj: Record<string, string> = {};
       entryToEdit.items.forEach((item) => {
@@ -191,7 +196,9 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
         setUseFrozenProductPackaging(false);
       }
     } else {
-      setDate(toISODate(new Date()));
+      const now = new Date();
+      setDate(toISODate(now));
+      setTime(toLocalTimeStr(now));
       setNotes('');
       const stateObj: Record<string, string> = {};
       const sellState: Record<string, string> = {};
@@ -338,8 +345,8 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
     setUseFrozenProductPackaging(false);
     setCopyInfoMsg(
       skippedCount > 0
-        ? `Ingrédients actifs repris du ${formatDate(lastCostedProduction.date)} (${skippedCount} désactivé ignoré) — prix actuels appliqués.`
-        : `Ingrédients repris du ${formatDate(lastCostedProduction.date)} (prix actuels appliqués).`
+        ? `Ingrédients actifs repris du ${formatDateWithTime(lastCostedProduction.date, lastCostedProduction.time)} (${skippedCount} désactivé ignoré) — prix actuels appliqués.`
+        : `Ingrédients repris du ${formatDateWithTime(lastCostedProduction.date, lastCostedProduction.time)} (prix actuels appliqués).`
     );
   };
 
@@ -658,9 +665,12 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
       };
     }
 
+    const normalizedTime = normalizeTimeStr(time);
+
     const newEntry: ProductionEntry = {
       id: entryToEdit ? entryToEdit.id : 'prod_entry_' + Date.now().toString(),
       date,
+      ...(normalizedTime ? { time: normalizedTime } : {}),
       items: productionItems,
       notes: notes.trim() || undefined,
       costing: frozenCosting,
@@ -708,18 +718,41 @@ export const ProductionStockModal: React.FC<ProductionStockModalProps> = ({
             </div>
           )}
 
-          {/* 1. Date */}
-          <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1">
-              Date de production *
-            </label>
-            <input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
-              required
-              className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
-            />
+          {/* 1. Date & Heure */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Date de production *
+              </label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                required
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-xs font-bold text-slate-700">Heure</label>
+                {time && (
+                  <button
+                    type="button"
+                    onClick={() => setTime('')}
+                    className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                  >
+                    Effacer
+                  </button>
+                )}
+              </div>
+              <input
+                type="time"
+                value={time}
+                onChange={(e) => setTime(e.target.value)}
+                className="w-full px-3.5 py-2.5 rounded-xl border border-slate-200 text-sm font-semibold text-slate-900 bg-white focus:outline-none focus:ring-2 focus:ring-teal-500"
+              />
+            </div>
           </div>
 
           {/* 2. Ingrédients utilisés (facultatif) */}
@@ -1194,7 +1227,7 @@ export const ProductionCostDetailModal: React.FC<ProductionCostDetailModalProps>
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-slate-100 bg-slate-50/70">
           <div>
             <h2 className="text-base font-bold text-slate-900">
-              Détail du coût & gain — {formatDate(entry.date)}
+              Détail du coût & gain — {formatDateWithTime(entry.date, entry.time)}
             </h2>
             <p className="text-xs text-slate-500 font-medium">
               Estimation figée au moment de l’enregistrement (lecture seule)

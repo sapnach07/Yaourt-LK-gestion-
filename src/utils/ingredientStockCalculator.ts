@@ -39,6 +39,7 @@ export interface IngredientStockComputationResult {
 export interface ItemPurchaseHistoryPoint {
   expenseId: string;
   date: string;
+  time?: string;
   createdAt: number;
   supplier: string;
   purchaseQty: number;
@@ -402,6 +403,7 @@ export function calculateItemsPriceAnalytics(params: {
         purchases.push({
           expenseId: exp.id,
           date: exp.date,
+          time: exp.time,
           createdAt: exp.createdAt || 0,
           supplier: (exp.supplier || '').trim(),
           purchaseQty: cleanFloat(pQty),

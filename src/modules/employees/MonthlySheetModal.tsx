@@ -12,12 +12,25 @@ import {
 import { db } from '../../db/db';
 import {
   formatDate,
+  formatDateWithTime,
+  formatDeliveryReturnTimes,
+  compareRecordsByDateTimeDesc,
   formatFC,
   formatMonthName,
   toISOMonth,
   formatNumber,
 } from '../../utils/formatters';
-import { generateEmployeeMonthlyPDF } from '../../utils/pdfGenerator';
+import {
+  generateEmployeeMonthlyPDF,
+  generatePaymentByDaysPDF,
+} from '../../utils/pdfGenerator';
+import {
+  formatPaymentTypeLabel,
+  getEmployeePaidForMonth,
+  getPaymentShareForMonth,
+  getPaymentsTouchingMonth,
+  isSellerMonthClosed,
+} from '../../utils/sellerPayroll';
 import { moveToTrash } from '../../utils/trashManager';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import type { DailyEntry, Employee, Payment, AppSettings } from '../../types';
@@ -38,6 +51,7 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
   settings,
 }) => {
   const [selectedMonth, setSelectedMonth] = useState(toISOMonth(new Date()));
+  const [allEmployeeEntries, setAllEmployeeEntries] = useState<DailyEntry[]>([]);
   const [entries, setEntries] = useState<DailyEntry[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
@@ -51,24 +65,27 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
   const loadMonthData = async () => {
     if (!employee) return;
 
-    // Load entries for this employee where date starts with selectedMonth
     const allEntries = await db.dailyEntries
       .where('employeeId')
       .equals(employee.id)
       .toArray();
+    setAllEmployeeEntries(allEntries);
 
     const monthEntries = allEntries
       .filter((e) => e.date.startsWith(selectedMonth))
       .sort((a, b) => a.date.localeCompare(b.date));
     setEntries(monthEntries);
 
-    // Load payments for this employee for this month
     const allPayments = await db.payments
       .where('employeeId')
       .equals(employee.id)
       .toArray();
 
-    const monthPayments = allPayments.filter((p) => p.month === selectedMonth);
+    const monthPayments = getPaymentsTouchingMonth(
+      allPayments,
+      selectedMonth,
+      employee.id
+    ).sort((a, b) => a.date.localeCompare(b.date));
     setPayments(monthPayments);
   };
 
@@ -99,8 +116,9 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
     sumCommissionFC += entry.employeeCommissionFC;
   }
 
-  const totalPaidFC = payments.reduce((acc, p) => acc + (p.amountFC || 0), 0);
-  const remainingDueFC = sumCommissionFC - totalPaidFC;
+  const totalPaidFC = getEmployeePaidForMonth(payments, employee.id, selectedMonth);
+  const isClosed = isSellerMonthClosed(settings.payrollClosures, employee.id, selectedMonth);
+  const remainingDueFC = isClosed ? 0 : sumCommissionFC - totalPaidFC;
   const currency = settings.currency || 'FC';
 
   // Saisies incomplètes sur ce mois pour cet(te) employé(e)
@@ -121,6 +139,25 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
       );
     } catch (e) {
       console.error('Erreur génération PDF:', e);
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
+
+  const handleGeneratePaymentPDF = async (payment: Payment) => {
+    setIsGeneratingPdf(true);
+    try {
+      await generatePaymentByDaysPDF(
+        {
+          employee,
+          payment,
+          dailyEntries: allEmployeeEntries,
+          settings,
+        },
+        'download'
+      );
+    } catch (e) {
+      console.error('Erreur génération fiche de paiement PDF:', e);
     } finally {
       setIsGeneratingPdf(false);
     }
@@ -189,7 +226,7 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
               <p className="text-[11px] text-amber-800 leading-relaxed">
                 Dates concernées :{' '}
                 <span className="font-semibold font-mono">
-                  {incompleteEntries.map((e) => formatDate(e.date)).join(', ')}
+                  {incompleteEntries.map((e) => formatDateWithTime(e.date, e.time)).join(', ')}
                 </span>
                 . La génération de la fiche reste possible.
               </p>
@@ -233,7 +270,9 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
               <span className="text-sm font-extrabold font-mono text-emerald-950 block">
                 {formatFC(remainingDueFC, currency)}
               </span>
-              <span className="text-[10px] text-emerald-700/80 font-mono block">Solde net</span>
+              <span className="text-[10px] text-emerald-700/80 font-mono block">
+                {isClosed ? 'Mois clôturé' : 'Solde net'}
+              </span>
             </div>
           </div>
 
@@ -267,14 +306,33 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                     {entries.map((entry) => {
-                      const dayDeliveredFC = entry.items.reduce((acc, i) => acc + (i.delivered * (i.unitPrice || 0)), 0);
-                      const dayRestFC = entry.items.reduce((acc, i) => acc + (i.rest * (i.unitPrice || 0)), 0);
-                      const dayDamagedFC = entry.items.reduce((acc, i) => acc + (i.damaged * (i.unitPrice || 0)), 0);
+                      const dayDeliveredFC = entry.items.reduce(
+                        (acc, i) => acc + i.delivered * (i.unitPrice || 0),
+                        0
+                      );
+                      const dayRestFC = entry.items.reduce(
+                        (acc, i) => acc + i.rest * (i.unitPrice || 0),
+                        0
+                      );
+                      const dayDamagedFC = entry.items.reduce(
+                        (acc, i) => acc + i.damaged * (i.unitPrice || 0),
+                        0
+                      );
+
+                      const deliveryReturnLabel = formatDeliveryReturnTimes(
+                        entry.deliveryTime,
+                        entry.returnTime
+                      );
 
                       return (
                         <tr key={entry.id} className="hover:bg-slate-50/80 transition-colors">
                           <td className="py-2.5 px-3 font-medium text-slate-900 whitespace-nowrap">
-                            {formatDate(entry.date)}
+                            <span>{formatDateWithTime(entry.date, entry.time)}</span>
+                            {deliveryReturnLabel && (
+                              <span className="text-[10px] text-slate-400 font-mono block mt-0.5">
+                                {deliveryReturnLabel}
+                              </span>
+                            )}
                           </td>
                           <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap font-extrabold text-slate-900 text-xs">
                             {formatFC(dayDeliveredFC, currency)}
@@ -351,39 +409,69 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
               </p>
             ) : (
               <div className="space-y-1.5">
-                {payments.map((p) => (
-                  <div
-                    key={p.id}
-                    className="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200/60 text-xs"
-                  >
-                    <div>
-                      <span className="font-bold text-slate-800">
-                        {formatDate(p.date)}
-                      </span>
-                      <span className="text-slate-500 ml-2">
-                        {p.paymentType === 'advance'
-                          ? 'Avance'
-                          : p.paymentType === 'final'
-                          ? 'Solde final'
-                          : 'Règlement'}
-                      </span>
-                      {p.notes && <span className="text-slate-400 block text-[11px]">{p.notes}</span>}
+                {[...payments].sort(compareRecordsByDateTimeDesc).map((p) => {
+                  const hasCoveredDays =
+                    Array.isArray(p.coveredItems) && p.coveredItems.length > 0;
+                  const shareFC = getPaymentShareForMonth(p, selectedMonth);
+                  return (
+                    <div
+                      key={p.id}
+                      className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 border border-slate-200/60 text-xs gap-2"
+                    >
+                      <div className="min-w-0">
+                        <div>
+                          <span className="font-bold text-slate-800">
+                            {formatDateWithTime(p.date, p.time)}
+                          </span>
+                          <span className="text-slate-500 ml-2">
+                            {formatPaymentTypeLabel(p.paymentType)}
+                          </span>
+                        </div>
+                        {hasCoveredDays && p.periodFrom && p.periodTo && (
+                          <span className="text-slate-500 block text-[11px]">
+                            {p.periodFrom === p.periodTo
+                              ? `Le ${formatDate(p.periodFrom)}`
+                              : `Du ${formatDate(p.periodFrom)} au ${formatDate(p.periodTo)}`}{' '}
+                            ({p.coveredItems!.length} j.)
+                          </span>
+                        )}
+                        {hasCoveredDays && shareFC !== p.amountFC && (
+                          <span className="text-teal-800 font-semibold font-mono block text-[11px]">
+                            Part ce mois : {formatFC(shareFC, currency)}
+                          </span>
+                        )}
+                        {p.notes && (
+                          <span className="text-slate-400 block text-[11px]">{p.notes}</span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {hasCoveredDays && (
+                          <button
+                            type="button"
+                            disabled={isGeneratingPdf}
+                            onClick={() => handleGeneratePaymentPDF(p)}
+                            className="px-2 py-1 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 font-bold text-[11px] inline-flex items-center gap-1 min-h-[30px]"
+                            title="Fiche de paiement PDF"
+                          >
+                            <FileDown className="w-3 h-3 text-teal-700" />
+                            <span>Fiche de paiement</span>
+                          </button>
+                        )}
+                        <span className="font-bold font-mono text-slate-900">
+                          {formatFC(p.amountFC, currency)}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setPaymentToDelete(p)}
+                          className="text-slate-400 hover:text-rose-600 p-1 rounded-lg min-w-[32px] min-h-[32px] flex items-center justify-center"
+                          title="Supprimer ce versement"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold font-mono text-slate-900">
-                        {formatFC(p.amountFC, currency)}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setPaymentToDelete(p)}
-                        className="text-slate-400 hover:text-rose-600 p-1 rounded-lg min-w-[32px] min-h-[32px] flex items-center justify-center"
-                        title="Supprimer ce versement"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -418,9 +506,12 @@ export const MonthlySheetModal: React.FC<MonthlySheetModalProps> = ({
         message={`Voulez-vous supprimer le versement de ${formatFC(
           paymentToDelete?.amountFC,
           currency
-        )} effectué le ${formatDate(paymentToDelete?.date)} pour ${
+        )} effectué le ${formatDateWithTime(
+          paymentToDelete?.date,
+          paymentToDelete?.time
+        )} pour ${
           employee.name
-        } ? Cette action est irréversible.`}
+        } ? Les jours éventuellement couverts redeviendront « Non payés ».`}
         confirmLabel="Supprimer"
         cancelLabel="Annuler"
         isDanger={true}

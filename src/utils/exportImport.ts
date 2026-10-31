@@ -1,13 +1,25 @@
 import { db } from '../db/db';
-import { formatDate, formatFC, toISODate } from './formatters';
+import {
+  formatDate,
+  formatFC,
+  formatTimeFromTimestamp,
+  normalizeTimeStr,
+  toISODate,
+} from './formatters';
 import { normalizeCustomerName } from './debtCalculator';
 import { isValidTrashKind } from './trashManager';
+import { normalizePayrollClosures } from './sellerPayroll';
 import type {
   AppSettings,
   Customer,
   CostItem,
   Expense,
   ExpenseIngredientLine,
+  Payment,
+  PaymentCoveredItem,
+  PayrollClosure,
+  SellerPaymentMode,
+  SellerPaymentType,
   ProductCostConfig,
   ProductionCosting,
   ProductionCostLine,
@@ -199,10 +211,12 @@ function sanitizePersonalSaleReceipt(
   const paidNotedFC = Number.isFinite(paidNum) && paidNum >= 0 ? Math.round(paidNum) : 0;
 
   const createdAt = Number(obj.createdAt) || Date.now();
+  const time = normalizeTimeStr(obj.time);
 
   return {
     no,
     date,
+    ...(time ? { time } : {}),
     phone,
     paymentMode,
     paidNotedFC,
@@ -220,6 +234,13 @@ function sanitizeExpense(raw: any): Expense {
     detail: String(raw.detail || ''),
     createdAt: Number(raw.createdAt) || Date.now(),
   };
+
+  const normalizedExpTime = normalizeTimeStr(raw.time);
+  if (normalizedExpTime) {
+    base.time = normalizedExpTime;
+  } else {
+    delete base.time;
+  }
 
   if (Array.isArray(raw.ingredientLines)) {
     const lines: ExpenseIngredientLine[] = raw.ingredientLines
@@ -254,6 +275,93 @@ function sanitizeExpense(raw: any): Expense {
   return base;
 }
 
+const VALID_SELLER_PAYMENT_TYPES = new Set<SellerPaymentType>([
+  'advance',
+  'salary',
+  'final',
+  'by_days',
+]);
+
+const VALID_SELLER_PAYMENT_MODES = new Set<SellerPaymentMode>([
+  'especes',
+  'mobile_money',
+  'autre',
+]);
+
+function sanitizePayment(raw: any): Payment {
+  const rawType = String(raw.paymentType || 'salary') as SellerPaymentType;
+  const paymentType: SellerPaymentType = VALID_SELLER_PAYMENT_TYPES.has(rawType)
+    ? rawType
+    : 'salary';
+
+  const cleaned: Payment = {
+    ...raw,
+    id: String(raw.id),
+    employeeId: String(raw.employeeId || ''),
+    employeeName: String(raw.employeeName || ''),
+    month: String(raw.month || String(raw.date || '').slice(0, 7)),
+    date: String(raw.date || ''),
+    amountFC: Number(raw.amountFC) || 0,
+    paymentType,
+    notes: raw.notes !== undefined ? String(raw.notes) : undefined,
+    createdAt: Number(raw.createdAt) || Date.now(),
+  };
+
+  const normalizedPayTime = normalizeTimeStr(raw.time);
+  if (normalizedPayTime) {
+    cleaned.time = normalizedPayTime;
+  } else {
+    delete cleaned.time;
+  }
+
+  if (raw.paymentMode && VALID_SELLER_PAYMENT_MODES.has(raw.paymentMode)) {
+    cleaned.paymentMode = raw.paymentMode;
+  } else {
+    delete cleaned.paymentMode;
+  }
+
+  if (Array.isArray(raw.coveredItems)) {
+    const items: PaymentCoveredItem[] = raw.coveredItems
+      .filter((it: any) => it && typeof it === 'object' && it.entryId && it.date)
+      .map((it: any) => ({
+        entryId: String(it.entryId),
+        date: String(it.date),
+        commissionFC: Math.round(Number(it.commissionFC) || 0),
+      }))
+      .sort((a: PaymentCoveredItem, b: PaymentCoveredItem) => a.date.localeCompare(b.date));
+
+    if (items.length > 0) {
+      cleaned.coveredItems = items;
+      cleaned.periodFrom =
+        typeof raw.periodFrom === 'string' && raw.periodFrom.trim()
+          ? raw.periodFrom.trim()
+          : items[0].date;
+      cleaned.periodTo =
+        typeof raw.periodTo === 'string' && raw.periodTo.trim()
+          ? raw.periodTo.trim()
+          : items[items.length - 1].date;
+    } else {
+      delete cleaned.coveredItems;
+      delete cleaned.periodFrom;
+      delete cleaned.periodTo;
+    }
+  } else {
+    delete cleaned.coveredItems;
+    if (typeof raw.periodFrom === 'string' && raw.periodFrom.trim()) {
+      cleaned.periodFrom = raw.periodFrom.trim();
+    } else {
+      delete cleaned.periodFrom;
+    }
+    if (typeof raw.periodTo === 'string' && raw.periodTo.trim()) {
+      cleaned.periodTo = raw.periodTo.trim();
+    } else {
+      delete cleaned.periodTo;
+    }
+  }
+
+  return cleaned;
+}
+
 function sanitizeStockAdjustments(raw: unknown): StockAdjustment[] {
   if (!Array.isArray(raw)) return [];
   const list: StockAdjustment[] = [];
@@ -265,10 +373,12 @@ function sanitizeStockAdjustments(raw: unknown): StockAdjustment[] {
     const reason: StockAdjustmentReason = VALID_ADJUSTMENT_REASONS.has(rawReason)
       ? rawReason
       : 'autre';
+    const adjTime = normalizeTimeStr(item.time);
     list.push({
       id: String(item.id),
       itemId: String(item.itemId),
       date: String(item.date),
+      ...(adjTime ? { time: adjTime } : {}),
       qtyDelta,
       reason,
       note: item.note ? String(item.note).trim() || undefined : undefined,
@@ -442,6 +552,10 @@ function sanitizeTrashItems(
     const hasRestoredAt =
       obj.restoredAt !== undefined && obj.restoredAt !== null && Number.isFinite(restoredAtNum);
 
+    const effectiveDeletedAt = Number.isFinite(deletedAtNum) ? deletedAtNum : Date.now();
+    const resolvedTrashTime =
+      normalizeTimeStr(obj.time) || formatTimeFromTimestamp(effectiveDeletedAt);
+
     const cleaned: TrashItem = {
       id: String(obj.id),
       kind: obj.kind,
@@ -450,9 +564,10 @@ function sanitizeTrashItems(
       originalDate:
         typeof obj.originalDate === 'string' && obj.originalDate.trim()
           ? obj.originalDate.trim()
-          : toISODate(new Date(Number.isFinite(deletedAtNum) ? deletedAtNum : Date.now())),
+          : toISODate(new Date(effectiveDeletedAt)),
+      ...(resolvedTrashTime ? { time: resolvedTrashTime } : {}),
       payload: clonedPayload,
-      deletedAt: Number.isFinite(deletedAtNum) ? deletedAtNum : Date.now(),
+      deletedAt: effectiveDeletedAt,
     };
 
     if (hasAmount) {
@@ -570,6 +685,8 @@ export async function exportAllDataToJSON(): Promise<void> {
     settings: {
       ...settingsWithoutSecrets,
       debtReminderDays: currentSettings?.debtReminderDays ?? 2,
+      unpaidDaysReminder: currentSettings?.unpaidDaysReminder ?? 7,
+      payrollClosures: currentSettings?.payrollClosures,
       costItems: currentSettings?.costItems,
       productCosting: currentSettings?.productCosting,
       stockStartDate: currentSettings?.stockStartDate,
@@ -677,15 +794,34 @@ export async function restoreDataFromJSON(
 
     if (data.employees?.length) await db.employees.bulkPut(data.employees);
     if (data.products?.length) await db.products.bulkPut(data.products);
-    if (data.dailyEntries?.length) await db.dailyEntries.bulkPut(data.dailyEntries);
+    if (data.dailyEntries?.length) {
+      const sanitizedDailyEntries = data.dailyEntries.map((de: any) => {
+        if (!de || typeof de !== 'object') return de;
+        const cleanedDe: any = { ...de };
+        const t = normalizeTimeStr(de.time);
+        const dt = normalizeTimeStr(de.deliveryTime);
+        const rt = normalizeTimeStr(de.returnTime);
+        if (t) cleanedDe.time = t;
+        else delete cleanedDe.time;
+        if (dt) cleanedDe.deliveryTime = dt;
+        else delete cleanedDe.deliveryTime;
+        if (rt) cleanedDe.returnTime = rt;
+        else delete cleanedDe.returnTime;
+        return cleanedDe;
+      });
+      await db.dailyEntries.bulkPut(sanitizedDailyEntries);
+    }
     if (data.productionEntries?.length) {
       const sanitizedProductions = data.productionEntries.map((pe: any) => {
         const sanitizedCosting = sanitizeProductionCosting(pe?.costing);
-        if (sanitizedCosting) {
-          return { ...pe, costing: sanitizedCosting };
-        }
         const { costing: _unused, ...rest } = pe || {};
-        return rest;
+        const cleanedPe: any = sanitizedCosting
+          ? { ...rest, costing: sanitizedCosting }
+          : { ...rest };
+        const t = normalizeTimeStr(pe?.time);
+        if (t) cleanedPe.time = t;
+        else delete cleanedPe.time;
+        return cleanedPe;
       });
       await db.productionEntries.bulkPut(sanitizedProductions);
     }
@@ -697,8 +833,25 @@ export async function restoreDataFromJSON(
         await db.expenses.bulkPut(sanitizedExpenses);
       }
     }
-    if (data.reserveMovements?.length) await db.reserveMovements.bulkPut(data.reserveMovements);
-    if (data.payments?.length) await db.payments.bulkPut(data.payments);
+    if (data.reserveMovements?.length) {
+      const sanitizedMovements = data.reserveMovements.map((rm: any) => {
+        if (!rm || typeof rm !== 'object') return rm;
+        const cleanedRm: any = { ...rm };
+        const t = normalizeTimeStr(rm.time);
+        if (t) cleanedRm.time = t;
+        else delete cleanedRm.time;
+        return cleanedRm;
+      });
+      await db.reserveMovements.bulkPut(sanitizedMovements);
+    }
+    if (data.payments?.length) {
+      const sanitizedPayments = data.payments
+        .filter((p: any) => p && p.id && p.employeeId)
+        .map((p: any) => sanitizePayment(p));
+      if (sanitizedPayments.length > 0) {
+        await db.payments.bulkPut(sanitizedPayments);
+      }
+    }
     if (data.personalSales?.length) {
       const existingSalesMap = new Map<string, any>();
       if (mode === 'merge') {
@@ -744,6 +897,13 @@ export async function restoreDataFromJSON(
             !isConsommation && ps.writtenOffAt !== undefined ? Number(ps.writtenOffAt) : undefined,
         };
 
+        const normalizedSaleTime = normalizeTimeStr(ps.time);
+        if (normalizedSaleTime) {
+          cleaned.time = normalizedSaleTime;
+        } else {
+          delete cleaned.time;
+        }
+
         if (finalReceipt) {
           cleaned.receipt = finalReceipt;
         } else {
@@ -757,14 +917,18 @@ export async function restoreDataFromJSON(
     if (Array.isArray(data.debtPayments) && data.debtPayments.length > 0) {
       const sanitizedDebtPayments = data.debtPayments
         .filter((dp: any) => dp && dp.id && dp.customerId && dp.date)
-        .map((dp: any) => ({
-          id: String(dp.id),
-          customerId: customerIdRemap.get(String(dp.customerId)) || String(dp.customerId),
-          date: String(dp.date),
-          amountFC: Math.max(0, Math.round(Number(dp.amountFC) || 0)),
-          note: dp.note ? String(dp.note).trim() : undefined,
-          createdAt: Number(dp.createdAt) || Date.now(),
-        }));
+        .map((dp: any) => {
+          const dpTime = normalizeTimeStr(dp.time);
+          return {
+            id: String(dp.id),
+            customerId: customerIdRemap.get(String(dp.customerId)) || String(dp.customerId),
+            date: String(dp.date),
+            ...(dpTime ? { time: dpTime } : {}),
+            amountFC: Math.max(0, Math.round(Number(dp.amountFC) || 0)),
+            note: dp.note ? String(dp.note).trim() : undefined,
+            createdAt: Number(dp.createdAt) || Date.now(),
+          };
+        });
       if (sanitizedDebtPayments.length > 0) {
         await db.debtPayments.bulkPut(sanitizedDebtPayments);
       }
@@ -924,6 +1088,27 @@ export async function restoreDataFromJSON(
           Object.keys(mergedTiers).length > 0 ? mergedTiers : undefined;
       }
 
+      const rawUnpaidDaysReminder = Number(data.settings.unpaidDaysReminder);
+      const finalUnpaidDaysReminder =
+        data.settings.unpaidDaysReminder !== undefined &&
+        Number.isFinite(rawUnpaidDaysReminder) &&
+        rawUnpaidDaysReminder >= 0
+          ? Math.floor(rawUnpaidDaysReminder)
+          : (existingSettings?.unpaidDaysReminder ?? 7);
+
+      const importedClosuresMap = normalizePayrollClosures(data.settings.payrollClosures);
+      let finalPayrollClosures: Record<string, PayrollClosure> | undefined =
+        Object.keys(importedClosuresMap).length > 0 ? importedClosuresMap : undefined;
+      if (mode === 'merge') {
+        const existingClosuresMap = normalizePayrollClosures(existingSettings?.payrollClosures);
+        const mergedClosures = {
+          ...existingClosuresMap,
+          ...importedClosuresMap,
+        };
+        finalPayrollClosures =
+          Object.keys(mergedClosures).length > 0 ? mergedClosures : undefined;
+      }
+
       const restoredSettings: AppSettings = {
         ...(existingSettings || {}),
         ...importedSettingsWithoutSecrets,
@@ -939,6 +1124,8 @@ export async function restoreDataFromJSON(
           data.settings.debtReminderDays !== undefined
             ? data.settings.debtReminderDays
             : (existingSettings?.debtReminderDays ?? 2),
+        unpaidDaysReminder: finalUnpaidDaysReminder,
+        payrollClosures: finalPayrollClosures,
         costItems: finalCostItems,
         productCosting: finalProductCosting,
         stockStartDate: finalStockStartDate,
@@ -949,6 +1136,9 @@ export async function restoreDataFromJSON(
         receiptSettings: finalReceiptSettings,
         wholesaleTiers: finalWholesaleTiers,
       };
+      if (finalPayrollClosures === undefined) {
+        delete restoredSettings.payrollClosures;
+      }
       if (currentLocalSettings?.recoveryCodeHash === undefined) {
         delete restoredSettings.recoveryCodeHash;
       }

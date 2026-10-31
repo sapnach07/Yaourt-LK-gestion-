@@ -12,7 +12,14 @@ import {
   FileText,
 } from 'lucide-react';
 import { db } from '../../db/db';
-import { toISODate, formatFC, parseLocaleNumber, formatNumber } from '../../utils/formatters';
+import {
+  toISODate,
+  toLocalTimeStr,
+  normalizeTimeStr,
+  formatFC,
+  parseLocaleNumber,
+  formatNumber,
+} from '../../utils/formatters';
 import { findCustomerByNormalizedName } from '../../utils/debtCalculator';
 import {
   resolveWholesaleUnitPrice,
@@ -72,6 +79,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
 }) => {
   const [kind, setKind] = useState<'vente' | 'consommation'>(initialKind);
   const [date, setDate] = useState(toISODate(new Date()));
+  const [time, setTime] = useState(toLocalTimeStr());
   const [commissionRateStr, setCommissionRateStr] = useState('0');
   const defaultConsumptionPaidPct =
     settings.consumptionPaidPct !== undefined
@@ -103,6 +111,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
   const [receiptNoStr, setReceiptNoStr] = useState<string>('');
   const [receiptDate, setReceiptDate] = useState<string>(toISODate(new Date()));
   const [isReceiptDateManual, setIsReceiptDateManual] = useState<boolean>(false);
+  const [receiptTime, setReceiptTime] = useState<string>(toLocalTimeStr());
+  const [isReceiptTimeManual, setIsReceiptTimeManual] = useState<boolean>(false);
   const [receiptPhone, setReceiptPhone] = useState<string>('');
   const [receiptPaymentMode, setReceiptPaymentMode] = useState<ReceiptPaymentMode>('especes');
   const [isReceiptModeManual, setIsReceiptModeManual] = useState<boolean>(false);
@@ -206,6 +216,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         effectiveKind !== 'consommation' && saleToEdit.paymentStatus === 'credit';
       setKind(effectiveKind);
       setDate(saleToEdit.date);
+      setTime(saleToEdit.time || '');
       setCommissionRateStr(formatNumber(saleToEdit.ownerCommissionRate));
       setNotes(saleToEdit.notes || '');
       setPaymentStatus(isCredit ? 'credit' : 'paid');
@@ -265,6 +276,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         setReceiptNoStr(String(saleToEdit.receipt.no));
         setReceiptDate(saleToEdit.receipt.date || saleToEdit.date);
         setIsReceiptDateManual(saleToEdit.receipt.date !== saleToEdit.date);
+        setReceiptTime(saleToEdit.receipt.time || '');
+        setIsReceiptTimeManual(true);
         setReceiptPhone(saleToEdit.receipt.phone || '');
         setReceiptPaymentMode(saleToEdit.receipt.paymentMode);
         setIsReceiptModeManual(true);
@@ -275,6 +288,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         setCreateReceipt(shouldEnable);
         setReceiptDate(saleToEdit.date);
         setIsReceiptDateManual(false);
+        setReceiptTime(saleToEdit.time || toLocalTimeStr());
+        setIsReceiptTimeManual(false);
         setReceiptPhone('');
         setReceiptPaymentMode(isCredit ? 'credit' : 'especes');
         setIsReceiptModeManual(false);
@@ -284,10 +299,13 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         setIsReceiptPaidManual(false);
       }
     } else {
-      const todayIso = toISODate(new Date());
+      const now = new Date();
+      const todayIso = toISODate(now);
+      const nowTime = toLocalTimeStr(now);
       const startKind = initialKind || 'vente';
       setKind(startKind);
       setDate(todayIso);
+      setTime(nowTime);
       setCommissionRateStr(formatNumber(settings.ownerCommissionPct ?? 0));
       setConsumptionPaidPctStr(formatNumber(defaultConsumptionPaidPct));
       setNotes('');
@@ -310,6 +328,8 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       setCreateReceipt(shouldEnable);
       setReceiptDate(todayIso);
       setIsReceiptDateManual(false);
+      setReceiptTime(nowTime);
+      setIsReceiptTimeManual(false);
       setReceiptPhone('');
       setReceiptPaymentMode('especes');
       setIsReceiptModeManual(false);
@@ -397,6 +417,13 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
     setDate(newDate);
     if (!isReceiptDateManual) {
       setReceiptDate(newDate);
+    }
+  };
+
+  const handleSaleTimeChange = (newTime: string) => {
+    setTime(newTime);
+    if (!hasExistingSavedReceipt && !isReceiptTimeManual) {
+      setReceiptTime(newTime);
     }
   };
 
@@ -677,10 +704,14 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
         (isCreatingCustomer ? newCustomerPhone.trim() : '') ||
         undefined;
 
+      const normalizedSaleTime = normalizeTimeStr(time);
+      const normalizedReceiptTime = normalizeTimeStr(receiptTime);
+
       const receiptPayload: PersonalSaleReceipt | undefined = shouldAttachReceipt
         ? {
             no: parsedReceiptNo,
             date: receiptDate.trim(),
+            ...(normalizedReceiptTime ? { time: normalizedReceiptTime } : {}),
             phone: effectivePhone,
             paymentMode: receiptPaymentMode,
             paidNotedFC: parsedPaidNotedFC,
@@ -702,6 +733,7 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
       const personalSaleData: PersonalSale = {
         id: saleToEdit ? saleToEdit.id : crypto.randomUUID(),
         date: date.trim(),
+        ...(normalizedSaleTime ? { time: normalizedSaleTime } : {}),
         items: saleItems,
         totalSalesFC: isConsommation ? 0 : totalSalesFC,
         ownerCommissionRate: isConsommation ? 0 : commissionRateNum,
@@ -1023,17 +1055,40 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
             </div>
           )}
 
-          {/* Date & Commission % (masquée en mode consommation) */}
+          {/* Date, Heure & Commission % (masquée en mode consommation) */}
           {kind === 'consommation' ? (
-            <div>
-              <label className="block text-xs font-bold text-slate-700 mb-1">Date *</label>
-              <input
-                type="date"
-                required
-                value={date}
-                onChange={(e) => handleSaleDateChange(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1">Date *</label>
+                <input
+                  type="date"
+                  required
+                  value={date}
+                  onChange={(e) => handleSaleDateChange(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-bold text-slate-700">Heure</label>
+                  {time && (
+                    <button
+                      type="button"
+                      onClick={() => handleSaleTimeChange('')}
+                      className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                    >
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                <input
+                  type="time"
+                  value={time}
+                  onChange={(e) => handleSaleTimeChange(e.target.value)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                />
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
@@ -1107,16 +1162,39 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                 </div>
               )}
 
-              <div className={isOpeningDebtEdit ? '' : 'grid grid-cols-2 gap-3'}>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">Date *</label>
-                  <input
-                    type="date"
-                    required
-                    value={date}
-                    onChange={(e) => handleSaleDateChange(e.target.value)}
-                    className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
-                  />
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-700 mb-1">Date *</label>
+                    <input
+                      type="date"
+                      required
+                      value={date}
+                      onChange={(e) => handleSaleDateChange(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                    />
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block text-xs font-bold text-slate-700">Heure</label>
+                      {time && (
+                        <button
+                          type="button"
+                          onClick={() => handleSaleTimeChange('')}
+                          className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                        >
+                          Effacer
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="time"
+                      value={time}
+                      onChange={(e) => handleSaleTimeChange(e.target.value)}
+                      className="w-full px-3 py-2.5 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                    />
+                  </div>
                 </div>
 
                 {!isOpeningDebtEdit && (
@@ -1378,42 +1456,42 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
 
               {createReceipt && (
                 <div className="space-y-3 pt-2 border-t border-amber-200/70">
-                  {/* N° du reçu & Date du reçu */}
-                  <div className="grid grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-[11px] font-bold text-slate-700 mb-1">
-                        N° du reçu *{' '}
-                        {parsedReceiptNo >= 1 && (
-                          <span className="font-mono text-amber-800">
-                            ({formatReceiptNumber(parsedReceiptNo)})
-                          </span>
-                        )}
-                      </label>
-                      <input
-                        type="text"
-                        inputMode="numeric"
-                        value={receiptNoStr}
-                        onChange={(e) =>
-                          setReceiptNoStr(e.target.value.replace(/[^0-9]/g, ''))
-                        }
-                        className={`w-full px-3 py-2 rounded-xl border text-xs font-extrabold font-mono bg-white ${
-                          isReceiptNoDuplicate || isReceiptNoVoided
-                            ? 'border-rose-400 text-rose-700'
-                            : 'border-slate-200 text-slate-900'
-                        }`}
-                      />
-                      {isReceiptNoDuplicate && (
-                        <span className="text-[10px] font-bold text-rose-600 block mt-0.5">
-                          Numéro déjà utilisé !
+                  {/* N° du reçu, Date du reçu & Heure du reçu */}
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-700 mb-1">
+                      N° du reçu *{' '}
+                      {parsedReceiptNo >= 1 && (
+                        <span className="font-mono text-amber-800">
+                          ({formatReceiptNumber(parsedReceiptNo)})
                         </span>
                       )}
-                      {isReceiptNoVoided && (
-                        <span className="text-[10px] font-bold text-rose-600 block mt-0.5">
-                          Numéro marqué annulé !
-                        </span>
-                      )}
-                    </div>
+                    </label>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={receiptNoStr}
+                      onChange={(e) =>
+                        setReceiptNoStr(e.target.value.replace(/[^0-9]/g, ''))
+                      }
+                      className={`w-full px-3 py-2 rounded-xl border text-xs font-extrabold font-mono bg-white ${
+                        isReceiptNoDuplicate || isReceiptNoVoided
+                          ? 'border-rose-400 text-rose-700'
+                          : 'border-slate-200 text-slate-900'
+                      }`}
+                    />
+                    {isReceiptNoDuplicate && (
+                      <span className="text-[10px] font-bold text-rose-600 block mt-0.5">
+                        Numéro déjà utilisé !
+                      </span>
+                    )}
+                    {isReceiptNoVoided && (
+                      <span className="text-[10px] font-bold text-rose-600 block mt-0.5">
+                        Numéro marqué annulé !
+                      </span>
+                    )}
+                  </div>
 
+                  <div className="grid grid-cols-2 gap-2.5">
                     <div>
                       <label className="block text-[11px] font-bold text-slate-700 mb-1">
                         Date du reçu *
@@ -1424,6 +1502,35 @@ export const PersonalSaleModal: React.FC<PersonalSaleModalProps> = ({
                         onChange={(e) => {
                           setReceiptDate(e.target.value);
                           setIsReceiptDateManual(true);
+                        }}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-[11px] font-bold text-slate-700">
+                          Heure du reçu
+                        </label>
+                        {receiptTime && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setReceiptTime('');
+                              setIsReceiptTimeManual(true);
+                            }}
+                            className="text-[10px] font-bold text-slate-400 hover:text-rose-600"
+                          >
+                            Effacer
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        type="time"
+                        value={receiptTime}
+                        onChange={(e) => {
+                          setReceiptTime(e.target.value);
+                          setIsReceiptTimeManual(true);
                         }}
                         className="w-full px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-900 bg-white"
                       />
