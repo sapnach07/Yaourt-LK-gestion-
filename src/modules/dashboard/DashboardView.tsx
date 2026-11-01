@@ -17,6 +17,8 @@ import {
   Warehouse,
   ChevronRight,
   CalendarCheck,
+  Cloud,
+  RefreshCw,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -63,6 +65,14 @@ import {
 } from '../../utils/ingredientStockCalculator';
 import { computeUnpaidDaysReminder } from '../../utils/sellerPayroll';
 import { PaymentsHistoryModal } from '../employees/PaymentsHistoryModal';
+import {
+  connectGoogleDrive,
+  performDriveBackup,
+  reconnectAndBackupDrive,
+  formatDurationSinceLastBackup,
+  isDriveAuthError,
+  useDriveBusy,
+} from '../../utils/driveBackup';
 import type {
   DailyEntry,
   Expense,
@@ -83,6 +93,7 @@ interface DashboardViewProps {
   settings: AppSettings;
   onSettingsUpdated?: (newSettings: AppSettings) => void;
   onNavigateToTab?: (tab: 'daily' | 'employees' | 'expenses' | 'settings', statusFilter?: 'all' | 'incomplete' | 'validated') => void;
+  onOpenDriveSettings?: () => void;
   onOpenReserve?: (prefill?: { amount: number; reason: string; source?: 'personnel' | 'benefices' }) => void;
   onOpenEarnings?: () => void;
   onOpenOwnerProfit?: () => void;
@@ -98,6 +109,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   settings,
   onSettingsUpdated,
   onNavigateToTab,
+  onOpenDriveSettings,
   onOpenReserve,
   onOpenEarnings,
   onOpenOwnerProfit,
@@ -105,6 +117,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenIngredientStock,
   onShowToast,
 }) => {
+  const isDriveBusy = useDriveBusy();
   const [periodType, setPeriodType] = useState<PeriodFilterType>('this_month');
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -1045,8 +1058,144 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
+  const handleDashboardConnectDrive = async () => {
+    const res = await connectGoogleDrive();
+    const latest = await db.settings.get('app_settings');
+    if (latest) onSettingsUpdated?.(latest);
+
+    if (!res.success) {
+      if (res.errorMessage) {
+        onShowToast('error', res.errorMessage);
+      }
+      return;
+    }
+
+    if (res.existingBackupsPreserved) {
+      onShowToast(
+        'info',
+        'Google Drive connecté : ouvrez « Mes sauvegardes Drive » pour restaurer vos données.'
+      );
+      if (onOpenDriveSettings) {
+        onOpenDriveSettings();
+      } else {
+        onNavigateToTab?.('settings');
+      }
+    }
+  };
+
+  const handleDashboardDriveBackupNow = async () => {
+    const res = await performDriveBackup({ trigger: 'manual' });
+    const latest = await db.settings.get('app_settings');
+    if (latest) onSettingsUpdated?.(latest);
+
+    if (!res.success && res.errorMessage) {
+      onShowToast('error', res.errorMessage);
+    }
+  };
+
+  const handleDashboardReconnectDrive = async () => {
+    const res = await reconnectAndBackupDrive();
+    const latest = await db.settings.get('app_settings');
+    if (latest) onSettingsUpdated?.(latest);
+
+    if (!res.success && res.errorMessage) {
+      onShowToast('error', res.errorMessage);
+    }
+  };
+
+  const driveCfg = settings.driveBackup;
+  const isDriveConnected = Boolean(driveCfg?.connected);
+  const driveLastError = isDriveConnected ? driveCfg?.lastError || null : null;
+  const driveIsStaleOver24h =
+    isDriveConnected &&
+    !isDriveBusy &&
+    (!driveCfg?.lastSuccessAt ||
+      Date.now() - driveCfg.lastSuccessAt > 24 * 60 * 60 * 1000);
+
   return (
     <div className="pb-28 pt-3 px-4 max-w-lg mx-auto space-y-5">
+      {/* BANNIÈRES GOOGLE DRIVE */}
+      {!isDriveConnected && (
+        <div className="p-3.5 rounded-2xl bg-teal-50 border border-teal-200/90 text-teal-950 shadow-2xs flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Cloud className="w-5 h-5 shrink-0 text-teal-700" />
+            <div className="min-w-0">
+              <span className="font-extrabold block leading-snug">
+                Sauvegarde automatique Google Drive
+              </span>
+              <p className="text-[11px] text-teal-800 leading-snug">
+                Protégez vos données dans votre propre Google Drive.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={isDriveBusy}
+            onClick={handleDashboardConnectDrive}
+            className="px-3 py-2 rounded-xl bg-teal-700 hover:bg-teal-800 text-white font-extrabold active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {isDriveBusy && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+            <span>Connecter mon Google Drive</span>
+          </button>
+        </div>
+      )}
+
+      {isDriveConnected && driveLastError && (
+        <div className="p-3.5 rounded-2xl bg-rose-600 text-white shadow-md flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <AlertTriangle className="w-5 h-5 shrink-0 text-white mt-0.5" />
+            <div className="min-w-0">
+              <span className="font-extrabold block leading-snug">
+                Échec de la sauvegarde Google Drive
+              </span>
+              <p className="text-[11px] text-rose-100 leading-snug mt-0.5">{driveLastError}</p>
+            </div>
+          </div>
+          {isDriveAuthError(driveLastError) ? (
+            <button
+              type="button"
+              disabled={isDriveBusy}
+              onClick={handleDashboardReconnectDrive}
+              className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {isDriveBusy && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>Se reconnecter</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={isDriveBusy}
+              onClick={handleDashboardDriveBackupNow}
+              className="px-3 py-2 rounded-xl bg-white text-rose-700 font-extrabold hover:bg-rose-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+            >
+              {isDriveBusy && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+              <span>Réessayer</span>
+            </button>
+          )}
+        </div>
+      )}
+
+      {driveIsStaleOver24h && (
+        <div className="p-3.5 rounded-2xl bg-amber-500 text-white shadow-md flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <Cloud className="w-5 h-5 shrink-0 text-white" />
+            <span className="font-extrabold leading-snug">
+              Aucune sauvegarde depuis {formatDurationSinceLastBackup(driveCfg?.lastSuccessAt)} :
+              sauvegarde maintenant
+            </span>
+          </div>
+          <button
+            type="button"
+            disabled={isDriveBusy}
+            onClick={handleDashboardDriveBackupNow}
+            className="px-3 py-2 rounded-xl bg-white text-amber-800 font-extrabold hover:bg-amber-50 active:scale-95 transition-all shrink-0 min-h-[38px] text-xs shadow-xs flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {isDriveBusy && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+            <span>Sauvegarder</span>
+          </button>
+        </div>
+      )}
+
       {/* ALERTE ROUGE : si soldeReserveFC < 0 */}
       {cumulativeReserve.soldeReserveFC < 0 && (
         <div className="p-4 rounded-2xl bg-rose-600 text-white shadow-md space-y-2 text-xs">

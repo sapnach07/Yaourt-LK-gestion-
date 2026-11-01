@@ -25,6 +25,11 @@ import {
   ArrowLeft,
   FileText,
   Store,
+  Cloud,
+  RefreshCw,
+  FolderOpen,
+  LogOut,
+  AlertTriangle,
 } from 'lucide-react';
 import { liveQuery } from 'dexie';
 import { db } from '../../db/db';
@@ -34,6 +39,16 @@ import {
   exportSalesToCSV,
   exportExpensesToCSV,
 } from '../../utils/exportImport';
+import {
+  connectGoogleDrive,
+  performDriveBackup,
+  reconnectAndBackupDrive,
+  disconnectGoogleDrive,
+  updateDriveBackupSettings,
+  formatDriveDateTime,
+  isDriveAuthError,
+  useDriveBusy,
+} from '../../utils/driveBackup';
 import { calculateMonthResteNormale } from '../../utils/reserveCalculator';
 import {
   computeSuggestedSaleReceiptNo,
@@ -55,6 +70,7 @@ import { ConfirmModal } from '../../components/ConfirmModal';
 import { RecoveryCodeModal } from '../../components/RecoveryCodeModal';
 import { PayslipSettingsSection } from './PayslipSettingsSection';
 import { ReceiptSettingsSection } from './ReceiptSettingsSection';
+import { DriveBackupsModal } from './DriveBackupsModal';
 import type {
   AppSettings,
   Product,
@@ -288,6 +304,11 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
   const [isReplaceConfirmOpen, setIsReplaceConfirmOpen] = useState(false);
   const [trashCount, setTrashCount] = useState(0);
+
+  // Google Drive backup modals & busy state
+  const isDriveBusy = useDriveBusy();
+  const [isDriveBackupsOpen, setIsDriveBackupsOpen] = useState(false);
+  const [isDisconnectDriveConfirmOpen, setIsDisconnectDriveConfirmOpen] = useState(false);
 
   useEffect(() => {
     const sub = liveQuery(() => db.trash.count()).subscribe({
@@ -804,6 +825,77 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  // Google Drive Backup handlers
+  const handleConnectDrive = async () => {
+    const res = await connectGoogleDrive();
+    const latest = await db.settings.get('app_settings');
+    if (latest) onSettingsUpdated(latest);
+
+    if (!res.success) {
+      if (res.errorMessage) {
+        onShowToast('error', res.errorMessage);
+      }
+      return;
+    }
+
+    if (res.existingBackupsPreserved) {
+      onShowToast(
+        'info',
+        'Google Drive connecté : des sauvegardes existantes ont été détectées. Vous pouvez les restaurer maintenant.'
+      );
+      setIsDriveBackupsOpen(true);
+    }
+  };
+
+  const handleManualDriveBackup = async () => {
+    const res = await performDriveBackup({ trigger: 'manual' });
+    const latest = await db.settings.get('app_settings');
+    if (latest) onSettingsUpdated(latest);
+
+    if (!res.success && res.errorMessage) {
+      onShowToast('error', res.errorMessage);
+    }
+  };
+
+  const handleReconnectDrive = async () => {
+    const res = await reconnectAndBackupDrive();
+    const latest = await db.settings.get('app_settings');
+    if (latest) onSettingsUpdated(latest);
+
+    if (!res.success && res.errorMessage) {
+      onShowToast('error', res.errorMessage);
+    }
+  };
+
+  const handleToggleDriveAuto = async (checked: boolean) => {
+    const updated = await updateDriveBackupSettings({ autoEnabled: checked });
+    onSettingsUpdated(updated);
+    onShowToast(
+      'info',
+      checked
+        ? 'Sauvegarde automatique Google Drive activée.'
+        : 'Sauvegarde automatique Google Drive mise en pause.'
+    );
+  };
+
+  const handleConfirmDisconnectDrive = async () => {
+    setIsDisconnectDriveConfirmOpen(false);
+    const updated = await disconnectGoogleDrive();
+    onSettingsUpdated(updated);
+    onShowToast(
+      'info',
+      'Google Drive déconnecté. Vos fichiers restent conservés dans Google Drive.'
+    );
+  };
+
+  const handleDriveRestored = async (message: string) => {
+    const reloadedSettings = (await db.settings.get('app_settings')) || settings;
+    onSettingsUpdated(reloadedSettings);
+    setCategories(reloadedSettings.expenseCategories || []);
+    await Promise.all([loadProducts(), loadPersonalSales()]);
+    onShowToast('success', message);
+  };
+
   // Computed real-time summaries for the 7 themes
   const activeProductsCount = products.filter((p) => p.isActive).length;
   const nextReceiptNumberFormatted = formatReceiptNumber(
@@ -1100,6 +1192,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             'supprime',
             'efface',
             'restaurer',
+          ],
+        },
+        {
+          label: 'Sauvegarde automatique Google Drive',
+          keywords: [
+            'google',
+            'drive',
+            'google drive',
+            'cloud',
+            'sauvegarde automatique',
+            'mes sauvegardes drive',
+            'connecter',
+            'deconnecter',
           ],
         },
         {
@@ -2090,6 +2195,141 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           </button>
         )}
 
+        {/* Sauvegarde automatique Google Drive */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 p-4 shadow-xs space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-500 flex items-center gap-1.5">
+              <Cloud className="w-4 h-4 text-teal-700" />
+              <span>Sauvegarde Google Drive</span>
+            </h3>
+            <span
+              className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold border ${
+                settings.driveBackup?.connected
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-slate-100 text-slate-600 border-slate-200'
+              }`}
+            >
+              {settings.driveBackup?.connected ? 'CONNECTÉ' : 'NON CONNECTÉ'}
+            </span>
+          </div>
+
+          <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-xs text-slate-700 space-y-1">
+            {settings.driveBackup?.lastSuccessAt ? (
+              <p className="font-bold text-slate-900">
+                Dernière sauvegarde Drive :{' '}
+                <span className="font-mono text-teal-800">
+                  {formatDriveDateTime(settings.driveBackup.lastSuccessAt)} ✓
+                </span>
+              </p>
+            ) : (
+              <p className="font-bold text-slate-700">Jamais sauvegardé</p>
+            )}
+            <p className="text-[11px] text-slate-500 leading-snug">
+              Dossier dédié : « Sauvegardes Yaourt Gestion » (sans aucun ralentissement hors ligne).
+            </p>
+          </div>
+
+          {settings.driveBackup?.connected && settings.driveBackup?.lastError && (
+            <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-800 space-y-2">
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                <span className="font-semibold leading-snug">{settings.driveBackup.lastError}</span>
+              </div>
+              {isDriveAuthError(settings.driveBackup.lastError) && (
+                <button
+                  type="button"
+                  disabled={isDriveBusy}
+                  onClick={handleReconnectDrive}
+                  className="w-full py-2 px-3 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold transition-all min-h-[38px] disabled:opacity-50"
+                >
+                  {isDriveBusy ? 'Connexion en cours...' : 'Se reconnecter'}
+                </button>
+              )}
+            </div>
+          )}
+
+          {!settings.driveBackup?.connected ? (
+            <div className="space-y-2 pt-0.5">
+              <button
+                type="button"
+                disabled={isDriveBusy}
+                onClick={handleConnectDrive}
+                className="w-full py-3 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-xs active:scale-95 transition-all min-h-[44px] disabled:opacity-50"
+              >
+                {isDriveBusy ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Cloud className="w-4 h-4" />
+                )}
+                <span>
+                  {isDriveBusy ? 'Connexion en cours...' : 'Connecter mon Google Drive'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                disabled={isDriveBusy}
+                onClick={() => setIsDriveBackupsOpen(true)}
+                className="w-full py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-200 active:scale-95 transition-all min-h-[42px] disabled:opacity-50"
+              >
+                <FolderOpen className="w-4 h-4 text-teal-700" />
+                <span>Mes sauvegardes Drive</span>
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-2.5 pt-0.5">
+              <label className="flex items-start gap-2.5 p-2.5 rounded-xl bg-slate-50 border border-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={settings.driveBackup.autoEnabled !== false}
+                  onChange={(e) => handleToggleDriveAuto(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded border-slate-300 text-teal-700 focus:ring-teal-600 shrink-0"
+                />
+                <div className="min-w-0">
+                  <span className="text-xs font-bold text-slate-800 block leading-tight">
+                    Sauvegarde automatique activée
+                  </span>
+                  <span className="text-[11px] text-slate-500 block mt-0.5 leading-snug">
+                    À l’ouverture (&gt; 24 h) et 5 min après une modification (max 1 fois par heure).
+                  </span>
+                </div>
+              </label>
+
+              <button
+                type="button"
+                disabled={isDriveBusy}
+                onClick={handleManualDriveBackup}
+                className="w-full py-3 px-3 rounded-xl bg-teal-700 hover:bg-teal-800 text-white text-xs font-extrabold flex items-center justify-center gap-2 shadow-xs active:scale-95 transition-all min-h-[44px] disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${isDriveBusy ? 'animate-spin' : ''}`} />
+                <span>{isDriveBusy ? 'Sauvegarde en cours...' : 'Sauvegarder maintenant'}</span>
+              </button>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={isDriveBusy}
+                  onClick={() => setIsDriveBackupsOpen(true)}
+                  className="py-2.5 px-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold flex items-center justify-center gap-1.5 border border-slate-200 active:scale-95 transition-all min-h-[42px] disabled:opacity-50"
+                >
+                  <FolderOpen className="w-4 h-4 text-teal-700 shrink-0" />
+                  <span>Mes sauvegardes Drive</span>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isDriveBusy}
+                  onClick={() => setIsDisconnectDriveConfirmOpen(true)}
+                  className="py-2.5 px-3 rounded-xl bg-white hover:bg-rose-50 text-rose-700 text-xs font-bold flex items-center justify-center gap-1.5 border border-rose-200 active:scale-95 transition-all min-h-[42px] disabled:opacity-50"
+                >
+                  <LogOut className="w-4 h-4 text-rose-600 shrink-0" />
+                  <span>Déconnecter Drive</span>
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         <CollapsibleSettingsSection
           title="Sauvegarde & Restauration (Hors ligne)"
           isOpen={openSections.backup_data}
@@ -2423,6 +2663,26 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
           setIsReplaceConfirmOpen(false);
           setPendingRestoreContent(null);
         }}
+      />
+
+      {/* Écran Mes sauvegardes Drive */}
+      <DriveBackupsModal
+        isOpen={isDriveBackupsOpen}
+        onClose={() => setIsDriveBackupsOpen(false)}
+        onRestored={handleDriveRestored}
+        onShowToast={onShowToast}
+      />
+
+      {/* Confirmation de déconnexion Google Drive */}
+      <ConfirmModal
+        isOpen={isDisconnectDriveConfirmOpen}
+        title="Déconnecter Google Drive ?"
+        message="La sauvegarde automatique vers Google Drive sera désactivée sur cet appareil. Tous vos fichiers déjà enregistrés dans Google Drive sont conservés."
+        confirmLabel="Déconnecter Drive"
+        cancelLabel="Annuler"
+        isDanger={false}
+        onConfirm={handleConfirmDisconnectDrive}
+        onCancel={() => setIsDisconnectDriveConfirmOpen(false)}
       />
     </div>
   );

@@ -606,20 +606,33 @@ export interface BackupData {
     | 'pinFailedAttempts'
     | 'pinLockoutCount'
     | 'pinLockoutUntil'
+    | 'pinDeleteFailedAttempts'
+    | 'pinDeleteLockoutUntil'
+    | 'driveBackup'
   > & {
     pinCode?: string;
     recoveryCodeHash?: string;
     pinFailedAttempts?: number;
     pinLockoutCount?: number;
     pinLockoutUntil?: number;
+    pinDeleteFailedAttempts?: number;
+    pinDeleteLockoutUntil?: number;
   };
 }
 
+export interface BuiltBackupPayload {
+  backup: BackupData;
+  json: string;
+  dateStr: string;
+}
+
 /**
- * Exports all IndexedDB data to a downloadable JSON file.
- * Updates lastBackupDate in settings.
+ * Builds the exact JSON backup payload from IndexedDB without duplicating export logic.
+ * Excludes PIN, recovery code, lockout counters, and driveBackup state.
  */
-export async function exportAllDataToJSON(): Promise<void> {
+export async function buildBackupJSON(options?: {
+  updateLocalLastBackupDate?: boolean;
+}): Promise<BuiltBackupPayload> {
   const [
     employees,
     products,
@@ -654,7 +667,7 @@ export async function exportAllDataToJSON(): Promise<void> {
   const now = new Date();
   const dateStr = toISODate(now);
 
-  // Ne jamais inclure le PIN, le code de récupération, ni leurs empreintes ou compteurs dans l'export JSON
+  // Ne jamais inclure le PIN, le code de récupération, leurs compteurs ni driveBackup dans l'export JSON
   const {
     pinCode: _exportedPin,
     recoveryCodeHash: _exportedRecovery,
@@ -663,6 +676,7 @@ export async function exportAllDataToJSON(): Promise<void> {
     pinLockoutUntil: _exportedLockoutUntil,
     pinDeleteFailedAttempts: _exportedDeleteFailedAttempts,
     pinDeleteLockoutUntil: _exportedDeleteLockoutUntil,
+    driveBackup: _exportedDriveBackup,
     ...settingsWithoutSecrets
   } = (currentSettings || {}) as AppSettings;
 
@@ -700,19 +714,68 @@ export async function exportAllDataToJSON(): Promise<void> {
     },
   };
 
-  // Update last backup date in database (en conservant le PIN et le code de récupération locaux)
-  if (currentSettings) {
+  if (options?.updateLocalLastBackupDate && currentSettings) {
+    // Update last backup date in database (en conservant le PIN, le code de récupération et driveBackup locaux)
     await db.settings.put({
       ...currentSettings,
       lastBackupDate: dateStr,
     });
   }
 
-  const jsonStr = JSON.stringify(backup, null, 2);
-  const blob = new Blob([jsonStr], { type: 'application/json' });
+  const json = JSON.stringify(backup, null, 2);
+  return { backup, json, dateStr };
+}
+
+/**
+ * Exports all IndexedDB data to a downloadable JSON file.
+ * Updates lastBackupDate in settings.
+ */
+export async function exportAllDataToJSON(): Promise<void> {
+  const { json, dateStr } = await buildBackupJSON({ updateLocalLastBackupDate: true });
+  const blob = new Blob([json], { type: 'application/json' });
   const filename = `Sauvegarde_YaourtGestion_${dateStr}.json`;
 
   downloadBlob(blob, filename);
+}
+
+export interface BackupSummaryInfo {
+  employeesCount: number;
+  dailyEntriesCount: number;
+  expensesCount: number;
+  exportDate: string | null;
+  businessName: string;
+}
+
+export function parseBackupSummary(
+  fileContent: string
+): { valid: true; summary: BackupSummaryInfo } | { valid: false; message: string } {
+  try {
+    const data: BackupData = JSON.parse(fileContent);
+    if (!data || !data.version || !Array.isArray(data.employees)) {
+      return {
+        valid: false,
+        message: 'Ce fichier n’est pas une sauvegarde valide de Yaourt Gestion.',
+      };
+    }
+    return {
+      valid: true,
+      summary: {
+        employeesCount: Array.isArray(data.employees) ? data.employees.length : 0,
+        dailyEntriesCount: Array.isArray(data.dailyEntries) ? data.dailyEntries.length : 0,
+        expensesCount: Array.isArray(data.expenses) ? data.expenses.length : 0,
+        exportDate: typeof data.exportDate === 'string' ? data.exportDate : null,
+        businessName:
+          typeof data.businessName === 'string' && data.businessName.trim()
+            ? data.businessName.trim()
+            : 'Yaourt Gestion',
+      },
+    };
+  } catch (err: any) {
+    return {
+      valid: false,
+      message: `Impossible de lire ce fichier JSON : ${err?.message || 'Format invalide'}`,
+    };
+  }
 }
 
 /**
@@ -972,8 +1035,9 @@ export async function restoreDataFromJSON(
         pinLockoutUntil: _importedLockoutUntil,
         pinDeleteFailedAttempts: _importedDeleteFailedAttempts,
         pinDeleteLockoutUntil: _importedDeleteLockoutUntil,
+        driveBackup: _importedDriveBackup,
         ...importedSettingsWithoutSecrets
-      } = data.settings;
+      } = data.settings as AppSettings;
 
       const importedCostItems = sanitizeCostItems(data.settings.costItems);
       const importedProductCosting = sanitizeProductCosting(data.settings.productCosting);
@@ -1120,6 +1184,7 @@ export async function restoreDataFromJSON(
         pinLockoutUntil: currentLocalSettings?.pinLockoutUntil,
         pinDeleteFailedAttempts: currentLocalSettings?.pinDeleteFailedAttempts,
         pinDeleteLockoutUntil: currentLocalSettings?.pinDeleteLockoutUntil,
+        driveBackup: currentLocalSettings?.driveBackup,
         debtReminderDays:
           data.settings.debtReminderDays !== undefined
             ? data.settings.debtReminderDays
@@ -1156,6 +1221,9 @@ export async function restoreDataFromJSON(
       }
       if (currentLocalSettings?.pinDeleteLockoutUntil === undefined) {
         delete restoredSettings.pinDeleteLockoutUntil;
+      }
+      if (currentLocalSettings?.driveBackup === undefined) {
+        delete restoredSettings.driveBackup;
       }
 
       await db.settings.put(restoredSettings);

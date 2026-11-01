@@ -17,12 +17,17 @@ import { EmployeeEarningsView } from './modules/employees/EmployeeEarningsView';
 import { ExpensesView } from './modules/expenses/ExpensesView';
 import { ReserveView } from './modules/expenses/ReserveView';
 import { OwnerProfitView } from './modules/dashboard/OwnerProfitView';
-import { SettingsView } from './modules/settings/SettingsView';
+import { SettingsView, type SettingsThemeId } from './modules/settings/SettingsView';
 import {
   IngredientStockView,
   type StockSubTab,
 } from './modules/ingredients/IngredientStockView';
 import { TrashHistoryView } from './modules/trash/TrashHistoryView';
+import {
+  installDriveAutoBackupHooks,
+  triggerStartupDriveBackupCheck,
+  subscribeDriveBackupSuccess,
+} from './utils/driveBackup';
 
 import type { AppSettings } from './types';
 
@@ -41,6 +46,7 @@ export default function App() {
   const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string; source?: 'personnel' | 'benefices' } | null>(null);
   const [dailyStatusFilter, setDailyStatusFilter] = useState<'all' | 'incomplete' | 'validated'>('all');
   const [dailySubTab, setDailySubTab] = useState<'sales' | 'production' | 'personal'>('sales');
+  const [settingsInitialTheme, setSettingsInitialTheme] = useState<SettingsThemeId | null>(null);
 
   // Security / PIN state
   const [isLocked, setIsLocked] = useState(false);
@@ -57,7 +63,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const unsub = subscribeDriveBackupSuccess(() => {
+      showToast('success', 'Sauvegarde enregistrée dans Drive ✓');
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
     if (!isDbReady) return;
+    installDriveAutoBackupHooks();
     const sub = liveQuery(() => db.settings.get('app_settings')).subscribe({
       next: (latest) => {
         if (latest) {
@@ -67,6 +81,12 @@ export default function App() {
     });
     return () => sub.unsubscribe();
   }, [isDbReady]);
+
+  useEffect(() => {
+    if (!isDbReady) return;
+    if (isLocked && settings.pinCode) return;
+    triggerStartupDriveBackupCheck();
+  }, [isDbReady, isLocked, settings.pinCode]);
 
   const resetSubViews = () => {
     setIsReserveOpen(false);
@@ -233,7 +253,15 @@ export default function App() {
                   } else if (tab === 'daily') {
                     setDailyStatusFilter('all');
                   }
+                  if (tab !== 'settings') {
+                    setSettingsInitialTheme(null);
+                  }
                   setActiveTab(tab);
+                }}
+                onOpenDriveSettings={() => {
+                  resetSubViews();
+                  setSettingsInitialTheme('backup');
+                  setActiveTab('settings');
                 }}
                 onOpenReserve={(prefill) => {
                   resetSubViews();
@@ -307,6 +335,7 @@ export default function App() {
                 settings={settings}
                 onSettingsUpdated={handleSettingsUpdated}
                 onShowToast={showToast}
+                initialTheme={settingsInitialTheme}
                 onOpenIngredientStock={() => {
                   resetSubViews();
                   setIngredientStockInitialTab('stock');
@@ -344,6 +373,7 @@ export default function App() {
         activeTab={activeTab}
         onTabChange={(tab) => {
           resetSubViews();
+          setSettingsInitialTheme(null);
           setActiveTab(tab);
         }}
       />

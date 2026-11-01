@@ -346,6 +346,18 @@ export interface AppSettings {
   // Réglages des reçus et prix de gros (optionnel)
   receiptSettings?: ReceiptSettings;
   wholesaleTiers?: Record<string, WholesaleTier[]>;
+  // Sauvegarde automatique Google Drive (optionnel, jamais exporté ni écrasé à l'import)
+  driveBackup?: DriveBackupSettings;
+}
+
+export interface DriveBackupSettings {
+  connected: boolean;
+  folderId?: string;
+  lastSuccessAt?: number | null;
+  lastAttemptAt?: number | null;
+  lastError?: string | null;
+  lastContentHash?: string | null;
+  autoEnabled?: boolean; // true par défaut
 }
 
 export interface WholesaleTier {
