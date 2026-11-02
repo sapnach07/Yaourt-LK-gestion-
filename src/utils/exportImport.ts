@@ -9,6 +9,7 @@ import {
 import { normalizeCustomerName } from './debtCalculator';
 import { isValidTrashKind } from './trashManager';
 import { normalizePayrollClosures } from './sellerPayroll';
+import { sanitizeNotificationSettings } from './notificationDefaults';
 import type {
   AppSettings,
   Customer,
@@ -710,6 +711,7 @@ export async function buildBackupJSON(options?: {
       dismissedPriceAlertKeys: currentSettings?.dismissedPriceAlertKeys,
       receiptSettings: currentSettings?.receiptSettings,
       wholesaleTiers: currentSettings?.wholesaleTiers,
+      notificationSettings: currentSettings?.notificationSettings,
       lastBackupDate: dateStr,
     },
   };
@@ -1173,6 +1175,25 @@ export async function restoreDataFromJSON(
           Object.keys(mergedClosures).length > 0 ? mergedClosures : undefined;
       }
 
+      const importedNotifSettings = sanitizeNotificationSettings(
+        data.settings.notificationSettings,
+        data.settings
+      );
+      let finalNotificationSettings = importedNotifSettings ?? existingSettings?.notificationSettings;
+      if (mode === 'merge' && existingSettings?.notificationSettings && importedNotifSettings) {
+        const mergedRulesMap = new Map(
+          existingSettings.notificationSettings.rules.map((r) => [r.id, r])
+        );
+        for (const r of importedNotifSettings.rules) {
+          mergedRulesMap.set(r.id, r);
+        }
+        finalNotificationSettings = {
+          inAppMode: importedNotifSettings.inAppMode,
+          systemMode: importedNotifSettings.systemMode,
+          rules: Array.from(mergedRulesMap.values()),
+        };
+      }
+
       const restoredSettings: AppSettings = {
         ...(existingSettings || {}),
         ...importedSettingsWithoutSecrets,
@@ -1200,7 +1221,11 @@ export async function restoreDataFromJSON(
         dismissedPriceAlertKeys: finalDismissedKeys,
         receiptSettings: finalReceiptSettings,
         wholesaleTiers: finalWholesaleTiers,
+        notificationSettings: finalNotificationSettings,
       };
+      if (finalNotificationSettings === undefined) {
+        delete restoredSettings.notificationSettings;
+      }
       if (finalPayrollClosures === undefined) {
         delete restoredSettings.payrollClosures;
       }

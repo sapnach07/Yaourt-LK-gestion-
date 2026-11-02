@@ -1427,6 +1427,9 @@ export function installDriveAutoBackupHooks(): void {
   hooksInstalled = true;
 
   for (const table of db.tables) {
+    if (table.name === 'notifications') {
+      continue;
+    }
     if (table.name === 'settings') {
       table.hook('creating', function () {
         if (isInternalDriveSettingsWrite()) return;

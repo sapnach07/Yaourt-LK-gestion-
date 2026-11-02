@@ -30,6 +30,7 @@ import {
   FolderOpen,
   LogOut,
   AlertTriangle,
+  Bell,
 } from 'lucide-react';
 import { liveQuery } from 'dexie';
 import { db } from '../../db/db';
@@ -71,6 +72,8 @@ import { RecoveryCodeModal } from '../../components/RecoveryCodeModal';
 import { PayslipSettingsSection } from './PayslipSettingsSection';
 import { ReceiptSettingsSection } from './ReceiptSettingsSection';
 import { DriveBackupsModal } from './DriveBackupsModal';
+import { NotificationSettingsSection } from '../notifications/NotificationSettingsSection';
+import { resolveNotificationSettings } from '../../utils/notificationDefaults';
 import type {
   AppSettings,
   Product,
@@ -86,6 +89,7 @@ export type SettingsThemeId =
   | 'documents'
   | 'costing'
   | 'expenses'
+  | 'notifications'
   | 'security'
   | 'backup';
 
@@ -109,6 +113,7 @@ const THEME_SECTIONS_MAP: Record<SettingsThemeId, SettingsSectionId[]> = {
   documents: ['documents_payslip', 'documents_receipts'],
   costing: ['costing_items', 'costing_stock'],
   expenses: ['expenses_categories', 'expenses_caisses'],
+  notifications: [],
   security: [],
   backup: ['backup_data', 'backup_pwa'],
 };
@@ -1139,6 +1144,64 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             'capital',
             'cloturer',
             'solde de depart',
+          ],
+        },
+      ],
+    },
+    {
+      id: 'notifications',
+      title: 'Paramètres des notifications',
+      summary: (() => {
+        const resolved = resolveNotificationSettings(settings);
+        const activeCount = resolved.rules.filter((r) => r.enabled).length;
+        const modes: string[] = [];
+        if (resolved.inAppMode.enabled) modes.push('Interne');
+        if (resolved.systemMode.enabled) modes.push('Système');
+        const modeText = modes.length > 0 ? modes.join(' + ') : 'Silencieux';
+        return `${activeCount} règle${activeCount > 1 ? 's' : ''} active${
+          activeCount > 1 ? 's' : ''
+        } · ${modeText}`;
+      })(),
+      icon: <Bell className="w-5 h-5 text-teal-700" />,
+      iconBgClass: 'bg-teal-50 border-teal-200/70',
+      entries: [
+        {
+          label: 'Modes d’envoi (Interne & Système téléphone / navigateur)',
+          keywords: [
+            'notification',
+            'notifications',
+            'cloche',
+            'telephone',
+            'navigateur',
+            'systeme',
+            'banniere',
+            'son',
+            'vibration',
+            'heures calmes',
+            'silencieux',
+          ],
+        },
+        {
+          label: 'Règles intelligentes & règles personnalisées',
+          keywords: [
+            'alerte',
+            'alertes',
+            'rappel',
+            'rappels',
+            'regle',
+            'regles',
+            'personnaliser',
+            'couleur',
+            'icone',
+            'style',
+            'message',
+            'titre',
+            'seuil',
+            'horaire',
+            'frequence',
+            'rapport',
+            'tester',
+            'previsualiser',
           ],
         },
       ],
@@ -2441,6 +2504,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           </div>
         </CollapsibleSettingsSection>
+      </div>
+
+      {/* =================================================================== */}
+      {/* THÈME NOTIFICATIONS : PARAMÈTRES DES NOTIFICATIONS                  */}
+      {/* =================================================================== */}
+      <div className={activeTheme === 'notifications' ? 'space-y-3.5' : 'hidden'}>
+        <NotificationSettingsSection
+          settings={settings}
+          onSettingsUpdated={onSettingsUpdated}
+          onShowToast={onShowToast}
+        />
       </div>
 
       {/* PIN Create / Change / Disable Modal */}

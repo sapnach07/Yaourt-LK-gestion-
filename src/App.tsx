@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Calculator } from 'lucide-react';
 import { liveQuery } from 'dexie';
 import { db, initializeDatabase, DEFAULT_SETTINGS } from './db/db';
@@ -23,13 +23,28 @@ import {
   type StockSubTab,
 } from './modules/ingredients/IngredientStockView';
 import { TrashHistoryView } from './modules/trash/TrashHistoryView';
+import { NotificationCenterModal } from './modules/notifications/NotificationCenterModal';
 import {
   installDriveAutoBackupHooks,
   triggerStartupDriveBackupCheck,
   subscribeDriveBackupSuccess,
 } from './utils/driveBackup';
+import { resolveNotificationSettings } from './utils/notificationDefaults';
+import {
+  emitNotificationNavigation,
+  recordDriveSyncSuccessNotification,
+  runSmartNotificationEvaluation,
+  subscribeInAppNotificationBanners,
+  subscribeNotificationNavigation,
+  syncBackgroundNotificationWorker,
+  toggleNotificationRead,
+} from './utils/notificationEngine';
 
-import type { AppSettings } from './types';
+import type {
+  AppNotification,
+  AppSettings,
+  NotificationActionTarget,
+} from './types';
 
 export default function App() {
   const [isDbReady, setIsDbReady] = useState(false);
@@ -41,6 +56,7 @@ export default function App() {
   const [isDebtsOpen, setIsDebtsOpen] = useState(false);
   const [isIngredientStockOpen, setIsIngredientStockOpen] = useState(false);
   const [isTrashHistoryOpen, setIsTrashHistoryOpen] = useState(false);
+  const [isNotificationCenterOpen, setIsNotificationCenterOpen] = useState(false);
   const [ingredientStockInitialTab, setIngredientStockInitialTab] = useState<StockSubTab>('stock');
   const [debtsInitialCustomerId, setDebtsInitialCustomerId] = useState<string | null>(null);
   const [reservePrefill, setReservePrefill] = useState<{ amount: number; reason: string; source?: 'personnel' | 'benefices' } | null>(null);
@@ -55,40 +71,21 @@ export default function App() {
   // Calculator floating modal state
   const [isCalculatorOpen, setIsCalculatorOpen] = useState(false);
 
-  // Toast notifications state
+  // Toast notifications & Notification Center history state
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
+  const [notificationsHistory, setNotificationsHistory] = useState<AppNotification[]>([]);
 
-  useEffect(() => {
-    initApp();
-  }, []);
+  const resolvedNotifSettings = useMemo(
+    () => resolveNotificationSettings(settings),
+    [settings]
+  );
 
-  useEffect(() => {
-    const unsub = subscribeDriveBackupSuccess(() => {
-      showToast('success', 'Sauvegarde enregistrée dans Drive ✓');
-    });
-    return unsub;
-  }, []);
+  const unreadNotificationsCount = useMemo(
+    () => notificationsHistory.filter((n) => !n.isRead).length,
+    [notificationsHistory]
+  );
 
-  useEffect(() => {
-    if (!isDbReady) return;
-    installDriveAutoBackupHooks();
-    const sub = liveQuery(() => db.settings.get('app_settings')).subscribe({
-      next: (latest) => {
-        if (latest) {
-          setSettings(latest);
-        }
-      },
-    });
-    return () => sub.unsubscribe();
-  }, [isDbReady]);
-
-  useEffect(() => {
-    if (!isDbReady) return;
-    if (isLocked && settings.pinCode) return;
-    triggerStartupDriveBackupCheck();
-  }, [isDbReady, isLocked, settings.pinCode]);
-
-  const resetSubViews = () => {
+  const resetSubViews = useCallback(() => {
     setIsReserveOpen(false);
     setIsEarningsOpen(false);
     setIsOwnerProfitOpen(false);
@@ -97,7 +94,224 @@ export default function App() {
     setIsTrashHistoryOpen(false);
     setDebtsInitialCustomerId(null);
     setReservePrefill(null);
-  };
+  }, []);
+
+  const handleNavigateNotificationTarget = useCallback(
+    (target: NotificationActionTarget) => {
+      resetSubViews();
+      switch (target) {
+        case 'stock':
+          setIngredientStockInitialTab('stock');
+          setIsIngredientStockOpen(true);
+          break;
+        case 'stock_prices':
+          setIngredientStockInitialTab('prices');
+          setIsIngredientStockOpen(true);
+          break;
+        case 'debts':
+          setIsDebtsOpen(true);
+          break;
+        case 'earnings':
+          setIsEarningsOpen(true);
+          break;
+        case 'reserve':
+          setIsReserveOpen(true);
+          break;
+        case 'owner_profit':
+          setIsOwnerProfitOpen(true);
+          break;
+        case 'daily_incomplete':
+          setDailyStatusFilter('incomplete');
+          setDailySubTab('sales');
+          setSettingsInitialTheme(null);
+          setActiveTab('daily');
+          break;
+        case 'daily_sales':
+          setDailyStatusFilter('all');
+          setDailySubTab('sales');
+          setSettingsInitialTheme(null);
+          setActiveTab('daily');
+          break;
+        case 'backup_settings':
+          setSettingsInitialTheme('backup');
+          setActiveTab('settings');
+          break;
+        case 'notification_settings':
+          setSettingsInitialTheme('notifications');
+          setActiveTab('settings');
+          break;
+        case 'dashboard':
+        default:
+          setSettingsInitialTheme(null);
+          setActiveTab('dashboard');
+          break;
+      }
+    },
+    [resetSubViews]
+  );
+
+  useEffect(() => {
+    initApp();
+  }, []);
+
+  useEffect(() => {
+    const unsub = subscribeDriveBackupSuccess(() => {
+      showToast('success', 'Sauvegarde enregistrée dans Drive ✓');
+      void recordDriveSyncSuccessNotification();
+    });
+    return unsub;
+  }, []);
+
+  // Souscription aux bannières intelligentes internes & clics de navigation
+  useEffect(() => {
+    const unsubBanners = subscribeInAppNotificationBanners(({ notification, durationSeconds }) => {
+      const toastId = `smart_${notification.id}_${Date.now()}`;
+      const newToast: ToastMessage = {
+        id: toastId,
+        type: 'custom',
+        title: notification.title,
+        message: notification.message,
+        customColor: notification.color,
+        customIcon: notification.icon,
+        styleVariant: notification.styleVariant,
+        actionLabel: notification.actionLabel,
+        onAction: notification.actionTarget
+          ? () => {
+              void toggleNotificationRead(notification.id, true);
+              handleNavigateNotificationTarget(notification.actionTarget!);
+            }
+          : undefined,
+      };
+      setToasts((prev) => [...prev, newToast]);
+      window.setTimeout(() => {
+        setToasts((prev) => prev.filter((t) => t.id !== toastId));
+      }, Math.max(2000, durationSeconds * 1000));
+    });
+
+    const unsubNav = subscribeNotificationNavigation((actionTarget, notificationId) => {
+      if (notificationId) {
+        void toggleNotificationRead(notificationId, true);
+      }
+      handleNavigateNotificationTarget(actionTarget);
+    });
+
+    const handleSwMessage = (event: MessageEvent) => {
+      const data = event.data;
+      if (data && data.type === 'YAOURT_NOTIFICATION_CLICK' && data.actionTarget) {
+        emitNotificationNavigation(
+          data.actionTarget as NotificationActionTarget,
+          typeof data.notificationId === 'string' ? data.notificationId : undefined
+        );
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    }
+
+    return () => {
+      unsubBanners();
+      unsubNav();
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
+    };
+  }, [handleNavigateNotificationTarget]);
+
+  // Abonnement temps réel aux paramètres et à l'historique des notifications
+  useEffect(() => {
+    if (!isDbReady) return;
+    installDriveAutoBackupHooks();
+
+    const settingsSub = liveQuery(() => db.settings.get('app_settings')).subscribe({
+      next: (latest) => {
+        if (latest) {
+          setSettings(latest);
+        }
+      },
+    });
+
+    const notifsSub = liveQuery(() =>
+      db.notifications.orderBy('createdAt').reverse().toArray()
+    ).subscribe({
+      next: (list) => {
+        setNotificationsHistory(list);
+      },
+    });
+
+    return () => {
+      settingsSub.unsubscribe();
+      notifsSub.unsubscribe();
+    };
+  }, [isDbReady]);
+
+  // Démarrage, surveillance réactive des données métier et vérification horaire périodique
+  useEffect(() => {
+    if (!isDbReady) return;
+    if (isLocked && settings.pinCode) return;
+
+    triggerStartupDriveBackupCheck();
+    void syncBackgroundNotificationWorker(settings);
+
+    // Vérifier un éventuel paramètre d'ouverture issu d'un clic sur notification système (/?notifAction=...)
+    const params = new URLSearchParams(window.location.search);
+    const notifAction = params.get('notifAction') as NotificationActionTarget | null;
+    if (notifAction) {
+      params.delete('notifAction');
+      const cleanSearch = params.toString();
+      const nextUrl = `${window.location.pathname}${cleanSearch ? `?${cleanSearch}` : ''}${window.location.hash}`;
+      window.history.replaceState({}, '', nextUrl);
+      handleNavigateNotificationTarget(notifAction);
+    }
+
+    let evalDebounceTimer: number | null = null;
+    const scheduleSmartEval = (delayMs = 1500) => {
+      if (evalDebounceTimer !== null) {
+        window.clearTimeout(evalDebounceTimer);
+      }
+      evalDebounceTimer = window.setTimeout(() => {
+        evalDebounceTimer = null;
+        void runSmartNotificationEvaluation();
+      }, delayMs);
+    };
+
+    // Évaluation initiale après ouverture
+    scheduleSmartEval(1200);
+
+    // Réévaluation automatique lors des modifications de données métier
+    const dataWatcherSub = liveQuery(async () => {
+      const [de, incCount, ps, ex, pr, dp, py, sa, rm, st] = await Promise.all([
+        db.dailyEntries.count(),
+        db.dailyEntries.filter((e) => e.status === 'incomplete').count(),
+        db.personalSales.count(),
+        db.expenses.count(),
+        db.productionEntries.count(),
+        db.debtPayments.count(),
+        db.payments.count(),
+        db.stockAdjustments.count(),
+        db.reserveMovements.count(),
+        db.settings.get('app_settings'),
+      ]);
+      return `${de}-${incCount}-${ps}-${ex}-${pr}-${dp}-${py}-${sa}-${rm}-${st?.lastBackupDate || ''}-${st?.driveBackup?.lastError || ''}-${st?.monthlySalesTargetFC || 0}`;
+    }).subscribe({
+      next: () => {
+        scheduleSmartEval(2000);
+      },
+    });
+
+    // Vérification toutes les 60 secondes pour déclencher les rapports/rappels à l'heure programmée
+    const minuteTimer = window.setInterval(() => {
+      void runSmartNotificationEvaluation();
+    }, 60_000);
+
+    return () => {
+      if (evalDebounceTimer !== null) {
+        window.clearTimeout(evalDebounceTimer);
+      }
+      dataWatcherSub.unsubscribe();
+      window.clearInterval(minuteTimer);
+    };
+  }, [isDbReady, isLocked, settings.pinCode, handleNavigateNotificationTarget]);
 
   const initApp = async () => {
     try {
@@ -173,7 +387,26 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col font-sans">
       {/* Toast Manager */}
-      <NotificationToast toasts={toasts} onDismiss={dismissToast} />
+      <NotificationToast
+        toasts={toasts}
+        onDismiss={dismissToast}
+        position={resolvedNotifSettings.inAppMode.position}
+      />
+
+      {/* Centre de notifications professionnel */}
+      <NotificationCenterModal
+        isOpen={isNotificationCenterOpen}
+        onClose={() => setIsNotificationCenterOpen(false)}
+        notifications={notificationsHistory}
+        settings={settings}
+        onNavigateTarget={handleNavigateNotificationTarget}
+        onOpenNotificationSettings={() => {
+          resetSubViews();
+          setSettingsInitialTheme('notifications');
+          setActiveTab('settings');
+        }}
+        onShowToast={showToast}
+      />
 
       {/* One-time Recovery Code Modal (after legacy PIN migration or forgot-PIN recovery) */}
       <RecoveryCodeModal
@@ -188,6 +421,8 @@ export default function App() {
         onLockNow={() => setIsLocked(true)}
         openCalculator={() => setIsCalculatorOpen(true)}
         logoBase64={settings.appLogoBase64}
+        unreadNotificationsCount={unreadNotificationsCount}
+        onOpenNotifications={() => setIsNotificationCenterOpen(true)}
       />
 
       {/* Main Content Area */}

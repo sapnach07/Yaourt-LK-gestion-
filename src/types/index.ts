@@ -348,6 +348,8 @@ export interface AppSettings {
   wholesaleTiers?: Record<string, WholesaleTier[]>;
   // Sauvegarde automatique Google Drive (optionnel, jamais exporté ni écrasé à l'import)
   driveBackup?: DriveBackupSettings;
+  // Paramètres personnalisés du système de notifications (optionnel)
+  notificationSettings?: NotificationSettings;
 }
 
 export interface DriveBackupSettings {
@@ -434,4 +436,144 @@ export interface TrashItem<T = any> {
   deletedAt: number;
   restoredAt?: number;
 }
+
+// ============================================================================
+// SYSTÈME DE NOTIFICATIONS INTELLIGENTES & PERSONNALISABLES
+// ============================================================================
+
+export type NotificationCategory =
+  | 'stock'
+  | 'debts'
+  | 'finance'
+  | 'reports'
+  | 'backup'
+  | 'custom';
+
+export type NotificationStyleVariant = 'soft' | 'outlined' | 'solid' | 'minimal';
+
+export type NotificationFrequency = 'instant' | 'every_6h' | 'daily' | 'weekly';
+
+export type NotificationIconName =
+  | 'Bell'
+  | 'Package'
+  | 'AlertTriangle'
+  | 'Users'
+  | 'Wallet'
+  | 'TrendingUp'
+  | 'Target'
+  | 'BarChart3'
+  | 'Cloud'
+  | 'Download'
+  | 'Clock'
+  | 'CheckCircle2'
+  | 'Flame'
+  | 'ShieldAlert'
+  | 'Sparkles'
+  | 'Calendar';
+
+export type NotificationActionTarget =
+  | 'stock'
+  | 'stock_prices'
+  | 'debts'
+  | 'earnings'
+  | 'reserve'
+  | 'owner_profit'
+  | 'daily_incomplete'
+  | 'daily_sales'
+  | 'dashboard'
+  | 'backup_settings'
+  | 'notification_settings';
+
+export type NotificationTriggerType =
+  | 'builtin_stock_low'
+  | 'builtin_stock_price_rise'
+  | 'builtin_debts_overdue'
+  | 'builtin_sellers_unpaid'
+  | 'builtin_sales_target'
+  | 'builtin_reserve_low'
+  | 'builtin_loss_rate'
+  | 'builtin_incomplete_entries'
+  | 'builtin_report_daily'
+  | 'builtin_report_weekly'
+  | 'builtin_backup_local'
+  | 'builtin_backup_drive'
+  | 'custom_reserve_below'
+  | 'custom_benefices_above'
+  | 'custom_monthly_sales_pct'
+  | 'custom_daily_sales_above'
+  | 'custom_overdue_debts_count'
+  | 'custom_total_debts_above'
+  | 'custom_low_stock_count'
+  | 'custom_loss_rate_above'
+  | 'custom_incomplete_entries'
+  | 'custom_scheduled_reminder';
+
+export interface NotificationRule {
+  id: string;
+  isCustom: boolean;
+  enabled: boolean;
+  name: string;
+  description?: string;
+  category: NotificationCategory;
+  triggerType: NotificationTriggerType;
+  titleTemplate: string;
+  messageTemplate: string;
+  color: string; // Code hexadécimal (ex. '#0f766e')
+  icon: NotificationIconName;
+  styleVariant: NotificationStyleVariant;
+  channels: {
+    inApp: boolean;
+    system: boolean;
+  };
+  thresholdValue?: number;
+  frequency: NotificationFrequency;
+  preferredTime?: string; // 'HH:mm'
+  activeDays?: number[]; // 0 = Dimanche ... 6 = Samedi
+  actionTarget?: NotificationActionTarget;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface InAppNotificationModeSettings {
+  enabled: boolean;
+  durationSeconds: number; // 3 à 12
+  position: 'top' | 'bottom';
+  soundEnabled: boolean;
+  showToasts: boolean;
+}
+
+export interface SystemNotificationModeSettings {
+  enabled: boolean;
+  vibrate: boolean;
+  requireInteraction: boolean;
+  quietHoursEnabled: boolean;
+  quietHoursStart: string; // 'HH:mm' (ex. '22:00')
+  quietHoursEnd: string; // 'HH:mm' (ex. '06:30')
+  backgroundSyncEnabled: boolean;
+}
+
+export interface NotificationSettings {
+  inAppMode: InAppNotificationModeSettings;
+  systemMode: SystemNotificationModeSettings;
+  rules: NotificationRule[];
+}
+
+export interface AppNotification {
+  id: string;
+  ruleId: string;
+  category: NotificationCategory;
+  title: string;
+  message: string;
+  color: string;
+  icon: NotificationIconName;
+  styleVariant: NotificationStyleVariant;
+  isRead: boolean;
+  readAt?: number;
+  createdAt: number;
+  dedupKey: string;
+  actionTarget?: NotificationActionTarget;
+  actionLabel?: string;
+  isTest?: boolean;
+}
+
 

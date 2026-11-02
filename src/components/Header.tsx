@@ -1,5 +1,5 @@
 import React from 'react';
-import { Lock, ShieldCheck } from 'lucide-react';
+import { Bell, Lock, ShieldCheck } from 'lucide-react';
 import { formatDate, toISODate } from '../utils/formatters';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -9,6 +9,8 @@ interface HeaderProps {
   onLockNow?: () => void;
   openCalculator?: () => void;
   logoBase64?: string;
+  unreadNotificationsCount?: number;
+  onOpenNotifications?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +18,8 @@ export const Header: React.FC<HeaderProps> = ({
   hasPin,
   onLockNow,
   logoBase64,
+  unreadNotificationsCount = 0,
+  onOpenNotifications,
 }) => {
   const todayStr = formatDate(toISODate(new Date()));
 
@@ -37,9 +41,6 @@ export const Header: React.FC<HeaderProps> = ({
               src="/pwa-192x192.png"
               alt="Logo"
               className="w-full h-full object-contain rounded-lg"
-              onError={(e) => {
-                (e.currentTarget as HTMLElement).style.display = 'none';
-              }}
             />
           </div>
         )}
@@ -58,16 +59,38 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
 
-      {/* Zone 2 / 3: Quick Action (PWA Install + Lock screen if PIN is enabled) */}
-      <div className="flex items-center gap-1.5">
+      {/* Zone 2 / 3: Quick Action (PWA Install + Notifications Bell + Lock screen) */}
+      <div className="flex items-center gap-1">
         <PWAInstallButton variant="compact" logoBase64={logoBase64} />
+
+        {onOpenNotifications && (
+          <button
+            type="button"
+            onClick={onOpenNotifications}
+            title="Centre de notifications"
+            aria-label={
+              unreadNotificationsCount > 0
+                ? `Centre de notifications (${unreadNotificationsCount} non lues)`
+                : 'Centre de notifications'
+            }
+            className="relative p-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 active:scale-95 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0"
+          >
+            <Bell className="w-5 h-5" />
+            {unreadNotificationsCount > 0 && (
+              <span className="absolute top-1.5 right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-600 text-white text-[10px] font-extrabold font-mono tabular-nums leading-none flex items-center justify-center ring-2 ring-white">
+                {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+              </span>
+            )}
+          </button>
+        )}
+
         {hasPin && onLockNow && (
           <button
             type="button"
             onClick={onLockNow}
             title="Verrouiller l’application"
             aria-label="Verrouiller"
-            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 active:scale-95 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center"
+            className="p-2 rounded-xl text-slate-500 hover:text-slate-800 hover:bg-slate-100 active:scale-95 transition-all min-h-[44px] min-w-[44px] flex items-center justify-center shrink-0"
           >
             <Lock className="w-4 h-4" />
           </button>
