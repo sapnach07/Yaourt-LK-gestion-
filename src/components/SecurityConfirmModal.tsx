@@ -229,7 +229,9 @@ export const SecurityConfirmModal: React.FC<SecurityConfirmModalProps> = ({
           currentSettings.pinDeleteLockoutUntil
         ) {
           const cleaned = clearPinLockoutFields(currentSettings);
-          await db.settings.put(cleaned);
+          db.settings.put(cleaned).catch((err) => {
+            console.error('Erreur nettoyage lockout en arrière-plan:', err);
+          });
           setLiveSettings(cleaned);
         }
       } finally {

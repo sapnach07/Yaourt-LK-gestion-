@@ -73,6 +73,10 @@ import {
   isDriveAuthError,
   useDriveBusy,
 } from '../../utils/driveBackup';
+import {
+  getPreloadedAppData,
+  getOrWaitPreloadedAppData,
+} from '../../utils/dataPreloader';
 import type {
   DailyEntry,
   Expense,
@@ -125,17 +129,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('all');
   const [selectedProductId, setSelectedProductId] = useState<string>('all');
 
-  const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>([]);
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [products, setProducts] = useState<Product[]>([]);
-  const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>([]);
-  const [payments, setPayments] = useState<Payment[]>([]);
-  const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>([]);
-  const [personalSales, setPersonalSales] = useState<PersonalSale[]>([]);
-  const [customers, setCustomers] = useState<Customer[]>([]);
-  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>([]);
-  const [stockAdjustments, setStockAdjustments] = useState<StockAdjustment[]>([]);
+  const preloaded = getPreloadedAppData();
+
+  const [dailyEntries, setDailyEntries] = useState<DailyEntry[]>(() => preloaded?.dailyEntries || []);
+  const [expenses, setExpenses] = useState<Expense[]>(() => preloaded?.expenses || []);
+  const [employees, setEmployees] = useState<Employee[]>(() => preloaded?.employees || []);
+  const [products, setProducts] = useState<Product[]>(() => preloaded?.products || []);
+  const [productionEntries, setProductionEntries] = useState<ProductionEntry[]>(() => preloaded?.productionEntries || []);
+  const [payments, setPayments] = useState<Payment[]>(() => preloaded?.payments || []);
+  const [reserveMovements, setReserveMovements] = useState<ReserveMovement[]>(() => preloaded?.reserveMovements || []);
+  const [personalSales, setPersonalSales] = useState<PersonalSale[]>(() => preloaded?.personalSales || []);
+  const [customers, setCustomers] = useState<Customer[]>(() => preloaded?.customers || []);
+  const [debtPayments, setDebtPayments] = useState<DebtPayment[]>(() => preloaded?.debtPayments || []);
+  const [stockAdjustments, setStockAdjustments] = useState<StockAdjustment[]>(() => preloaded?.stockAdjustments || []);
 
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isStockModalOpen, setIsStockModalOpen] = useState(false);
@@ -148,10 +154,28 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [hourlyMetricMode, setHourlyMetricMode] = useState<'amount' | 'count'>('amount');
 
   useEffect(() => {
+    // Si les données sont déjà initialisées depuis le cache préchargé,
+    // on ne bloque pas le premier rendu.
     loadData();
   }, []);
 
-  const loadData = async () => {
+  const loadData = async (forceDbRead = false) => {
+    if (!forceDbRead) {
+      const data = await getOrWaitPreloadedAppData();
+      setDailyEntries(data.dailyEntries);
+      setExpenses(data.expenses);
+      setEmployees(data.employees);
+      setProducts(data.products);
+      setProductionEntries(data.productionEntries);
+      setPayments(data.payments);
+      setReserveMovements(data.reserveMovements);
+      setPersonalSales(data.personalSales);
+      setCustomers(data.customers);
+      setDebtPayments(data.debtPayments);
+      setStockAdjustments(data.stockAdjustments);
+      return;
+    }
+
     const [dList, eList, empList, prodList, pList, payList, movList, psList, custList, dpList, adjList] = await Promise.all([
       db.dailyEntries.toArray(),
       db.expenses.toArray(),
@@ -185,10 +209,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return calculateAllProductsStock(products, productionEntries, dailyEntries, personalSales);
   }, [products, productionEntries, dailyEntries, personalSales]);
 
-  // Clôtures mensuelles des stocks
+  // Clôtures mensuelles des stocks (calculé UNIQUEMENT quand la modale est ouverte pour respecter "Ne calcule pas les écrans fermés")
   const monthlyStockClosures = useMemo(() => {
+    if (!isMonthlyClosureModalOpen) return [];
     return calculateMonthlyStockClosures(products, productionEntries, dailyEntries, personalSales);
-  }, [products, productionEntries, dailyEntries, personalSales]);
+  }, [isMonthlyClosureModalOpen, products, productionEntries, dailyEntries, personalSales]);
 
   const totalHouseStockSum = useMemo(
     () => realTimeStockData.reduce((acc, it) => acc + it.houseStock, 0),
@@ -2623,7 +2648,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         onSettingsUpdated={onSettingsUpdated}
         onShowToast={onShowToast}
         onPaymentsChanged={async () => {
-          await loadData();
+          await loadData(true);
         }}
       />
     </div>

@@ -39,6 +39,7 @@ import {
   syncBackgroundNotificationWorker,
   toggleNotificationRead,
 } from './utils/notificationEngine';
+import { startAppDataPreload } from './utils/dataPreloader';
 
 import type {
   AppNotification,
@@ -324,6 +325,8 @@ export default function App() {
         }
       }
       setIsDbReady(true);
+      // Préchargement immédiat des données en arrière-plan pendant la saisie du PIN
+      void startAppDataPreload();
     } catch (e) {
       console.error('Erreur démarrage app:', e);
       setIsDbReady(true);

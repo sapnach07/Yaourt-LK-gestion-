@@ -102,15 +102,20 @@ export const PinLockScreen: React.FC<PinLockScreenProps> = ({
           }
 
           // Remise à zéro du compteur et du blocage après un déverrouillage réussi
+          // Optimisation : libère immédiatement l'écran sans bloquer sur l'écriture disque
           if (
             settings.pinFailedAttempts ||
             settings.pinLockoutCount ||
             settings.pinLockoutUntil
           ) {
             const cleanedSettings = clearPinLockoutFields(settings);
-            await db.settings.put(cleanedSettings);
+            // Écriture en arrière-plan sans bloquer la transition
+            db.settings.put(cleanedSettings).catch((err) => {
+              console.error('Erreur nettoyage lockout en arrière-plan:', err);
+            });
             onSettingsUpdated(cleanedSettings);
           }
+          // Déverrouillage instantané dès le 4e chiffre validé
           onUnlocked();
         } else {
           const {

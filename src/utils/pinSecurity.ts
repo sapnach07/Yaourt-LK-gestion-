@@ -66,15 +66,28 @@ export async function verifyPinValue(
   const cleanCandidate = candidatePin.trim();
   if (!/^\d{4}$/.test(cleanCandidate)) return false;
 
+  const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  let isValid = false;
+
   if (isHashedSecret(storedPinCode)) {
     const parts = storedPinCode.split('$');
     const saltHex = parts[1];
     const computed = await hashSecretWithSalt(cleanCandidate, saltHex);
-    return timingSafeEqual(computed, storedPinCode);
+    isValid = timingSafeEqual(computed, storedPinCode);
+  } else {
+    // Rétro-compatibilité avant migration automatique : PIN en clair à 4 chiffres
+    isValid = timingSafeEqual(cleanCandidate, storedPinCode.trim());
   }
 
-  // Rétro-compatibilité avant migration automatique : PIN en clair à 4 chiffres
-  return timingSafeEqual(cleanCandidate, storedPinCode.trim());
+  const durationMs =
+    (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+  if (durationMs > 200) {
+    console.warn(`[PIN verification] Attention: durée élevée (${durationMs.toFixed(2)} ms)`);
+  } else {
+    console.debug(`[PIN verification] Vérification réussie en ${durationMs.toFixed(2)} ms`);
+  }
+
+  return isValid;
 }
 
 /**
