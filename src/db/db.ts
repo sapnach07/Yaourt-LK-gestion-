@@ -141,12 +141,18 @@ export const db = new YaourtDatabase();
  */
 export async function initializeDatabase(): Promise<void> {
   try {
-    // 1. Request storage persistence so Android/browser never drops offline data
+    // 1. Demande de persistance de stockage non-bloquante au démarrage (pour ne pas figer l'app)
     if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
-      const isPersisted = await navigator.storage.persisted();
-      if (!isPersisted) {
-        await navigator.storage.persist();
-      }
+      navigator.storage
+        .persisted()
+        .then((isPersisted) => {
+          if (!isPersisted && navigator.storage.persist) {
+            return navigator.storage.persist();
+          }
+        })
+        .catch((err) => {
+          console.warn('Storage persist warning (non-bloquant):', err);
+        });
     }
 
     // 2. Initialize default settings if not exists

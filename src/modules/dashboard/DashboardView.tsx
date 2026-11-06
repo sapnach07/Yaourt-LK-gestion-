@@ -161,19 +161,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const loadData = async (forceDbRead = false) => {
     if (!forceDbRead) {
-      const data = await getOrWaitPreloadedAppData();
-      setDailyEntries(data.dailyEntries);
-      setExpenses(data.expenses);
-      setEmployees(data.employees);
-      setProducts(data.products);
-      setProductionEntries(data.productionEntries);
-      setPayments(data.payments);
-      setReserveMovements(data.reserveMovements);
-      setPersonalSales(data.personalSales);
-      setCustomers(data.customers);
-      setDebtPayments(data.debtPayments);
-      setStockAdjustments(data.stockAdjustments);
-      return;
+      const cached = getPreloadedAppData();
+      if (cached) {
+        setDailyEntries(cached.dailyEntries);
+        setExpenses(cached.expenses);
+        setEmployees(cached.employees);
+        setProducts(cached.products);
+        setProductionEntries(cached.productionEntries);
+        setPayments(cached.payments);
+        setReserveMovements(cached.reserveMovements);
+        setPersonalSales(cached.personalSales);
+        setCustomers(cached.customers);
+        setDebtPayments(cached.debtPayments);
+        setStockAdjustments(cached.stockAdjustments);
+      }
     }
 
     const [dList, eList, empList, prodList, pList, payList, movList, psList, custList, dpList, adjList] = await Promise.all([

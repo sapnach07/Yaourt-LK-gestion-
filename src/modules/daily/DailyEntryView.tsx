@@ -61,6 +61,7 @@ import { MonthlyStockClosureModal } from './MonthlyStockClosureModal';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { SecurityConfirmModal } from '../../components/SecurityConfirmModal';
 import { EmptyState } from '../../components/EmptyState';
+import { invalidateAppDataCache } from '../../utils/dataPreloader';
 import type {
   DailyEntry,
   ProductionEntry,
@@ -162,12 +163,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   }, []);
 
   const loadAllData = async () => {
+    invalidateAppDataCache();
     const [emps, prods, dEntries, pEntries, pSales, custs, dPays] = await Promise.all([
       db.employees.toArray(),
       db.products.orderBy('sortOrder').toArray(),
-      db.dailyEntries.orderBy('date').reverse().toArray(),
-      db.productionEntries.orderBy('date').reverse().toArray(),
-      db.personalSales.orderBy('date').reverse().toArray(),
+      db.dailyEntries.toArray(),
+      db.productionEntries.toArray(),
+      db.personalSales.toArray(),
       db.customers.toArray(),
       db.debtPayments.toArray(),
     ]);
@@ -281,7 +283,8 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
   // Filtered sales entries
   const filteredDailyEntries = dailyEntries.filter((entry) => {
     if (filterEmployeeId !== 'all' && entry.employeeId !== filterEmployeeId) return false;
-    if (filterDate && entry.date !== filterDate) return false;
+    // Règle : quand on filtre sur "À compléter", les saisies incomplètes restent visibles quelle que soit leur date
+    if (filterStatus !== 'incomplete' && filterDate && entry.date !== filterDate) return false;
     const entryStatus = getEntryStatus(entry);
     if (filterStatus === 'incomplete' && entryStatus !== 'incomplete') return false;
     if (filterStatus === 'validated' && entryStatus !== 'validated') return false;
@@ -559,6 +562,37 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
       {/* SUB-TAB 1: SALES ENTRIES */}
       {subTab === 'sales' && (
         <div className="space-y-3">
+          {/* Bannière "À compléter" : visible quelle que soit la date dès qu'il y a des saisies incomplètes */}
+          {incompleteCount > 0 && (
+            <div className="p-3.5 rounded-2xl bg-amber-500 text-white shadow-xs flex items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <AlertTriangle className="w-5 h-5 shrink-0 text-white" />
+                <div>
+                  <span className="font-extrabold block">
+                    {incompleteCount} saisie{incompleteCount > 1 ? 's' : ''} à compléter
+                  </span>
+                  <p className="text-[11px] text-amber-100 leading-snug">
+                    Ventes enregistrées en attente des quantités vendues ou abîmées.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setFilterDate('');
+                  setFilterStatus('incomplete');
+                }}
+                className={`px-3 py-1.5 rounded-xl font-bold text-xs shrink-0 transition-all ${
+                  filterStatus === 'incomplete'
+                    ? 'bg-amber-700 text-white border border-amber-300/40'
+                    : 'bg-white text-amber-900 shadow-2xs hover:bg-amber-50 active:scale-95'
+                }`}
+              >
+                {filterStatus === 'incomplete' ? 'Filtre actif' : 'Afficher'}
+              </button>
+            </div>
+          )}
+
           {/* Filter Bar */}
           <div className="p-3 bg-white rounded-2xl border border-slate-200/80 shadow-xs flex flex-wrap items-center gap-2">
             <div className="flex-1 min-w-[130px]">
@@ -1969,13 +2003,13 @@ export const DailyEntryView: React.FC<DailyEntryViewProps> = ({
           setEntryToEdit(null);
         }}
         onSaved={async (status, missingLabels) => {
+          await loadAllData();
           if (status === 'validated') {
             onShowToast('success', 'Saisie validée');
           } else {
             const missingText = missingLabels.length > 0 ? missingLabels.join(', ') : 'Vendu, Abîmé';
             onShowToast('info', `Saisie enregistrée : à compléter plus tard (il manque : ${missingText})`);
           }
-          await loadAllData();
         }}
         onOpenCalculator={onOpenCalculator}
       />

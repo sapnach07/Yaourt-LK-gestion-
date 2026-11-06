@@ -9,6 +9,7 @@ import {
   parseLocaleNumber,
   formatNumber,
 } from '../../utils/formatters';
+import { invalidateAppDataCache } from '../../utils/dataPreloader';
 import type { Employee, Product, DailyEntry, DailyEntryItem, AppSettings } from '../../types';
 
 interface DailyEntryModalProps {
@@ -18,7 +19,7 @@ interface DailyEntryModalProps {
   products: Product[];
   settings: AppSettings;
   onClose: () => void;
-  onSaved: (status: 'validated' | 'incomplete', missingLabels: string[]) => void;
+  onSaved: (status: 'validated' | 'incomplete', missingLabels: string[]) => void | Promise<void>;
   onOpenCalculator?: () => void;
 }
 
@@ -268,13 +269,22 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
 
     const status: 'validated' | 'incomplete' = missingFields.length === 0 ? 'validated' : 'incomplete';
 
+    if (!date || !date.trim()) {
+      setErrorMsg('Veuillez renseigner une date valide pour la saisie.');
+      return;
+    }
+
     const normalizedTime = normalizeTimeStr(time);
     const normalizedDeliveryTime = normalizeTimeStr(deliveryTime);
     const normalizedReturnTime = normalizeTimeStr(returnTime);
 
+    const entryId = entryToEdit
+      ? entryToEdit.id
+      : `entry_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+
     const entry: DailyEntry = {
-      id: entryToEdit ? entryToEdit.id : 'entry_' + Date.now().toString(),
-      date,
+      id: entryId,
+      date: date.trim(),
       ...(normalizedTime ? { time: normalizedTime } : {}),
       ...(normalizedDeliveryTime ? { deliveryTime: normalizedDeliveryTime } : {}),
       ...(normalizedReturnTime ? { returnTime: normalizedReturnTime } : {}),
@@ -296,15 +306,25 @@ export const DailyEntryModal: React.FC<DailyEntryModalProps> = ({
     };
 
     try {
+      // Écriture persistante dans Dexie / IndexedDB
       await db.dailyEntries.put(entry);
+
+      // Invalider immédiatement le cache mémoire pour garantir la cohérence
+      invalidateAppDataCache();
+
       const missingLabels: string[] = [];
       if (missingSold) missingLabels.push('Vendu');
       if (missingDamaged) missingLabels.push('Abîmé');
 
-      onSaved(status, missingLabels);
+      // Awaiter le rechargement des données avant de fermer la fenêtre
+      await Promise.resolve(onSaved(status, missingLabels));
       onClose();
     } catch (err: any) {
-      setErrorMsg('Erreur lors de l’enregistrement : ' + err.message);
+      console.error('Erreur lors de l’écriture de la saisie de vente:', err);
+      setErrorMsg(
+        'Erreur lors de l’enregistrement dans la base de données : ' +
+          (err?.message || 'Échec de l’écriture locale')
+      );
     }
   };
 

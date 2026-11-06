@@ -149,6 +149,7 @@ export async function getOrWaitPreloadedAppData(): Promise<PreloadedAppData> {
  */
 export function invalidateAppDataCache(): void {
   cachedAppData = null;
+  inFlightPreloadPromise = null;
 }
 
 /**
